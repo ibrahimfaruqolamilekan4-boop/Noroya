@@ -1,0 +1,6 @@
+{
+  "name": "Noroya Data",
+  "description": "A modern digital platform for Virtual Top-Up (VTU) and digital services including data bundles, airtime, and utility payments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,139 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      // Bootstrapped admin check + admins collection check
+      return isSignedIn() && (
+        request.auth.token.email == "ibrahimfaruqolamilekan4@gmail.com" ||
+        request.auth.uid == "admin_ibrahim_vtu_uid" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'fullName', 'balance', 'role', 'referralCode', 'createdAt']) &&
+             data.keys().size() >= 7 && data.keys().size() <= 9 &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() <= 256 &&
+             data.fullName is string && data.fullName.size() <= 128 &&
+             data.balance is number &&
+             data.role in ['user', 'reseller', 'agent', 'admin'] &&
+             data.referralCode is string && data.referralCode.size() <= 32 &&
+             (!data.keys().hasAny(['referredBy']) || (data.referredBy is string && data.referredBy.size() <= 128)) &&
+             (!data.keys().hasAny(['phoneNumber']) || (data.phoneNumber is string && data.phoneNumber.size() <= 32)) &&
+             data.createdAt == request.time;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['userId', 'type', 'amount', 'status', 'description', 'reference', 'createdAt']) &&
+             data.keys().size() >= 7 &&
+             data.userId == request.auth.uid &&
+             data.type in ['data', 'airtime', 'funding', 'transfer', 'bill'] &&
+             data.amount is number &&
+             data.status in ['pending', 'completed', 'failed'] &&
+             data.description is string && data.description.size() <= 512 &&
+             data.reference is string && data.reference.size() <= 128 &&
+             data.createdAt == request.time;
+    }
+
+    function isValidServicePlan(data) {
+      return data.keys().hasAll(['network', 'type', 'name', 'price']) &&
+             data.network in ['MTN', 'Airtel', 'Glo', '9mobile'] &&
+             data.type in ['data', 'airtime'] &&
+             data.name is string && data.name.size() <= 64 &&
+             data.price is number;
+    }
+
+    // --- Match Blocks ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin(); // Users shouldn't list all users
+      
+      allow create: if isOwner(userId) && 
+                      isValidUser(incoming()) && 
+                      (incoming().balance == 0 || request.auth.uid == "admin_ibrahim_vtu_uid") && 
+                      (incoming().role == 'user' || (incoming().role == 'admin' && (request.auth.token.email == "ibrahimfaruqolamilekan4@gmail.com" || request.auth.uid == "admin_ibrahim_vtu_uid")));
+      
+      allow update: if (isOwner(userId) || isAdmin()) && (
+        // Action: Update Profile (User)
+        (isOwner(userId) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phoneNumber']) && 
+         incoming().fullName is string && incoming().fullName.size() <= 128) ||
+        
+        // Action: Admin updates (Balance, Role, etc)
+        isAdmin()
+      );
+    }
+
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isSignedIn() && 
+                      isValidId(transactionId) && 
+                      isValidTransaction(incoming()) && 
+                      exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      
+      allow update: if isAdmin(); // Users can't edit transactions
+      allow delete: if false;
+    }
+
+    match /servicePlans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /data_plans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId}/referrals/{referredUserId} {
+      allow read, list: if isOwner(userId) || isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == referredUserId;
+    }
+
+    match /referralCodes/{referralCode} {
+      allow get: if true; // Public read for registration validation
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && incoming().ownerUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
+    }
+    
+    // Explicitly secure interaction collection
+    match /admins/{adminId} {
+      allow read, write: if false; // Managed via console or bootstrapped admin only
+    }
+  }
+}
