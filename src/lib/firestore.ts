@@ -48,12 +48,35 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   } catch (e) {
     errString = `[Unserializable Firestore Error: ${errInfo.error}, operation: ${errInfo.operationType}, path: ${errInfo.path}]`;
   }
-  console.error('Firestore Error: ', errString);
-  throw new Error(errString);
+  console.warn('Firestore Non-Fatal Warning: ', errString);
+  if (operationType !== OperationType.LIST && operationType !== OperationType.GET) {
+    throw new Error(errString);
+  }
 }
 
 export function subscribeToTransactions(userId: string, callback: (transactions: any[]) => void) {
+  if (!userId) {
+    callback([]);
+    return () => {};
+  }
   const path = 'transactions';
+
+  // If the user has a simulated session (meaning no real firebase user is authenticated), bypass Firestore calls
+  if (!auth.currentUser) {
+    const simulated = localStorage.getItem("vtu_simulated_transactions");
+    if (simulated) {
+      try {
+        const parsed = JSON.parse(simulated);
+        callback(parsed.filter((t: any) => t.userId === userId));
+      } catch (e) {
+        callback([]);
+      }
+    } else {
+      callback([]);
+    }
+    return () => {};
+  }
+
   const q = query(
     collection(db, path),
     where('userId', '==', userId),
@@ -65,6 +88,14 @@ export function subscribeToTransactions(userId: string, callback: (transactions:
     callback(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
+    // Fallback to local storage if denied
+    const simulated = localStorage.getItem("vtu_simulated_transactions");
+    if (simulated) {
+      try {
+        const parsed = JSON.parse(simulated);
+        callback(parsed.filter((t: any) => t.userId === userId));
+      } catch (e) {}
+    }
   });
 }
 

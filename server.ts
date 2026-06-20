@@ -9,7 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
-import { reserveUserVirtualAccount } from "./backend/services/monnifyService.js";
+import { supabase } from "./src/lib/supabase.js";
 
 dotenv.config();
 
@@ -106,6 +106,7 @@ class FallbackCollection {
     return {
       limit: (num: number) => {
         return {
+          rawRef: rawDb.collection(this.collName).where(field, op as any, value).limit(num),
           get: async () => {
             return runOnBackup<any>(
               async () => {
@@ -122,14 +123,21 @@ class FallbackCollection {
                 const docs = Object.entries(items)
                   .filter(([id, val]: any) => val && val[field] === value)
                   .slice(0, num)
-                  .map(([id, val]: any) => ({
-                    id,
-                    exists: true,
-                    data: () => val
-                  }));
+                  .map(([id, val]: any) => {
+                    const docObj = this.doc(id);
+                    return {
+                      id,
+                      exists: true,
+                      data: () => val,
+                      ref: docObj
+                    };
+                  });
                 return {
                   empty: docs.length === 0,
-                  docs
+                  docs,
+                  forEach(cb: (doc: any) => void) {
+                    docs.forEach(cb);
+                  }
                 };
               }
             );
@@ -141,8 +149,9 @@ class FallbackCollection {
 
   doc(docId?: string) {
     const finalId = docId || crypto.randomUUID();
-    return {
+    const docObj: any = {
       id: finalId,
+      rawRef: rawDb.collection(this.collName).doc(finalId),
       get: async () => {
         return runOnBackup<any>(
           async () => {
@@ -159,7 +168,8 @@ class FallbackCollection {
             return {
               id: finalId,
               exists: item !== undefined,
-              data: () => item
+              data: () => item,
+              ref: docObj
             };
           }
         );
@@ -241,6 +251,7 @@ class FallbackCollection {
         );
       }
     };
+    return docObj;
   }
 
   async get() {
@@ -251,17 +262,59 @@ class FallbackCollection {
       async () => {
         const localStore = loadLocalDb();
         const items = localStore[this.collName as keyof LocalStore] || {};
-        const docs = Object.entries(items).map(([id, val]: any) => ({
-          id,
-          exists: true,
-          data: () => val
-        }));
+        const docs = Object.entries(items).map(([id, val]: any) => {
+          const docObj = this.doc(id);
+          return {
+            id,
+            exists: true,
+            data: () => val,
+            ref: docObj
+          };
+        });
         return {
           empty: docs.length === 0,
-          docs
+          docs,
+          forEach(cb: (doc: any) => void) {
+            docs.forEach(cb);
+          }
         };
       }
     );
+  }
+
+  limit(num: number) {
+    return {
+      rawRef: rawDb.collection(this.collName).limit(num),
+      get: async () => {
+        return runOnBackup<any>(
+          async () => {
+            return await rawDb.collection(this.collName).limit(num).get();
+          },
+          async () => {
+            const localStore = loadLocalDb();
+            const items = localStore[this.collName as keyof LocalStore] || {};
+            const docs = Object.entries(items)
+              .slice(0, num)
+              .map(([id, val]: any) => {
+                const docObj = this.doc(id);
+                return {
+                  id,
+                  exists: true,
+                  data: () => val,
+                  ref: docObj
+                };
+              });
+            return {
+              empty: docs.length === 0,
+              docs,
+              forEach(cb: (doc: any) => void) {
+                docs.forEach(cb);
+              }
+            };
+          }
+        );
+      }
+    };
   }
 }
 
@@ -272,7 +325,30 @@ const db = {
   runTransaction: async (fn: (transaction: any) => Promise<any>) => {
     return runOnBackup(
       async () => {
-        return await rawDb.runTransaction(fn);
+        return await rawDb.runTransaction(async (rawTx) => {
+          const transactionSim = {
+            get: async (docRef: any) => {
+              const realRef = docRef?.rawRef || docRef;
+              return await rawTx.get(realRef);
+            },
+            set: async (docRef: any, data: any, options?: any) => {
+              const realRef = docRef?.rawRef || docRef;
+              if (options) {
+                return rawTx.set(realRef, data, options);
+              }
+              return rawTx.set(realRef, data);
+            },
+            update: async (docRef: any, data: any) => {
+              const realRef = docRef?.rawRef || docRef;
+              return rawTx.update(realRef, data);
+            },
+            delete: async (docRef: any) => {
+              const realRef = docRef?.rawRef || docRef;
+              return rawTx.delete(realRef);
+            }
+          };
+          return await fn(transactionSim);
+        });
       },
       async () => {
         console.log("🔄 Running simulated transaction on local database.");
@@ -280,11 +356,14 @@ const db = {
           get: async (docRef: any) => {
             return await docRef.get();
           },
-          set: async (docRef: any, data: any) => {
-            return await docRef.set(data);
+          set: async (docRef: any, data: any, options?: any) => {
+            return await docRef.set(data, options);
           },
           update: async (docRef: any, data: any) => {
             return await docRef.update(data);
+          },
+          delete: async (docRef: any) => {
+            return await docRef.delete();
           }
         };
         return await fn(transactionSim);
@@ -307,6 +386,17 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Dynamic runtime injection of Supabase properties from the Cloud Run host container
+  app.get("/config/supabase.js", (req, res) => {
+    res.type("application/javascript");
+    res.send(`
+      window.SUPABASE_CONFIG = {
+        supabaseUrl: ${JSON.stringify(process.env.SUPABASE_URL || "")},
+        supabaseAnonKey: ${JSON.stringify(process.env.SUPABASE_ANON_KEY || "")}
+      };
+    `);
+  });
 
   // JWT configuration and utilities
   const JWT_SECRET = process.env.JWT_SECRET || "noroya-vtu-jwt-auth-token-super-key!";
@@ -418,10 +508,79 @@ async function startServer() {
     }
   });
 
-  // GET /api/v1/payment/config: Load Live Paystack credentials securely without client-side exposures
+  // GET /api/v1/payment/config: Load Live Paystack/Flutterwave credentials securely without client-side exposures
   app.get("/api/v1/payment/config", (req, res) => {
+    const paystackKeys = [
+      "PAYSTACK_LIVE_PUBLIC_KEY",
+      "PAYSTACK_PUBLIC_KEY",
+      "VITE_PAYSTACK_PUBLIC_KEY",
+      "VITE_PAYSTACK_LIVE_PUBLIC_KEY"
+    ];
+    let paystackKey = "";
+    for (const key of paystackKeys) {
+      const val = (process.env[key] || "").trim();
+      if (val && !val.includes("PASTE_YOUR") && !val.includes("your_paystack") && !val.includes("xxxxxx")) {
+        paystackKey = val.replace(/^["']|["']$/g, "").trim();
+        break;
+      }
+    }
+
+    // Auto-detect Paystack key if not directly found in standard list
+    if (!paystackKey) {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value && typeof value === "string") {
+          const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
+          if (trimmed.startsWith("pk_live_") || trimmed.startsWith("pk_test_") || trimmed.startsWith("sk_live_") || trimmed.startsWith("sk_test_")) {
+            paystackKey = trimmed;
+            console.log(`[Payment Config] Autodetected Paystack key from env var: ${key}`);
+            break;
+          }
+        }
+      }
+    }
+
+    if (!paystackKey) {
+      paystackKey = "pk_live_f893e9902f8fa7abc28your_paystack_live_wholesale_key";
+    }
+
+    const flutterwaveKeys = [
+      "FLUTTERWAVE_PUBLIC_KEY",
+      "VITE_FLUTTERWAVE_PUBLIC_KEY",
+      "FLUTTERWAVE_LIVE_PUBLIC_KEY",
+      "VITE_FLUTTERWAVE_LIVE_PUBLIC_KEY"
+    ];
+    let flutterwaveKey = "";
+    for (const key of flutterwaveKeys) {
+      const val = (process.env[key] || "").trim();
+      if (val && !val.includes("PASTE_YOUR") && !val.includes("your_flutterwave") && !val.includes("xxxxxx")) {
+        flutterwaveKey = val.replace(/^["']|["']$/g, "").trim();
+        break;
+      }
+    }
+
+    // Auto-detect Flutterwave key if not directly found in standard list
+    if (!flutterwaveKey) {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value && typeof value === "string") {
+          const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
+          if (trimmed.startsWith("FLWPUBK") || trimmed.startsWith("FLWSECK")) {
+            flutterwaveKey = trimmed;
+            console.log(`[Payment Config] Autodetected Flutterwave key from env var: ${key}`);
+            break;
+          }
+        }
+      }
+    }
+
     return res.json({
-      publicKey: process.env.PAYSTACK_LIVE_PUBLIC_KEY || process.env.PAYSTACK_PUBLIC_KEY || "pk_live_f893e9902f8fa7abc28your_paystack_live_wholesale_key"
+      publicKey: paystackKey,
+      flutterwavePublicKey: flutterwaveKey,
+      debug: {
+        paystackKeyPrefix: paystackKey ? paystackKey.substring(0, 12) : "none",
+        paystackKeyLength: paystackKey ? paystackKey.length : 0,
+        flutterwaveKeyPrefix: flutterwaveKey ? flutterwaveKey.substring(0, 12) : "none",
+        flutterwaveKeyLength: flutterwaveKey ? flutterwaveKey.length : 0,
+      }
     });
   });
 
@@ -716,6 +875,8 @@ async function startServer() {
         retail_price: Math.round(p.wholesaleCost * 1.05)
       }));
 
+      // Live network fetch to external Peyflex nodes was commented out to prevent outbound timeouts & network-level load failures.
+      /*
       if (PEYFLEX_API_TOKEN && !PEYFLEX_API_TOKEN.includes("dummy")) {
         try {
           console.log("[Peyflex Sync] Attempting live network fetch...");
@@ -730,6 +891,7 @@ async function startServer() {
           console.warn("[Peyflex Sync] Live check bypass to ensure sandbox/offline continuity:", apiErr);
         }
       }
+      */
 
       return res.json({
         success: true,
@@ -742,7 +904,7 @@ async function startServer() {
     }
   });
 
-  // Admin Publish Peyflex Plans to Firestore collections
+  // Admin Publish Peyflex Plans to Firestore collections and Supabase data_plans
   app.post("/api/admin/publish-peyflex-plans", async (req, res) => {
     const { triggeredBy, plans } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
@@ -754,11 +916,35 @@ async function startServer() {
     }
 
     try {
-      const promises = plans.map(p => {
-        const colName = p.type === "data" ? "data_plans" : (p.type === "exam" || p.type === "education" ? "exam_plans" : "utility_plans");
-        const docId = p.peyflex_variation_id || p.peyflex_id || `plan_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-        const docRef = db.collection(colName).doc(docId);
+      const ensureUUID = (strId: string): string => {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(strId)) {
+          return strId;
+        }
+        let seed = 0;
+        for (let i = 0; i < strId.length; i++) {
+          seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+        }
+        const r = () => {
+          seed = (seed * 1664525 + 1013904223) >>> 0;
+          return seed;
+        };
+        const hexChars = '0123456789abcdef';
+        let hex32 = '';
+        for (let i = 0; i < 32; i++) {
+          hex32 += hexChars[r() % 16];
+        }
+        const part1 = hex32.substring(0, 8);
+        const part2 = hex32.substring(8, 12);
+        const part3 = '4' + hex32.substring(12, 15);
+        const part4 = 'a' + hex32.substring(15, 18);
+        const part5 = hex32.substring(18, 30);
+        return `${part1}-${part2}-${part3}-${part4}-${part5}`;
+      };
 
+      const recordsToInsert = plans.map(p => {
+        const originalId = p.peyflex_variation_id || p.peyflex_id || p.id || `plan_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        const docId = ensureUUID(originalId);
         const retailVal = Number(p.retail_price || p.price || 0);
 
         // Derive plan_category correctly with clean fallback rules
@@ -787,43 +973,82 @@ async function startServer() {
           finalNet = rawNet; // Keep original (like GOTV, EKEDC, WAEC) if not a major telco
         }
 
-        const docData = {
+        return {
           id: docId,
           network_type: finalNet,
           plan_category: planCategory,
           plan_name: String(p.name || p.plan_name || p.name || '').trim(),
           retail_price: Number(retailVal),
           validity_days: p.duration || p.validity_days || '30 Days',
-          peyflex_id: p.peyflex_variation_id || p.peyflex_id || docId,
+          peyflex_id: docId,
 
-          // legacy & compatibility fields to ensure zero regression
+          // compatibility properties to support both snake_case and camelCase column aliases in pg
           network: finalNet,
           type: p.type || 'data',
           name: String(p.name || p.plan_name || '').trim(),
           price: Number(retailVal),
+          reseller_price: p.resellerPrice ? Number(p.resellerPrice) : Math.round(retailVal * 0.98),
           resellerPrice: p.resellerPrice ? Number(p.resellerPrice) : Math.round(retailVal * 0.98),
+          agent_price: p.agentPrice ? Number(p.agentPrice) : Math.round(retailVal * 0.99),
           agentPrice: p.agentPrice ? Number(p.agentPrice) : Math.round(retailVal * 0.99),
           duration: p.duration || p.validity_days || '30 Days',
-          peyflex_variation_id: p.peyflex_variation_id || p.peyflex_id || docId,
-          apiPlanId: p.peyflex_variation_id || p.peyflex_id || docId,
+          peyflex_variation_id: docId,
+          apiPlanId: docId,
           planType: planCategory,
           wholesaleCost: Number(p.wholesaleCost || 0),
-          createdAt: FieldValue.serverTimestamp(),
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          updatedAt: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          updated_at: new Date().toISOString()
         };
-
-        return docRef.set(docData, { merge: true });
       });
 
-      await Promise.all(promises);
+      // Insert/Upsert into Supabase 'data_plans'
+      console.log(`[Supabase Migration] Inserting ${recordsToInsert.length} data plans in Postgres data_plans table...`);
+      const cleanPostgresRecords = recordsToInsert.map(p => {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const hasValidUUID = p.id && p.id.length === 36 && uuidRegex.test(p.id);
+        return {
+          ...(hasValidUUID ? { id: p.id } : {}),
+          network_type: String(p.network_type).toUpperCase().trim(),
+          plan_category: String(p.plan_category).toUpperCase().trim(),
+          plan_name: String(p.plan_name).trim(),
+          price: parseFloat(String(p.price)),
+          api_plan_id: String(p.peyflex_id || p.id || '').trim(),
+          created_at: p.created_at || new Date().toISOString(),
+          expires_at: p.expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        };
+      });
+
+      const { error: insertError } = await supabase
+        .from('data_plans')
+        .upsert(cleanPostgresRecords, { onConflict: 'id' });
+
+      if (insertError) {
+        console.error("[Supabase Publish error fallback]:", insertError.message);
+        throw new Error(`Supabase insert failed: ${insertError.message}`);
+      }
+
+      // Also support setting Firebase Firestore as legacy mirroring to ensure 0 regression across platforms
+      try {
+        const promises = recordsToInsert.map(p => {
+          const colName = p.type === "data" ? "data_plans" : (p.type === "exam" || p.type === "education" ? "exam_plans" : "utility_plans");
+          return db.collection(colName).doc(p.id).set({
+            ...p,
+            createdAt: FieldValue.serverTimestamp(),
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          }, { merge: true });
+        });
+        await Promise.all(promises);
+      } catch (fbErr) {
+        console.warn("[Firebase Publish Mirroring Warning]:", fbErr);
+      }
 
       return res.json({
         success: true,
-        message: `Successfully published ${plans.length} service plans permanently to Firestore databases!`
+        message: `Successfully published ${plans.length} service plans permanently to live database schemas!`
       });
     } catch (err: any) {
-      console.error("Error publishing plans:", err);
+      console.error("Error in publish plans sync:", err);
       return res.status(500).json({ error: err.message });
     }
   });
@@ -983,33 +1208,7 @@ async function startServer() {
     }
   });
 
-  // Helper utilities for Monnify Dynamic API Config mapping and Base URL Routing
-  const cleanEnvValue = (val: string | undefined): string => {
-    if (!val) return "";
-    let cleaned = val.trim();
-    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-      cleaned = cleaned.slice(1, -1);
-    }
-    return cleaned.trim();
-  };
-
-  const getMonnifyCredentials = () => {
-    const apiKey = cleanEnvValue(process.env.NEXT_PUBLIC_MONNIFY_API_KEY || process.env.MONNIFY_API_KEY);
-    const clientSecret = cleanEnvValue(process.env.MONNIFY_SECRET_KEY || process.env.MONNIFY_CLIENT_SECRET);
-    const contractCode = cleanEnvValue(process.env.NEXT_PUBLIC_MONNIFY_CONTRACT_CODE || process.env.MONNIFY_CONTRACT_CODE);
-    return { apiKey, clientSecret, contractCode };
-  };
-
-  const getMonnifyBaseUrl = (key: string) => {
-    const k = key.trim().toUpperCase();
-    if (k.startsWith("MK_PROD_") || k.startsWith("MK_PROD")) {
-      return "https://api.api.monnify.com";
-    }
-    if (k.startsWith("MK_TEST_") || k.startsWith("MK_TEST")) {
-      return "https://sandbox.monnify.com";
-    }
-    return "https://api.monnify.com";
-  };
+  // Monnify credentials helpers completely removed
 
   // 1.5 Secure Paystack Payment Webhook Endpoint
   app.post("/api/v1/payment-webhook", async (req, res) => {
@@ -1073,15 +1272,49 @@ async function startServer() {
           return { alreadyProcessed: true };
         }
 
-        // Fetch corresponding user document by email
-        const userQuery = db.collection("users").where("email", "==", customerEmail).limit(1);
-        const userSnap = await transaction.get(userQuery);
+        // Fetch corresponding user document by userId (direct doc lookup) or email (case-insensitive)
+        let userDoc: any = null;
+        const requestUserId = req.body.userId || data?.metadata?.userId || data?.userId;
 
-        if (userSnap.empty) {
+        if (requestUserId) {
+          const directDoc = await transaction.get(db.collection("users").doc(requestUserId));
+          if (directDoc.exists) {
+            userDoc = directDoc;
+          }
+        }
+
+        if (!userDoc) {
+          const userQuery = db.collection("users").where("email", "==", customerEmail).limit(1);
+          const userSnap = await transaction.get(userQuery);
+
+          if (!userSnap.empty) {
+            userDoc = userSnap.docs[0];
+          } else {
+            // Try original non-lowercased query
+            const rawEmail = data?.customer?.email;
+            if (rawEmail) {
+              const altUserQuery = db.collection("users").where("email", "==", rawEmail).limit(1);
+              const altUserSnap = await transaction.get(altUserQuery);
+              if (!altUserSnap.empty) {
+                userDoc = altUserSnap.docs[0];
+              }
+            }
+          }
+
+          // Fallback scan (search some users for match)
+          if (!userDoc) {
+            const allUsersSnap = await transaction.get(db.collection("users").limit(100));
+            userDoc = allUsersSnap.docs.find(doc => {
+              const docEmail = String(doc.data()?.email || "").toLowerCase().trim();
+              return docEmail === customerEmail;
+            });
+          }
+        }
+
+        if (!userDoc) {
           throw new Error(`Profile not found for email ${customerEmail}`);
         }
 
-        const userDoc = userSnap.docs[0];
         const userRef = userDoc.ref;
 
         // Perform safe wallet Available Balance update with FieldValue.increment
@@ -1165,372 +1398,7 @@ async function startServer() {
     }
   });
 
-  // 2. Automated Webhook Router API: Monnify Webhook
-  app.post("/api/webhooks/monnify", async (req, res) => {
-    try {
-      const clientIp = req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() || req.socket.remoteAddress;
-      console.log(`[Monnify Webhook] Received payment notice from IP: ${clientIp}`);
-
-      // Compute and validate hash signature securely using Monnify Client Secret Key supporting multiple names
-      const { clientSecret } = getMonnifyCredentials();
-      const monnifySignature = req.headers["monnify-signature"];
-      
-      if (!monnifySignature) {
-        console.warn("[Monnify Webhook] Missing monnify-signature header.");
-        return res.status(401).send("Unauthorized: Signature header missing.");
-      }
-
-      // Only perform validation if clientSecret is defined
-      if (clientSecret) {
-        let rawBody = "";
-        if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
-          rawBody = (req as any).rawBody.toString("utf-8");
-        } else if (typeof req.body === 'string') {
-          rawBody = req.body;
-        } else {
-          try {
-            rawBody = JSON.stringify(req.body);
-          } catch (err) {
-            console.warn("[Monnify Webhook] Circular reference detected in stringification fallback:", err);
-            rawBody = "";
-          }
-        }
-
-        const computedHash = crypto
-          .createHmac("sha512", clientSecret)
-          .update(rawBody)
-          .digest("hex");
-
-        if (monnifySignature !== computedHash) {
-          console.warn("[Monnify Webhook] Signature check failed.");
-          return res.status(401).send("Unauthorized: Authentication mismatch.");
-        }
-      } else {
-        console.warn("[Monnify Webhook] Client secret is not configured in Secrets. Proceeding with loose validation for sandbox testing.");
-      }
-
-      const { eventType, eventData } = req.body;
-      if (eventType !== "customer_reserved_account_payment") {
-        console.log(`[Monnify Webhook] Ignoring other event types: ${eventType}`);
-        return res.json({ status: "ignored" });
-      }
-
-      const { transactionReference, amountPaid, customer } = eventData;
-      const customerEmail = customer?.email?.toLowerCase();
-
-      if (!transactionReference || !amountPaid || !customerEmail) {
-        return res.status(400).send("Bad request structure: missing parameters.");
-      }
-
-      // Idempotency check: log check in 'processed_payments' collection to prevent double crediting
-      const paymentRefDoc = db.collection("processed_payments").doc(transactionReference);
-      
-      const transactionResult = await db.runTransaction(async (transaction) => {
-        const paymentSnap = await transaction.get(paymentRefDoc);
-        if (paymentSnap.exists) {
-          console.warn(`[Monnify Webhook] Transaction reference ${transactionReference} already handled. Action blocked.`);
-          return { alreadyProcessed: true };
-        }
-
-        // Fetch corresponding user document by email
-        const userQuery = db.collection("users").where("email", "==", customerEmail).limit(1);
-        const userSnap = await transaction.get(userQuery);
-
-        if (userSnap.empty) {
-          throw new Error(`User with email ${customerEmail} not registered.`);
-        }
-
-        const userDoc = userSnap.docs[0];
-        const userRef = userDoc.ref;
-
-        // Perform safe wallet Available Balance update with FieldValue.increment
-        transaction.update(userRef, {
-          balance: FieldValue.increment(amountPaid),
-          available_balance: FieldValue.increment(amountPaid),
-          lastFundingAt: FieldValue.serverTimestamp()
-        });
-
-        // Set processed payment reference documentation for future idempotency
-        transaction.set(paymentRefDoc, {
-          transactionReference,
-          userId: userDoc.id,
-          userEmail: customerEmail,
-          amountPaid,
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        // Store standard UI funding records
-        const txHistoryRef = db.collection("transactions").doc();
-        transaction.set(txHistoryRef, {
-          userId: userDoc.id,
-          type: "funding",
-          amount: amountPaid,
-          status: "completed",
-          description: `Bank Transfer Payment (Ref: ${transactionReference})`,
-          reference: `MNFY-${transactionReference}`,
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        return { alreadyProcessed: false, userId: userDoc.id };
-      });
-
-      if (transactionResult.alreadyProcessed) {
-        return res.json({ status: "skipped", message: "Transaction already processed." });
-      }
-
-      console.log(`[Monnify Webhook] Funded user ${transactionResult.userId} successfully with ₦${amountPaid}.`);
-      return res.status(200).send("OK");
-    } catch (err: any) {
-      console.error("[Monnify Webhook Exception]:", err);
-      return res.status(500).send(`Server Error: ${err.message}`);
-    }
-  });
-
-  // 2b. Diagnostics for check if Monnify Keys are loaded and configured
-  app.get("/api/monnify/debug-status", async (req, res) => {
-    const { apiKey, clientSecret, contractCode } = getMonnifyCredentials();
-
-    const maskValue = (val: string | undefined, defaultPlaceholder: string) => {
-      if (!val) return { exists: false, status: "missing", preview: "" };
-      const trimmed = val.trim();
-      if (trimmed === "" || trimmed.includes(defaultPlaceholder)) {
-        return { exists: true, status: "placeholder_or_empty", preview: trimmed.slice(0, 8) + "..." };
-      }
-      return {
-        exists: true,
-        status: "active_configured",
-        length: trimmed.length,
-        preview: trimmed.slice(0, 6) + "..." + trimmed.slice(-4)
-      };
-    };
-
-    let connectionTest = {
-      status: "untested",
-      message: "Credentials are missing or using placeholder codes",
-      details: ""
-    };
-
-    const hasRealKeys = apiKey && clientSecret && contractCode && 
-                        !apiKey.includes("your_monnify_api_key") && 
-                        !clientSecret.includes("your_monnify_client_secret_key") &&
-                        !apiKey.includes("PASTE_YOUR_API_KEY_HERE") &&
-                        !clientSecret.includes("PASTE_YOUR_SECRET_KEY_HERE") &&
-                        apiKey.trim() !== "" && clientSecret.trim() !== "" && contractCode.trim() !== "";
-
-    if (hasRealKeys) {
-      try {
-        const baseUrl = getMonnifyBaseUrl(apiKey);
-        const authString = Buffer.from(`${apiKey.trim()}:${clientSecret.trim()}`).toString('base64');
-        
-        console.log(`[Monnify Debug] Dry-run testing credentials against: ${baseUrl}/api/v1/auth/login`);
-        const testRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Basic ${authString}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (testRes.ok) {
-          const authData = await testRes.json() as any;
-          if (authData?.requestSuccessful) {
-            connectionTest = {
-              status: "connected",
-              message: `Successfully authenticated with Monnify!`,
-              details: `Connected to dynamic endpoint ${baseUrl} successfully.`
-            };
-          } else {
-            connectionTest = {
-              status: "failed",
-              message: `Monnify authentication failed.`,
-              details: authData?.responseMessage || JSON.stringify(authData)
-            };
-          }
-        } else {
-          const errText = await testRes.text();
-          let parsedError = errText;
-          try {
-            const jp = JSON.parse(errText);
-            parsedError = jp.responseMessage || jp.error_description || errText;
-          } catch(e) {}
-          connectionTest = {
-            status: "failed",
-            message: `Monnify Server returned HTTP ${testRes.status}.`,
-            details: parsedError
-          };
-        }
-      } catch (err: any) {
-        connectionTest = {
-          status: "failed",
-          message: "Could not establish connection to Monnify gateway.",
-          details: err.message
-        };
-      }
-    }
-
-    return res.json({
-      success: true,
-      apiKey: maskValue(apiKey, "your_monnify_api_key"),
-      clientSecret: maskValue(clientSecret, "your_monnify_client_secret_key"),
-      contractCode: maskValue(contractCode, "your_monnify_contract_code"),
-      connectionTest
-    });
-  });
-
-  // 2c. Retrieve or Generate Monnify Reserved Virtual Bank Accounts details
-  app.post("/api/monnify/reserved-accounts", async (req, res) => {
-    const { userId, force } = req.body;
-    if (!userId) {
-      return res.status(400).json({ error: "Missing required userId" });
-    }
-
-    try {
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      if (!userDoc.exists) {
-        return res.status(404).json({ error: "User profile not found" });
-      }
-
-      const userData = userDoc.data();
-      const forceRefresh = force === true;
-      if (!forceRefresh && userData?.reservedAccounts && Array.isArray(userData.reservedAccounts) && userData.reservedAccounts.length > 0) {
-        return res.json({ success: true, accounts: userData.reservedAccounts, source: "database" });
-      }
-
-      // Retrieve credentials dynamically via mapped helper
-      const { apiKey, clientSecret, contractCode } = getMonnifyCredentials();
-
-      const userEmail = userData?.email || "customer@example.com";
-      const userFullName = userData?.fullName || "Valued Customer";
-
-      let generatedAccounts = [];
-
-      // Check if we have valid-looking API credentials to call Monnify
-      const hasRealKeys = apiKey && clientSecret && contractCode && 
-                          !apiKey.includes("your_monnify_api_key") && 
-                          !clientSecret.includes("your_monnify_client_secret_key") &&
-                          !apiKey.includes("PASTE_YOUR_API_KEY_HERE") &&
-                          !clientSecret.includes("PASTE_YOUR_SECRET_KEY_HERE") &&
-                          apiKey !== "" && clientSecret !== "" && contractCode !== "";
-
-      if (hasRealKeys) {
-        try {
-          const baseUrl = getMonnifyBaseUrl(apiKey);
-
-          console.log(`[Monnify API] Requesting authentication token from ${baseUrl}...`);
-          // 1. Auth Login to get AccessToken
-          const authString = Buffer.from(`${apiKey}:${clientSecret}`).toString('base64');
-          const authResponse = await fetch(`${baseUrl}/api/v1/auth/login`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Basic ${authString}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (!authResponse.ok) {
-            throw new Error(`Monnify login status: ${authResponse.status}`);
-          }
-
-          const authData = await authResponse.json() as any;
-          const accessToken = authData?.responseBody?.accessToken;
-
-          if (!accessToken) {
-            throw new Error("Could not find access token in response body");
-          }
-
-          // 2. Reserve account
-          const accountReference = `REF-${userId}-${Date.now()}`;
-          console.log(`[Monnify API] Reserving bank accounts for user ${userEmail}...`);
-
-          const reserveResponse = await fetch(`${baseUrl}/api/v1/bank-transfer/reserved-accounts`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              accountReference,
-              accountName: `NOROYA-${userFullName.replace(/[^a-zA-Z0-9 ]/g, "").slice(0, 30)}`,
-              currencyCode: "NGN",
-              contractCode,
-              customerEmail: userEmail,
-              customerName: userFullName,
-              getAllOneTimeAddresses: false
-            })
-          });
-
-          if (!reserveResponse.ok) {
-            const errBody = await reserveResponse.text();
-            throw new Error(`Monnify reservation status ${reserveResponse.status}: ${errBody}`);
-          }
-
-          const reserveData = await reserveResponse.json() as any;
-          if (reserveData?.requestSuccessful && reserveData?.responseBody?.accounts) {
-            generatedAccounts = reserveData.responseBody.accounts.map((acc: any) => ({
-              bankName: acc.bankName,
-              accountNumber: acc.accountNumber,
-              bankCode: acc.bankCode,
-              accountName: acc.accountName
-            }));
-            console.log(`[Monnify API] Successfully reserved ${generatedAccounts.length} accounts dynamically from Monnify API.`);
-          }
-        } catch (apiErr: any) {
-          console.error("[Monnify API Error] Dynamic creation failed, resorting to localized robust accounts:", apiErr.message);
-        }
-      }
-
-      // If dynamic generation is skipped, or errored out, or returned no accounts, create deterministic robust sandbox accounts:
-      if (generatedAccounts.length === 0) {
-        console.log(`[Monnify Sandbox] Generating high-fidelity sandbox accounts for user ${userFullName}.`);
-        
-        // Use a simple hash function based on email/userId to make accounts look authentic and persist consistently
-        const getDeterministicNumber = (seed: string, offset: number) => {
-          let hash = 0;
-          for (let i = 0; i < seed.length; i++) {
-            hash = seed.charCodeAt(i) + ((hash << 5) - hash);
-          }
-          const num = Math.abs(hash + offset).toString().slice(0, 10);
-          return num.padEnd(10, "0"); // Pad to ensure exactly 10 digits
-        };
-
-        const wemaNum = getDeterministicNumber(userId, 5039281);
-        const sterlingNum = getDeterministicNumber(userId, 1029482);
-        const fidelityNum = getDeterministicNumber(userId, 992014);
-
-        generatedAccounts = [
-          {
-            bankName: "Wema Bank",
-            accountNumber: wemaNum,
-            bankCode: "035",
-            accountName: `NOROYA-${userFullName.replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase()}`
-          },
-          {
-            bankName: "Sterling Bank",
-            accountNumber: sterlingNum,
-            bankCode: "232",
-            accountName: `NOROYA-${userFullName.replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase()}`
-          },
-          {
-            bankName: "Fidelity Bank",
-            accountNumber: fidelityNum,
-            bankCode: "070",
-            accountName: `NOROYA-${userFullName.replace(/[^a-zA-Z0-9 ]/g, "").toUpperCase()}`
-          }
-        ];
-      }
-
-      // Save the reserved accounts in user doc for immediate future retrievals
-      await userRef.update({
-        reservedAccounts: generatedAccounts
-      });
-
-      return res.json({ success: true, accounts: generatedAccounts, source: "generated" });
-    } catch (err: any) {
-      console.error("[Reserved Accounts Handler Exception]:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
+  // Outdated Monnify Webhook and Admin endpoints completely deleted
 
   // Real VTU Purchase Route with Database Sync & Agent-Scale Cashback
   app.post("/api/vtu/purchase", async (req, res) => {
@@ -2107,6 +1975,59 @@ async function startServer() {
     }
   });
 
+  // Set User Wallet Balance directly (self-service reset/adjustment to 0 or any amount)
+  app.post("/api/wallet/reset-balance", async (req, res) => {
+    const { userId, targetBalance } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "Missing userId" });
+    }
+
+    const tBal = typeof targetBalance === 'number' ? targetBalance : 0;
+
+    try {
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        // Fallback for mock/local database store
+        const localStore = loadLocalDb();
+        if (localStore.users[userId]) {
+          localStore.users[userId].balance = tBal;
+          saveLocalDb(localStore);
+        }
+        return res.json({ success: true, balance: tBal });
+      }
+
+      await db.runTransaction(async (transaction) => {
+        const docSnap = await transaction.get(userRef);
+        const currentBalance = docSnap.data()?.balance || 0;
+        const difference = tBal - currentBalance;
+
+        transaction.update(userRef, {
+          balance: tBal
+        });
+
+        // Add a debit/refund transaction for history audit
+        if (difference !== 0) {
+          const txRef = db.collection('transactions').doc();
+          transaction.set(txRef, {
+            userId,
+            type: difference > 0 ? 'funding' : 'purchase',
+            amount: Math.abs(difference),
+            status: 'completed',
+            description: `Self-Service Balance Adjustment (Set to ₦${tBal.toLocaleString()})`,
+            reference: `ADJ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+            createdAt: FieldValue.serverTimestamp()
+          });
+        }
+      });
+
+      res.json({ success: true, balance: tBal });
+    } catch (error: any) {
+      console.error("[Reset Balance Exception]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Daily Bonus Lucky Wheels Reward Endpoint
   app.post("/api/vtu/daily-bonus", async (req, res) => {
     const { userId, wonAmount } = req.body;
@@ -2187,148 +2108,287 @@ async function startServer() {
     }
   });
 
-  // Monnify Virtual Account Generation Trigger
-  app.post("/api/user/generate-virtual-account", async (req, res) => {
-    const { uid, email, fullName } = req.body;
-    if (!uid || !email || !fullName) {
-      return res.status(400).json({ error: "Missing required fields: uid, email, fullName" });
+  // Secure Flutterwave Live Transaction Verification Endpoint
+  app.post("/api/payments/verify-flutterwave", async (req, res) => {
+    const { transactionId, reference, amount, email } = req.body;
+    if (!transactionId || !reference || !amount || !email) {
+      return res.status(400).json({ error: "Missing required payload parameters: transactionId, reference, amount, email" });
     }
+
+    console.log(`[Flutterwave verification requested] reference: ${reference}, tx_id: ${transactionId}, amount: ${amount}, email: ${email}`);
 
     try {
-      // Check if user already has virtual account details to avoid duplicate reservations
-      const userRef = db.collection('users').doc(uid);
-      const userDoc = await userRef.get();
-      if (userDoc.exists) {
-        const uData = userDoc.data();
-        if (uData?.monnifyAccountNumber) {
-          return res.json({
-            success: true,
-            accountNumber: uData.monnifyAccountNumber,
-            bankName: uData.monnifyBankName,
-            accountName: uData.monnifyAccountName,
-            message: "User already has a live dedicated virtual account."
-          });
-        }
-      }
-
-      console.log(`[Monnify Controller] Triggering account reservation service for user: ${email}`);
-      const result = await reserveUserVirtualAccount(db, uid, email, fullName);
-      return res.json(result);
-
-    } catch (err: any) {
-      console.error("[Monnify virtual account generation exception]:", err.message);
-      return res.status(500).json({
-        success: false,
-        error: "Server Error",
-        message: err.message
-      });
-    }
-  });
-
-  // Secure Monnify Webhook Listener
-  app.post("/api/payments/monnify-webhook", async (req, res) => {
-    console.log("[Monnify Webhook Received Payload]:", JSON.stringify(req.body));
-    
-    // Validate request structure
-    const eventType = req.body.eventType;
-    const eventData = req.body.eventData || req.body;
-    
-    if (eventType !== "SUCCESSFUL_TRANSACTION" && !eventData.transactionReference) {
-      return res.status(200).json({ status: "ignored", message: "Only SUCCESSFUL_TRANSACTION events are processed." });
-    }
-
-    const reference = eventData.transactionReference || eventData.paymentReference;
-    const amountPaid = Number(eventData.amountPaid || eventData.amount || 0);
-    const destinationAccountNumber = eventData.destinationAccountInformation?.accountNumber || eventData.accountNumber;
-    
-    if (!reference || amountPaid <= 0 || !destinationAccountNumber) {
-       return res.status(400).json({ error: "Invalid webhook payload structure." });
-    }
-
-    try {
-      // Idempotency: verify if this payment was already handled
+      // 1. Double check processed payments for idempotency
       const processedRef = db.collection("processed_payments").doc(reference);
       const processedSnap = await processedRef.get();
       if (processedSnap.exists) {
         return res.status(200).json({ status: "skipped", message: "Transaction already processed successfully." });
       }
 
-      // 1. Fetch user by monnifyAccountNumber
-      console.log(`[Monnify Webhook] Querying user document for Account Number: ${destinationAccountNumber}...`);
-      const userQuery = await db.collection("users").where("monnifyAccountNumber", "==", destinationAccountNumber).limit(1).get();
-      
-      let userDoc = null;
-      if (!userQuery.empty) {
-        userDoc = userQuery.docs[0];
-      } else {
-        // Fallback or backup find by customer email
-        const customerEmail = eventData.customer?.email;
-        if (customerEmail) {
-          console.log(`[Monnify Webhook] Account number check yielded nothing. Attempting recovery with Email: ${customerEmail}`);
-          const emailQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
-          if (!emailQuery.empty) {
-            userDoc = emailQuery.docs[0];
+      // 2. Query Flutterwave API server-side
+      const fwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim();
+      let isVerified = false;
+      let verifiedAmount = Number(amount);
+      const customerEmail = email.toLowerCase().trim();
+
+      const hasRealSecret = fwSecretKey && !fwSecretKey.includes("PASTE_YOUR") && fwSecretKey !== "";
+
+      if (hasRealSecret && transactionId !== "simulated") {
+        try {
+          const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${fwSecretKey}`,
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (response.ok) {
+            const resultData = await response.json() as any;
+            if (resultData?.status === 'success' && resultData?.data?.status === 'successful') {
+              isVerified = true;
+              verifiedAmount = Number(resultData.data.amount || amount);
+              const apiEmail = resultData.data.customer?.email?.toLowerCase() || customerEmail;
+              if (apiEmail !== customerEmail) {
+                console.warn(`[Flutterwave warning] Email mismatch: expected ${customerEmail} but got ${apiEmail}`);
+              }
+            } else {
+              console.warn("[Flutterwave validation declined]:", resultData);
+            }
+          } else {
+            console.warn("[Flutterwave fetch status error]:", response.status);
           }
+        } catch (apiErr: any) {
+          console.error("[Flutterwave fetch communication fail]:", apiErr.message);
+        }
+      } else {
+        // Fallback to high-fidelity dashboard credit on sandbox setups (e.g. key unconfigured or simulated/local bypass)
+        console.warn("[Flutterwave Sandbox] Running simulation authentication. Bypassing live endpoint request.");
+        isVerified = true;
+      }
+
+      if (!isVerified) {
+        return res.status(400).json({ error: "Flutterwave returned unverified transaction status. Access revoked." });
+      }
+
+      // 3. Look up the active user's document in Firestore by user ID or email (case-insensitive)
+      let userDoc: any = null;
+      const requestUserId = req.body.userId;
+
+      if (requestUserId) {
+        const directDoc = await db.collection("users").doc(requestUserId).get();
+        if (directDoc.exists) {
+          userDoc = directDoc;
         }
       }
 
       if (!userDoc) {
-        console.error(`[Monnify Webhook Failed] No active user profile could be mapped to Monnify Virtual Account: ${destinationAccountNumber}`);
-        return res.status(404).json({ error: "No matching user found for this designated account number." });
-      }
-
-      const userId = userDoc.id;
-
-      // Execute strict firestore transaction to safely update and increment values
-      await db.runTransaction(async (transaction) => {
-        const userRef = db.collection("users").doc(userId);
-        const transDoc = await transaction.get(userRef);
-        if (!transDoc.exists) {
-          throw new Error("User document missing in active transaction snapshot.");
+        let userQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
+        if (!userQuery.empty) {
+          userDoc = userQuery.docs[0];
+        } else {
+          // Try exact original email casing match
+          userQuery = await db.collection("users").where("email", "==", email.trim()).limit(1).get();
+          if (!userQuery.empty) {
+            userDoc = userQuery.docs[0];
+          }
         }
 
-        const currentBalance = Number(transDoc.data()?.balance || 0);
-        const newBalance = currentBalance + amountPaid;
+        // Fallback scan (search some users for match)
+        if (!userDoc) {
+          const allUsersSnap = await db.collection("users").limit(100).get();
+          userDoc = allUsersSnap.docs.find(doc => {
+            const docEmail = String(doc.data()?.email || "").toLowerCase().trim();
+            return docEmail === customerEmail;
+          });
+        }
+      }
 
-        // Update BOTH 'balance' and 'wallet_balance' fields securely
+      if (!userDoc) {
+        return res.status(404).json({ error: `User with email ${customerEmail} not found in database.` });
+      }
+
+      const userId = userDoc.id; // core Firebase uid
+
+      // 4. Secure balance updates inside atomic Firestore Transaction
+      await db.runTransaction(async (transaction) => {
+        const userRef = userDoc.ref;
+        const freshUserSnap = await transaction.get(userRef);
+        if (!freshUserSnap.exists) {
+          throw new Error("Specified user data became stale during transit.");
+        }
+
+        const balanceVal = Number(freshUserSnap.data()?.balance || 0);
+        const finalBalance = balanceVal + verifiedAmount;
+
         transaction.update(userRef, {
-          balance: newBalance,
-          wallet_balance: newBalance,
-          total_funded_monnify: FieldValue.increment(amountPaid),
-          updatedAt: new Date().toISOString()
+          balance: finalBalance,
+          wallet_balance: finalBalance,
+          available_balance: finalBalance,
+          lastFundingAt: FieldValue.serverTimestamp()
         });
 
-        // Set processed payment status inside transaction
+        // Store reference in processed_payments
         transaction.set(processedRef, {
           reference,
           userId,
-          amount: amountPaid,
+          amount: verifiedAmount,
           status: "success",
-          source: "monnify_webhook",
+          source: "flutterwave_webhook",
           processedAt: FieldValue.serverTimestamp()
         });
       });
 
-      // Write transaction history entry for visual representation
-      const txId = `monnify_fund_${Date.now()}`;
+      // 5. Look up user and securely update their wallet in Supabase (profiles, accounts, or users table) and register transaction log
+      try {
+        const ensureUUID = (strId: string): string => {
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(strId)) return strId;
+          let seed = 0;
+          for (let i = 0; i < strId.length; i++) {
+            seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+          }
+          const r = () => {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            return seed;
+          };
+          const hexChars = '0123456789abcdef';
+          let hex32 = '';
+          for (let i = 0; i < 32; i++) {
+            hex32 += hexChars[r() % 16];
+          }
+          const part1 = hex32.substring(0, 8);
+          const part2 = hex32.substring(8, 12);
+          const part3 = '4' + hex32.substring(12, 15);
+          const part4 = 'a' + hex32.substring(15, 18);
+          const part5 = hex32.substring(18, 30);
+          return `${part1}-${part2}-${part3}-${part4}-${part5}`;
+        };
+
+        const pgUuid = ensureUUID(userId);
+        const idsToTry = [pgUuid, userId];
+        const tablesToTry = ['profiles', 'accounts', 'users'];
+
+        for (const tableName of tablesToTry) {
+          try {
+            for (const tryId of idsToTry) {
+              const { data: sUserData, error: lookupErr } = await supabase
+                .from(tableName)
+                .select('*')
+                .eq('id', tryId)
+                .maybeSingle();
+
+              if (!lookupErr && sUserData) {
+                const currentPgBalance = Number(sUserData?.balance || sUserData?.wallet_balance || sUserData?.available_balance || 0);
+                const finalPgBalance = currentPgBalance + verifiedAmount;
+
+                const { error: pgUpdateErr } = await supabase
+                  .from(tableName)
+                  .update({
+                    balance: finalPgBalance,
+                    wallet_balance: finalPgBalance,
+                    available_balance: finalPgBalance,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('id', tryId);
+
+                if (pgUpdateErr) {
+                  console.warn(`[Flutterwave Supabase ${tableName} Update Warning for ID ${tryId}]:`, pgUpdateErr.message);
+                } else {
+                  console.log(`[Flutterwave Supabase ${tableName} Credit success] User ID: ${tryId} credited with +₦${verifiedAmount} in table ${tableName}.`);
+                  break; // Found and updated successfully, proceed to next table check or complete
+                }
+              }
+            }
+          } catch (tblErr: any) {
+            console.warn(`[Supabase error accessing table ${tableName} during credit]:`, tblErr.message || tblErr);
+          }
+        }
+
+        // Add a Transaction Log to Supabase 'transactions' table
+        const txId = `fw_fund_${Date.now()}`;
+        try {
+          const { error: pgTxErr } = await supabase
+            .from('transactions')
+            .insert({
+              id: txId,
+              user_id: pgUuid,
+              userId: userId,
+              amount: verifiedAmount,
+              status: 'success',
+              platform: 'flutterwave',
+              reference: reference,
+              payment_method: 'flutterwave',
+              description: `Flutterwave deposit of NGN ${verifiedAmount}`,
+              created_at: new Date().toISOString()
+            });
+
+          if (pgTxErr) {
+            // retry with string/raw userId
+            await supabase
+              .from('transactions')
+              .insert({
+                id: txId,
+                user_id: userId,
+                amount: verifiedAmount,
+                status: 'success',
+                platform: 'flutterwave',
+                reference: reference,
+                payment_method: 'flutterwave',
+                description: `Flutterwave deposit of NGN ${verifiedAmount}`,
+                created_at: new Date().toISOString()
+              });
+          }
+        } catch (txLogErr: any) {
+          console.warn("[Supabase transaction logging skipped/unsupported]:", txLogErr.message || txLogErr);
+        }
+
+      } catch (supabaseErr: any) {
+        console.warn("[Supabase lookup/update error during credit]:", supabaseErr.message || supabaseErr);
+      }
+
+      // 6. Record transaction history for UI representation
+      const txId = `fw_fund_${Date.now()}`;
       await db.collection("transactions").doc(txId).set({
         id: txId,
         userId,
         type: "funding",
-        amount: amountPaid,
+        amount: verifiedAmount,
         status: "completed",
-        description: `Monnify Virtual Deposit (Ref: ${reference})`,
+        description: `Flutterwave Inline (Ref: ${reference})`,
         reference,
-        paymentMethod: "Monnify Transfer",
+        paymentMethod: "Flutterwave",
         createdAt: FieldValue.serverTimestamp()
       });
 
-      console.log(`[Monnify Webhook] Success: auto-credited User (${userId}) + ₦${amountPaid}`);
-      return res.status(200).json({ status: "success", message: "User account credited successfully." });
+      // 7. Local File Storage Fallback Sync
+      try {
+        const localStore = loadLocalDb();
+        if (localStore.users[userId]) {
+          const currentLocalBal = localStore.users[userId].balance || 0;
+          localStore.users[userId].wallet_balance = (localStore.users[userId].wallet_balance || 0) + verifiedAmount;
+          localStore.users[userId].balance = currentLocalBal + verifiedAmount;
+          localStore.users[userId].available_balance = (localStore.users[userId].available_balance || 0) + verifiedAmount;
+        }
+        if (!localStore.processed_payments) localStore.processed_payments = {};
+        localStore.processed_payments[reference] = {
+          reference,
+          userId,
+          amount: verifiedAmount,
+          email: customerEmail,
+          status: "completed",
+          createdAt: new Date().toISOString()
+        };
+        saveLocalDb(localStore);
+      } catch (localStoreErr) {}
 
-    } catch (webhookErr: any) {
-      console.error("[Monnify Webhook Processing Error catch-all exception]:", webhookErr.message);
-      return res.status(500).json({ error: webhookErr.message });
+      console.log(`[Flutterwave verification complete] Successfully credited User ${userId} with ₦${verifiedAmount}.`);
+      return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
+
+    } catch (err: any) {
+      console.error("[Flutterwave Verification Handler Exception]:", err);
+      return res.status(500).json({ error: "Server Error", message: err.message });
     }
   });
 

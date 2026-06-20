@@ -118,6 +118,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /utility_plans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /exam_plans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /users/{userId}/referrals/{referredUserId} {
       allow read, list: if isOwner(userId) || isAdmin();
       allow create: if isSignedIn() && request.auth.uid == referredUserId;

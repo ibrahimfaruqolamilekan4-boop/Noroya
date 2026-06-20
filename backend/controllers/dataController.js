@@ -3,6 +3,7 @@ import { purchaseData } from '../services/vtuService.js';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
+import { supabase } from "../../src/lib/supabase.js";
 
 // Load local database utilities to maintain compatibility with server.ts fallback system
 const LOCAL_DB_PATH = path.join(process.cwd(), "local-db.json");
@@ -257,28 +258,46 @@ export async function v1DataPurchase(req, res) {
     return res.status(400).json({ error: "Missing required parameters: userId, phone_number, network, peyflex_variation_id" });
   }
 
-  // 1. Resolve selected plan dynamically from live database (Firestore or local fallback)
+  // 1. Resolve selected plan dynamically from Supabase (as primary source of truth) with Firestore as fallback
   let plan = null;
+  
   try {
-    const { getFirestore } = await import('firebase-admin/firestore');
-    const dynamicDb = getFirestore();
-    
-    // Check data_plans collection as the source of truth
-    const dataPlansSnap = await dynamicDb.collection('data_plans').get();
-    
-    const allPlans = dataPlansSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    
-    // Find matching plan by peyflex_variation_id, peyflex_id, or doc id
-    plan = allPlans.find(p => 
-      String(p.peyflex_variation_id || '').toLowerCase() === String(variationId).toLowerCase() ||
-      String(p.peyflex_id || '').toLowerCase() === String(variationId).toLowerCase() ||
-      String(p.id || '').toLowerCase() === String(variationId).toLowerCase()
-    );
+    const { data: supabasePlan, error: pgError } = await supabase
+      .from('data_plans')
+      .select('*')
+      .or(`peyflex_variation_id.eq.${variationId},peyflex_id.eq.${variationId},id.eq.${variationId}`)
+      .maybeSingle();
+
+    if (supabasePlan) {
+      plan = supabasePlan;
+      console.log(`[Supabase Resolve SUCCESS] Row fetched successfully from 'data_plans' for variation: ${variationId}`);
+    } else if (pgError) {
+      console.warn("[v1DataPurchase] Supabase lookup query returned warning:", pgError.message);
+    }
   } catch (err) {
-    console.warn("[v1DataPurchase] Skipping firestore dynamic lookup, trying local JSON fallback:", err.message);
+    console.warn("[v1DataPurchase] Supabase direct query skipped/caught exception:", err.message);
   }
 
-  // Fallback to local-db.json if firestore was offline or not matching
+  // Fallback 1: Firestore data_plans mapping
+  if (!plan) {
+    try {
+      const { getFirestore } = await import('firebase-admin/firestore');
+      const dynamicDb = getFirestore();
+      
+      const dataPlansSnap = await dynamicDb.collection('data_plans').get();
+      const allPlans = dataPlansSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      plan = allPlans.find(p => 
+        String(p.peyflex_variation_id || '').toLowerCase() === String(variationId).toLowerCase() ||
+        String(p.peyflex_id || '').toLowerCase() === String(variationId).toLowerCase() ||
+        String(p.id || '').toLowerCase() === String(variationId).toLowerCase()
+      );
+    } catch (err) {
+      console.warn("[v1DataPurchase] Skipping firestore dynamic lookup, trying local JSON fallback:", err.message);
+    }
+  }
+
+  // Fallback 2: Local JSON database
   if (!plan) {
     try {
       const localStore = loadLocalDb();
@@ -298,9 +317,10 @@ export async function v1DataPurchase(req, res) {
     }
   }
 
-  const retailPrice = Number(retail_price || plan?.retail_price || plan?.price || 0);
+  // Initialize raw retailPrice value first, which we will re-verify securely inside transactions
+  let retailPrice = Number(retail_price || plan?.retail_price || plan?.price || 0);
   const planName = plan_name || plan?.plan_name || plan?.name || `${network} Dynamic Bundle`;
-  console.log(`[V1 DATA PURCHASE START] User: ${userId}, Target: ${phone_number}, Plan: ${planName} (${variationId}), Price: ₦${retailPrice}`);
+  console.log(`[V1 DATA PURCHASE START] User: ${userId}, Target: ${phone_number}, Plan: ${planName} (${variationId})`);
 
   let isDeductedInFirestore = false;
   let userRef = null;
@@ -319,6 +339,25 @@ export async function v1DataPurchase(req, res) {
       }
       
       const userData = userDoc.data();
+
+      // Look up user's role and flags to determine if they are on reseller tier
+      const isReseller = userData.is_reseller === true || 
+                         userData.user_role === 'reseller' || 
+                         userData.role === 'reseller';
+
+      // Deduct the exact mapped 'reseller_price' or 'price' directly from Supabase/Firestore row
+      let correctPrice = Number(plan?.price || plan?.retail_price || plan?.amount || 0);
+      if (isReseller) {
+        if (plan?.reseller_price !== undefined && plan?.reseller_price !== null && plan?.reseller_price > 0) {
+          correctPrice = Number(plan.reseller_price);
+        } else if (plan?.resellerPrice !== undefined && plan?.resellerPrice !== null && plan?.resellerPrice > 0) {
+          correctPrice = Number(plan.resellerPrice);
+        }
+      }
+
+      // Overwrite the retailPrice variable scope with secure calculated price
+      retailPrice = correctPrice;
+
       // * Secure Check: Read the selected plan's retail price. 
       // Check if the user's document field 'wallet_balance' contains sufficient funds.
       const availableBalance = userData.wallet_balance !== undefined 
@@ -331,12 +370,12 @@ export async function v1DataPurchase(req, res) {
         throw new Error("Insufficient Balance");
       }
 
-      // * Wallet Debit: Atomically subtract the retail price from the user's Firestore 'wallet_balance' collection ledger.
+      // * Wallet Debit: Atomically subtract the verified price from the user's Firestore 'wallet_balance' collection ledger.
       const finalBalance = availableBalance - retailPrice;
       transaction.update(userRef, {
         wallet_balance: finalBalance,
         available_balance: finalBalance,
-        balance: finalBalance // Sync balance fields as well
+        balance: finalBalance
       });
       isDeductedInFirestore = true;
     });
@@ -356,6 +395,21 @@ export async function v1DataPurchase(req, res) {
     if (!localUser) {
       return res.status(404).json({ error: "User profile record not found. Please log in again." });
     }
+
+    const isReseller = localUser.is_reseller === true || 
+                       localUser.user_role === 'reseller' || 
+                       localUser.role === 'reseller';
+
+    let correctPrice = Number(plan?.price || plan?.retail_price || plan?.amount || 0);
+    if (isReseller) {
+      if (plan?.reseller_price !== undefined && plan?.reseller_price !== null && plan?.reseller_price > 0) {
+        correctPrice = Number(plan.reseller_price);
+      } else if (plan?.resellerPrice !== undefined && plan?.resellerPrice !== null && plan?.resellerPrice > 0) {
+        correctPrice = Number(plan.resellerPrice);
+      }
+    }
+    retailPrice = correctPrice;
+
     const currentLocBal = localUser.wallet_balance !== undefined
       ? Number(localUser.wallet_balance)
       : (localUser.available_balance !== undefined

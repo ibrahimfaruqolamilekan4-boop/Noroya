@@ -2,11 +2,13 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Smartphone, Zap, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
-import type { NetworkType, ServicePlan } from '../types';
+import type { NetworkType, ServicePlan, UserProfile } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
+import SuccessFeedback from './SuccessFeedback';
 
 const NETWORKS: { id: NetworkType, name: string, color: string }[] = [
   { id: 'MTN', name: 'MTN Nigeria', color: 'bg-yellow-400 text-slate-900' },
@@ -14,6 +16,21 @@ const NETWORKS: { id: NetworkType, name: string, color: string }[] = [
   { id: 'Glo', name: 'Glo World', color: 'bg-green-600 text-white' },
   { id: '9mobile', name: '9mobile', color: 'bg-emerald-900 text-white' },
 ];
+
+export function getPlanPriceForUser(plan: ServicePlan | null | undefined, user: UserProfile | null | undefined): number {
+  if (!plan) return 0;
+  const isReseller = user ? (user.is_reseller || user.user_role === 'reseller' || user.role === 'reseller') : false;
+  
+  if (isReseller) {
+    if (plan.reseller_price !== undefined && plan.reseller_price !== null && plan.reseller_price > 0) {
+      return Number(plan.reseller_price);
+    }
+    if (plan.resellerPrice !== undefined && plan.resellerPrice !== null && plan.resellerPrice > 0) {
+      return Number(plan.resellerPrice);
+    }
+  }
+  return Number(plan.retail_price ?? plan.price ?? plan.amount ?? 0);
+}
 
 export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) {
   const { user } = useAuth();
@@ -55,11 +72,63 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     }
   }, [phoneNumber]);
 
-  // Load plans from 'data_plans' collection on page mount using real-time onSnapshot sync
+  // Load plans from Supabase (PostgreSQL) and Firestore on page mount using real-time sync / Supabase Realtime Subscriptions
   React.useEffect(() => {
-    console.log("Attempting to connect to Firestore collection: 'data_plans'...");
+    console.log("Connecting to Supabase and Firestore real-time streams for: 'data_plans'...");
     setFetchingPlans(true);
     let fallbackLoaded = false;
+
+    // Helper helper to format standard schema models nicely
+    const normalizeSupabasePlans = (rawList: any[]) => {
+      const now = new Date();
+      return rawList
+        .filter((p: any) => {
+          const expAt = p.expires_at || p.expiresAt;
+          if (!expAt) return true;
+          return new Date(expAt) > now;
+        })
+        .map((p: any) => {
+          const pName = p.plan_name || p.name || p.planName || `${p.network_type || p.network || ''} Plan`;
+          const pPrice = Number(p.retail_price || p.price || p.amount || 0);
+          const rPrice = Number(p.reseller_price || p.resellerPrice || pPrice);
+          const net = String(p.network_type || p.network || 'MTN').toUpperCase();
+          const pType = p.type || 'data';
+          const pVarId = p.peyflex_id || p.peyflex_variation_id || p.apiPlanId || p.id;
+          const pValidity = p.validity_days || p.duration || p.validity || '30 Days';
+          
+          const pt = String(p.planType || p.plan_category || '').toUpperCase();
+          const pNameUpper = String(pName).toUpperCase();
+          let planCategory = "GIFTING";
+          if (pt.includes("SME") || pNameUpper.includes("SME")) {
+            planCategory = "SME";
+          } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+            planCategory = "CG";
+          }
+
+          return {
+            id: p.id,
+            ...p,
+            name: pName,
+            plan_name: pName,
+            planName: pName,
+            price: pPrice,
+            retail_price: pPrice,
+            resellerPrice: rPrice,
+            reseller_price: rPrice,
+            amount: pPrice,
+            network_type: net,
+            network: net,
+            type: pType,
+            peyflex_id: pVarId,
+            peyflex_variation_id: pVarId,
+            apiPlanId: pVarId,
+            duration: pValidity,
+            validity_days: pValidity,
+            plan_category: planCategory,
+            planType: planCategory
+          };
+        });
+    };
 
     const fetchBackupPlans = async () => {
       try {
@@ -68,44 +137,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           const plansList = await response.json();
           if (Array.isArray(plansList) && plansList.length > 0) {
             console.log("Successfully loaded plans via fallback API /api/plans:", plansList);
-            const mapped = plansList.map((p: any) => {
-              const pName = p.plan_name || p.name || p.planName || `${p.network_type || p.network || ''} Plan`;
-              const pPrice = Number(p.retail_price || p.price || p.amount || 0);
-              const net = String(p.network_type || p.network || 'MTN').toUpperCase();
-              const pType = p.type || 'data';
-              const pVarId = p.peyflex_id || p.peyflex_variation_id || p.apiPlanId || p.id;
-              const pValidity = p.validity_days || p.duration || p.validity || '30 Days';
-              
-              const pt = String(p.planType || p.plan_category || '').toUpperCase();
-              const pNameUpper = String(pName).toUpperCase();
-              let planCategory = "GIFTING";
-              if (pt.includes("SME") || pNameUpper.includes("SME")) {
-                planCategory = "SME";
-              } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-                planCategory = "CG";
-              }
-
-              return {
-                id: p.id,
-                ...p,
-                name: pName,
-                plan_name: pName,
-                planName: pName,
-                price: pPrice,
-                retail_price: pPrice,
-                amount: pPrice,
-                network_type: net,
-                network: net,
-                type: pType,
-                peyflex_id: pVarId,
-                peyflex_variation_id: pVarId,
-                apiPlanId: pVarId,
-                duration: pValidity,
-                validity_days: pValidity,
-                plan_category: planCategory,
-                planType: planCategory
-              };
-            });
+            const mapped = normalizeSupabasePlans(plansList);
             setAllPlans(mapped);
             fallbackLoaded = true;
           }
@@ -117,11 +149,52 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
       }
     };
 
-    fetchBackupPlans();
+    // 1. Initial Load and Realtime Subscription using official Supabase Client
+    const initSupabaseSync = async () => {
+      try {
+        const { data: initialPlans, error } = await supabase
+          .from('data_plans')
+          .select('*')
+          .gt('expires_at', new Date().toISOString());
 
+        if (error) {
+          throw error;
+        }
+
+        if (initialPlans && initialPlans.length > 0) {
+          console.log("[Supabase Sync] Ingested raw postgres live structures:", initialPlans.length);
+          setAllPlans(normalizeSupabasePlans(initialPlans));
+          setFetchingPlans(false);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase Realtime Initial Fetch] Falling back to traditional load strategy:", err.message);
+      }
+    };
+
+    initSupabaseSync();
+
+    // Subscribe to pg realtime events
+    const supabaseChannel = supabase
+      .channel('realtime:data_plans')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'data_plans' },
+        async () => {
+          console.log("[Supabase Realtime] Change detected in postgres plans, reloading list...");
+          const { data: updatedPlans } = await supabase
+            .from('data_plans')
+            .select('*')
+            .gt('expires_at', new Date().toISOString());
+          if (updatedPlans) {
+            setAllPlans(normalizeSupabasePlans(updatedPlans));
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Fallback Firebase Realtime onSnapshot connection to preserve continuous operability
     const q = query(collection(db, "data_plans"));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      console.log(`Firestore metadata: metadata.fromCache = ${querySnapshot.metadata.fromCache}`);
+    const unsubscribeFirebase = onSnapshot(q, (querySnapshot) => {
       const plansList: any[] = [];
       const now = new Date();
       
@@ -134,11 +207,14 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           } else {
             expiresAtDate = new Date(data.expiresAt);
           }
+        } else if (data.expires_at) {
+          expiresAtDate = new Date(data.expires_at);
         }
         
         if (!expiresAtDate || expiresAtDate > now) {
           const pName = data.plan_name || data.name || data.planName || `${data.network_type || data.network || ''} Plan`;
           const pPrice = Number(data.retail_price || data.price || data.amount || 0);
+          const rPrice = Number(data.reseller_price || data.resellerPrice || pPrice);
           const network = String(data.network_type || data.network || 'MTN').toUpperCase();
           const pType = data.type || 'data';
           const pVarId = data.peyflex_id || data.peyflex_variation_id || data.apiPlanId || doc.id;
@@ -161,6 +237,8 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
             planName: pName,
             price: pPrice,
             retail_price: pPrice,
+            resellerPrice: rPrice,
+            reseller_price: rPrice,
             amount: pPrice,
             network_type: network,
             network: network,
@@ -176,17 +254,22 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         }
       });
       
-      console.log(`Successfully loaded ${plansList.length} un-expired plans from Firestore:`, plansList);
-      setAllPlans(plansList);
-      setFetchingPlans(false);
+      if (plansList.length > 0) {
+        console.log(`[Firebase Fallback Sync] Activated with ${plansList.length} un-expired records`);
+        setAllPlans(plansList);
+        setFetchingPlans(false);
+      }
     }, (error) => {
-      console.error("CRITICAL FIRESTORE ERROR UNABLE TO READ DATA:", error.code, error.message);
-      if (!fallbackLoaded) {
+      console.warn("Alternative fallback listener passive error:", error.message);
+      if (!fallbackLoaded && allPlans.length === 0) {
         fetchBackupPlans();
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      supabase.removeChannel(supabaseChannel);
+      unsubscribeFirebase();
+    };
   }, []);
 
   // Filter plans based on selected network with precise case-insensitive matching & 7-day lifespans
@@ -247,7 +330,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     setPurchaseStatus('idle');
 
     const amount = type === 'data' 
-      ? Number(selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) 
+      ? getPlanPriceForUser(selectedPlan, user) 
       : Number(airtimeAmount);
 
     try {
@@ -299,294 +382,262 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   const currentNetworkObject = NETWORKS.find(n => n.id === network);
 
   return (
-    <div className="bg-[#F4F4F9] rounded-xl border-2 border-black overflow-hidden shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] font-sans" id="vtu_purchase_panel">
+    <div className="bg-[#F8F9FA] rounded-[2rem] border border-slate-200 overflow-hidden shadow-xl max-w-xl mx-auto font-sans" id="vtu_purchase_panel">
       
-      {/* Header with beautiful Purple Accent and solid bottom border */}
-      <div className="bg-[#5B21B6] border-b-2 border-black p-6 text-white text-left relative overflow-hidden">
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center border-2 border-white">
-            {type === 'data' ? <Smartphone size={20} className="text-white" /> : <Zap size={20} className="text-white" />}
-          </div>
-          <div>
-            <h3 className="font-black text-lg uppercase tracking-tight">Buy {type === 'data' ? 'Data Bundle' : 'Airtime'}</h3>
-            <p className="text-xs text-purple-100 font-black">CONNECTED TO PEYFLEX DIRECT VTU NODES</p>
-          </div>
-        </div>
+      {/* Visual Header */}
+      <div className="bg-[#1E293B] p-6 text-white text-center relative">
+        <h3 className="font-extrabold text-xl tracking-tight uppercase">
+          {type === 'data' ? 'Buy Data Plan' : 'Buy Airtime Recharge'}
+        </h3>
+        <p className="text-xs text-slate-300 mt-1 uppercase font-semibold">
+          {type === 'data' ? 'Get Cheap High-Speed Internet Bundles' : 'Instant Automatic Airtime Delivery'}
+        </p>
       </div>
 
-      <div className="p-6 md:p-8 bg-white">
+      <div className="p-6 sm:p-8 bg-white">
         
         {purchaseStatus === 'idle' && (
           <form onSubmit={(e) => { e.preventDefault(); setShowConfirmModal(true); }} className="space-y-6">
             
-            {/* Field 1: Network Selection Header (Neo-Brutalist Premium Graphic Tickets) */}
-            <div className="space-y-3">
-              <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
-                Select Network Operator
-              </label>
-              <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-none snap-x -mx-1 px-1">
-                {NETWORKS.map((nw) => {
-                  const isSelected = String(network).toLowerCase() === String(nw.id).toLowerCase();
-                  return (
-                    <motion.button
-                      key={nw.id}
-                      type="button"
-                      whileTap={{ scale: 0.94 }}
-                      onClick={() => {
-                        setNetwork(nw.id as NetworkType);
-                        toast.success(`Active Carrier: ${nw.name}`);
-                      }}
-                      className={cn(
-                        "flex-shrink-0 snap-start flex items-center gap-3 px-5 py-4 rounded-xl border-2 border-black text-sm font-extrabold transition-all cursor-pointer min-w-[150px] select-none",
-                        isSelected 
-                          ? nw.id === 'MTN'
-                            ? 'bg-[#FFCC00] text-black shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]'
-                            : nw.id === 'Airtel'
-                            ? 'bg-[#E60000] text-white shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]'
-                            : nw.id === 'Glo'
-                            ? 'bg-[#22B14C] text-white shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]'
-                            : 'bg-[#005A36] text-white shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]'
-                          : "bg-white text-black shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:-translate-y-0.5 hover:shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]"
-                      )}
-                    >
-                      <span className={cn(
-                        "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black uppercase text-center shrink-0 border border-black/20",
-                        nw.color
-                      )}>
-                        {nw.id[0]}
-                      </span>
-                      <div className="text-left">
-                        <p className="text-xs font-mono font-black uppercase tracking-tight leading-none">{nw.id}</p>
-                        <p className={cn("text-[9px] font-black uppercase tracking-tight mt-0.5", isSelected ? "text-current opacity-80" : "text-slate-500")}>
-                          {isSelected ? "Active" : "Select"}
-                        </p>
-                      </div>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
-              {/* Field 2: Phone Number Input */}
-              <div className="space-y-2">
-                <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
-                  Recipient Phone Number
-                </label>
-                <div className="relative">
-                  <input
-                    id="phone_number_input"
-                    required
-                    type="tel"
-                    placeholder="e.g. 08031234567"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').substring(0, 11))}
-                    className="w-full bg-white border-2 border-black rounded-xl px-5 py-4 font-black text-sm text-black focus:outline-none focus:bg-purple-55 placeholder-black/40 transition-all tracking-wider font-mono shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] focus:-translate-y-0.5"
-                  />
-                  {currentNetworkObject && (
-                    <span className={cn(
-                      "absolute right-4 top-1/2 -translate-y-1/2 px-2.5 py-1 text-[10px] font-black rounded-lg uppercase tracking-tight border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]",
-                      network === 'MTN' && 'bg-[#FFCC00] text-black',
-                      network === 'Airtel' && 'bg-[#E60000] text-white',
-                      network === 'Glo' && 'bg-[#22B14C] text-white',
-                      network === '9mobile' && 'bg-[#005A36] text-white'
-                    )}>
-                      {network}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Field 3: Airtime Top-Up (Only shown if type is airtime) */}
-              {type === 'airtime' ? (
-                <div className="space-y-2">
-                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
-                    Enter Airtime Amount
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-black text-sm">₦</span>
-                    <input
-                      id="airtime_amount_input"
-                      required
-                      type="number"
-                      placeholder="e.g. 500"
-                      min="50"
-                      max="50000"
-                      value={airtimeAmount}
-                      onChange={(e) => setAirtimeAmount(e.target.value)}
-                      className="w-full bg-white border-2 border-black rounded-xl pl-10 pr-5 py-4 font-black text-sm text-black focus:outline-none focus:bg-purple-55 placeholder-black/40 transition-all font-mono shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] focus:-translate-y-0.5"
-                    />
-                  </div>
-                </div>
-              ) : (
-                /* Static category helper for data bundles */
-                <div className="space-y-2">
-                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">
-                    Plan Category Filters
-                  </label>
-                  <div className="flex gap-2">
-                    {['ALL', 'SME', 'GIFTING', 'CG'].map((cat) => {
-                      const isSelected = cat === 'ALL' ? planType === '' : planType.toUpperCase() === cat;
-                      return (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => {
-                            const newType = cat === 'ALL' ? '' : cat;
-                            setPlanType(newType);
-                          }}
-                          className={cn(
-                            "flex-1 py-3 text-[10px] uppercase font-black rounded-lg border-2 border-black tracking-tight transition-all text-center",
-                            isSelected
-                              ? 'bg-[#5B21B6] text-white shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] translate-x-[1px] translate-y-[1px]'
-                              : "bg-white text-black hover:bg-slate-50 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
-                          )}
-                        >
-                          {cat}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Field 4: Custom Premium Plan Grid (Only for Data) */}
+            {/* Field 0: Codes for Data Balance Banner (Only for Data) */}
             {type === 'data' && (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center pr-1">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Select Data Bundle Pack
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-black uppercase text-slate-500 tracking-wider">
+                  Codes for Data Balance:
+                </h4>
+                <div className="grid grid-cols-1 gap-2 text-xs font-bold font-mono">
+                  <div className="bg-[#FEF9C3] text-yellow-800 border border-yellow-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
+                    MTN [SME] *461*4#
+                  </div>
+                  <div className="bg-[#FEF3C7] text-amber-800 border border-amber-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
+                    MTN [Gifting] *131*4# or *460*260#
+                  </div>
+                  <div className="bg-[#F3E8FF] text-purple-850 border border-purple-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
+                    9mobile [Gifting] *228#
+                  </div>
+                  <div className="bg-[#FEE2E2] text-red-800 border border-red-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
+                    Airtel *140#
+                  </div>
+                  <div className="bg-[#DCFCE7] text-green-800 border border-green-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
+                    Glo *127*0#
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Field 1: Select Network Dropdown */}
+            <div className="space-y-2">
+              <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                Network *
+              </label>
+              <select
+                required
+                value={network || ''}
+                onChange={(e) => {
+                  setNetwork(e.target.value as NetworkType);
+                  toast.success(`Active Carrier: ${e.target.value}`);
+                }}
+                className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
+              >
+                <option value="">---------- Select Network ----------</option>
+                {NETWORKS.map((nw) => (
+                  <option key={nw.id} value={nw.id}>{nw.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Field 2: Select Data Type (Only for Data) */}
+            {type === 'data' && (
+              <div className="space-y-2">
+                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                  Data type *
+                </label>
+                <select
+                  required
+                  value={planType}
+                  onChange={(e) => {
+                    setPlanType(e.target.value);
+                  }}
+                  className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
+                >
+                  <option value="">---------- Choose Data Type ----------</option>
+                  <option value="SME">SME1</option>
+                  <option value="CG">CORPORATE GIFTING</option>
+                  <option value="SME">SME</option>
+                  <option value="SME">SME2</option>
+                  <option value="GIFTING">AWOOF DATA</option>
+                  <option value="ALL">ALL TYPES</option>
+                </select>
+                <p className="text-[10px] text-slate-500 font-bold tracking-tight">
+                  Select Plan Type SME or GIFTING or CORPORATE GIFTING
+                </p>
+              </div>
+            )}
+
+            {/* Field 3: Recipient Phone Number */}
+            <div className="space-y-2">
+              <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                Mobile number *
+              </label>
+              <input
+                id="phone_number_input"
+                required
+                type="tel"
+                placeholder="e.g. 08031234567"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').substring(0, 11))}
+                className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono shadow-sm tracking-wider"
+              />
+            </div>
+
+            {/* Field 4: Select Dynamic Bundle Plan Option (Only for Data) */}
+            {type === 'data' && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-white pr-1">
+                  <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                    Plan *
                   </label>
                   {plans.length > 0 && (
-                    <span className="text-[10px] text-slate-400 font-extrabold font-mono uppercase bg-slate-50 px-2 py-1 rounded-md">
-                      {plans.filter(p => checkCategoryMatch(p)).length} Packs listed
+                    <span className="text-[9px] text-slate-400 font-extrabold font-mono uppercase bg-slate-50 px-2 py-0.5 rounded-md">
+                      {plans.filter(p => checkCategoryMatch(p)).length} available
                     </span>
                   )}
                 </div>
 
                 {fetchingPlans ? (
-                  <div className="w-full bg-slate-50/80 border border-slate-150 rounded-2xl p-8 flex flex-col items-center justify-center gap-2 border-dashed">
-                    <Loader2 className="animate-spin text-purple-655" size={24} />
-                    <span className="text-xs text-slate-550 font-bold">Querying available plans from direct Firestore DB...</span>
+                  <div className="w-full bg-slate-50 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 border border-dashed border-slate-200">
+                    <Loader2 className="animate-spin text-blue-600" size={20} />
+                    <span className="text-xs text-slate-500 font-bold">Querying available plans from database...</span>
                   </div>
                 ) : !network ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center text-slate-455 text-xs font-bold leading-normal">
-                    📶 Choose network operator above to load dynamic products
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-slate-400 text-xs font-bold">
+                    📶 Choose network operator above to load products
                   </div>
                 ) : plans.filter(p => checkCategoryMatch(p)).length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-rose-150 bg-rose-50/20 p-10 text-center text-rose-550 text-xs font-semibold leading-normal">
-                    ⚠️ No compatible {planType || 'matching'} products found on Firestore for {network} network.
+                  <div className="rounded-2xl border border-dashed border-red-200 bg-rose-50/20 p-6 text-center text-rose-650 text-xs font-bold">
+                    ⚠️ No compatible {planType || 'matching'} products found for {network} network.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4.5 max-h-[300px] overflow-y-auto pr-1">
+                  <select
+                    required
+                    value={selectedPlan ? (selectedPlan.peyflex_variation_id || selectedPlan.id) : ''}
+                    onChange={(e) => {
+                      const matchedPlan = plans.find(p => (p.peyflex_variation_id || p.id) === e.target.value);
+                      if (matchedPlan) {
+                        setSelectedPlan(matchedPlan);
+                        toast.success(`Chosen Pack: ${matchedPlan.plan_name || matchedPlan.name}`);
+                      }
+                    }}
+                    className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
+                  >
+                    <option value="">---------- Select Data Bundle ----------</option>
                     {plans
                       .filter(p => checkCategoryMatch(p))
                       .map((p) => {
-                        const isSelected = (selectedPlan?.peyflex_variation_id || selectedPlan?.id) === (p.peyflex_variation_id || p.id);
                         const name = p.plan_name || p.planName || p.name || '';
-                        const price = p.retail_price || p.amount || p.price || 0;
+                        const price = getPlanPriceForUser(p, user);
                         const duration = p.validity_days || p.validity || p.duration || '30 Days';
-                        
-                        // Tag Integration: Parse the plan titles on load
-                        const isAwuf = name.toLowerCase().includes('awuf') || name.toLowerCase().includes('binge');
-                        const tagLabel = isAwuf ? (name.toLowerCase().includes('awuf') ? 'POPULAR AWUF' : 'SHORT-TERM') : null;
-
-                        // Size parsing display
-                        let sizeDisplay = name;
-                        const sizeMatch = name.match(/(\d+(?:\.\d+)?\s*(?:GB|MB|TB))/i);
-                        if (sizeMatch && sizeMatch[1]) {
-                          sizeDisplay = sizeMatch[1].toUpperCase();
-                        }
-
                         return (
-                          <motion.div
-                            key={p.id}
-                            whileHover={{ scale: 1.01 }}
-                            whileTap={{ scale: 0.99 }}
-                            onClick={() => {
-                              setSelectedPlan(p);
-                              toast.success(`Chosen Pack: ${name}`);
-                            }}
-                            className={cn(
-                              "relative cursor-pointer rounded-xl p-4 text-left border-2 border-black transition-all flex flex-col justify-between h-[115px] select-none",
-                              isSelected 
-                                ? "bg-purple-50 text-black shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] translate-x-[1px] translate-y-[1px]"
-                                : "bg-white text-black hover:-translate-y-0.5 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]"
-                            )}
-                          >
-                            {tagLabel && (
-                              <span className="absolute top-2.5 right-2.5 px-2 py-0.5 text-[7px] font-black uppercase text-white bg-black border border-white rounded-full tracking-wider shadow-sm">
-                                {tagLabel}
-                              </span>
-                            )}
-
-                            <div className="space-y-0.5 text-left">
-                              <span className="text-[9px] font-black text-[#5B21B6] font-sans tracking-wide uppercase leading-none">
-                                {p.planType || 'Data Pack'}
-                              </span>
-                              <h2 className="text-sm font-black text-black tracking-tight leading-snug line-clamp-1">
-                                {sizeDisplay}
-                              </h2>
-                              <p className="text-[9px] text-slate-500 font-bold leading-none">
-                                validity: {duration}
-                              </p>
-                            </div>
-
-                            <div className="pt-2 border-t border-black/10 flex items-center justify-between text-left">
-                              <span className="text-xs font-black text-black font-mono">
-                                ₦{Number(price).toLocaleString()}
-                              </span>
-                              {isSelected && (
-                                <span className="w-5 h-5 bg-[#22B14C] text-white border border-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm">
-                                  ✓
-                                </span>
-                              )}
-                            </div>
-                          </motion.div>
+                          <option key={p.id} value={p.peyflex_variation_id || p.id}>
+                            {name} = N {price} {duration}
+                          </option>
                         );
                       })}
-                  </div>
+                  </select>
                 )}
               </div>
             )}
 
-            {/* Field 5: Projected Balance Indicator Line */}
+            {/* Field 5: Airtime Amount (If airtime type is chosen) */}
+            {type === 'airtime' && (
+              <div className="space-y-2">
+                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                  Amount *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-900 text-sm">₦</span>
+                  <input
+                    id="airtime_amount_input"
+                    required
+                    type="number"
+                    placeholder="Enter Airtime Amount. e.g. 500"
+                    min="50"
+                    max="50000"
+                    value={airtimeAmount}
+                    onChange={(e) => setAirtimeAmount(e.target.value)}
+                    className="w-full bg-white border border-slate-350 rounded-2xl pl-10 pr-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono shadow-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Field 6: Editable preview field for amount (If data type is chosen) */}
+            {type === 'data' && selectedPlan && (
+              <div className="space-y-2">
+                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                  Amount
+                </label>
+                <div className="relative">
+                  <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-400 text-sm">₦</span>
+                  <input
+                    type="text"
+                    readOnly
+                    disabled
+                    value={getPlanPriceForUser(selectedPlan, user)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-5 py-4 font-bold text-sm text-slate-500 font-mono"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Field 7: Bypass Validator Checkbox */}
+            <div className="flex items-center gap-3 py-1 bg-white select-none">
+              <input
+                type="checkbox"
+                id="bypass_number_validator"
+                className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <label htmlFor="bypass_number_validator" className="text-xs font-black text-slate-500 uppercase tracking-wider cursor-pointer">
+                Bypass number validator
+              </label>
+            </div>
+
+            {/* Balance Forecast Overlay / Validation Panel */}
             {user && (
-              <div className="p-4 bg-[#F4F4F9] border-2 border-black rounded-xl shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] overflow-hidden">
-                <div className="flex flex-col items-center justify-center space-y-2 py-1 text-center select-none font-mono">
-                  <div className="text-[9px] uppercase font-black text-slate-600 tracking-widest font-sans mb-1">
-                    PROJECTED BALANCE METRICS
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                <div className="flex flex-col items-center justify-center space-y-2 py-1 text-center font-mono">
+                  <div className="text-[9px] uppercase font-black text-slate-450 tracking-widest font-sans">
+                    WALLET BALANCE INTEGRITY
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] sm:text-xs text-black font-black overflow-x-auto max-w-full">
-                    <span className="bg-white border border-black px-2 py-0.5 rounded text-black">
+                  <div className="flex items-center gap-2 text-[10px] sm:text-xs text-black font-semibold overflow-x-auto max-w-full">
+                    <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-700">
                       Bal: {formatCurrency(user.balance)}
                     </span>
-                    <span className="text-black font-black">➔</span>
-                    <span className="bg-red-100 border border-black px-2 py-0.5 rounded text-red-700">
-                      Cost: -{formatCurrency(type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount || 0))}
+                    <span className="text-slate-405">➔</span>
+                    <span className="bg-red-50 border border-red-200 px-2 py-0.5 rounded text-red-700">
+                      Cost: -{formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))}
                     </span>
-                    <span className="text-black font-black">➔</span>
+                    <span className="text-slate-405">➔</span>
                     <span className={cn(
-                      "px-2 py-0.5 border border-black rounded text-black",
-                      user.balance < (type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount || 0))
-                        ? "bg-red-200 animate-pulse text-red-900"
-                        : "bg-emerald-100 text-emerald-900"
+                      "px-2 py-0.5 border rounded-lg",
+                      user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))
+                        ? "bg-red-100 border-red-300 text-red-900 animate-pulse"
+                        : "bg-emerald-50 border-emerald-300 text-emerald-900"
                     )}>
-                      Next: {formatCurrency(user.balance - (type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount || 0)))}
+                      Next: {formatCurrency(user.balance - (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)))}
                     </span>
                   </div>
                 </div>
                 
-                {user.balance < (type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount || 0)) && (
-                  <p className="text-[10px] text-center text-red-650 font-black font-sans mt-2.5 border-t border-black/10 pt-2 flex items-center justify-center gap-1 leading-tight">
-                    ⚠️ INSUFFICIENT BALANCE VALUES. PLEASE TOP-UP WALLET BALANCE FIRST.
+                {user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)) && (
+                  <p className="text-[10px] text-center text-red-650 font-bold font-sans mt-2.5 border-t border-slate-200 pt-2 flex items-center justify-center gap-1 leading-tight">
+                    ⚠️ INSUFFICIENT BALANCE. Please fund your wallet first.
                   </p>
                 )}
               </div>
             )}
 
-            {/* Field 6: Dynamic Buy Button */}
+            {/* Submit Button */}
             <button
               id="buy_vtu_submit_btn"
               type="submit"
@@ -594,21 +645,22 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                 !network || 
                 phoneNumber.length < 10 || 
                 (type === 'data' && !selectedPlan) || 
-                (type === 'airtime' && (!airtimeAmount || Number(airtimeAmount) <= 0))
+                (type === 'airtime' && (!airtimeAmount || Number(airtimeAmount) <= 0)) ||
+                (user && user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)))
               }
-              className="w-full bg-[#5B21B6] hover:bg-purple-700 text-white border-2 border-black rounded-xl py-4 flex items-center justify-center gap-2 hover:-translate-y-0.5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50 disabled:pointer-events-none font-black text-xs uppercase tracking-widest cursor-pointer select-none"
+              className="w-full bg-[#1e3a8a] hover:bg-[#1e40af] disabled:bg-[#94a3b8] disabled:cursor-not-allowed text-white font-extrabold rounded-2xl py-4 flex items-center justify-center gap-2 transition-all disabled:opacity-50 font-sans text-sm uppercase tracking-widest cursor-pointer shadow-lg shadow-blue-900/10"
             >
-              🚀 Process Secure {type === 'data' ? 'Data Order' : 'Airtime Order'}
+              🚀 Buy Now
             </button>
 
-            {/* Direct WhatsApp client support triggering button */}
+            {/* Direct WhatsApp client support floating button */}
             <a
-              href="https://wa.me/2348143889102?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with..."
+              href="https://wa.me/2348143889102?text=Hello%20Ridamsub%20Support,%20I%20need%20help%20with..."
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full bg-[#25D366] hover:bg-[#20ba5a] text-black border-2 border-black rounded-xl py-4 flex items-center justify-center gap-2 hover:-translate-y-0.5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all font-black text-xs uppercase tracking-widest cursor-pointer select-none text-center font-sans no-underline inline-flex justify-center items-center"
+              className="w-full bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-2xl py-4 flex items-center justify-center gap-2 transition-all font-black text-xs uppercase tracking-widest cursor-pointer select-none text-center font-sans no-underline inline-flex justify-center items-center"
             >
-              💬 CHAT WITH SUPPORT ON WHATSAPP
+              💬 Chat support on whatsapp
             </a>
 
           </form>
@@ -617,11 +669,9 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         {/* Dynamic Success Screens */}
         {purchaseStatus === 'success' && (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="py-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto border border-green-150">
-              <CheckCircle2 size={44} />
-            </div>
+            <SuccessFeedback size={80} showConfetti={true} />
             <div>
-              <h4 className="text-2xl font-black text-slate-900">Purchase Successful!</h4>
+              <h4 className="text-2xl font-black text-slate-900 mt-2">Purchase Successful!</h4>
               <p className="text-slate-500 text-sm mt-2">
                 Your order has been filled. The value has been credited to <strong className="font-mono text-slate-800">{phoneNumber}</strong>.
               </p>
@@ -630,12 +680,12 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               <div className="max-w-xs mx-auto bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs space-y-2 text-left font-mono">
                 <div className="flex justify-between"><span className="text-slate-400">Reference:</span> <span className="font-bold text-slate-700 select-all">{createdTransaction.reference}</span></div>
                 <div className="flex justify-between"><span className="text-slate-450">Recipient:</span> <span className="font-bold text-slate-700">{createdTransaction.phoneNumber || phoneNumber}</span></div>
-                <div className="flex justify-between"><span className="text-slate-455">Amount:</span> <span className="font-bold text-slate-700">₦{createdTransaction.amount || (type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount || 0))}</span></div>
+                <div className="flex justify-between"><span className="text-slate-455">Amount:</span> <span className="font-bold text-slate-700">₦{createdTransaction.amount || (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))}</span></div>
               </div>
             )}
             <button
-              onClick={() => { setPurchaseStatus('idle'); setPhoneNumber(''); setAirtimeAmount(''); setSelectedPlan(null); }}
-              className="px-8 py-3.5 bg-purple-650 hover:bg-purple-700 text-white rounded-2xl text-xs font-extrabold shadow-lg shadow-purple-100 transition-all"
+               onClick={() => { setPurchaseStatus('idle'); setPhoneNumber(''); setAirtimeAmount(''); setSelectedPlan(null); }}
+              className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-extrabold shadow-lg transition-all"
             >
               🔄 Order Another
             </button>
@@ -684,11 +734,11 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               className="bg-white rounded-[2rem] w-full max-w-sm overflow-hidden border border-slate-100 shadow-2xl z-10 p-6 space-y-6 text-left relative"
             >
               <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center flex-shrink-0 border border-purple-100">
+                <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 border border-blue-100">
                   <AlertTriangle size={24} />
                 </div>
                 <div className="space-y-1">
-                  <h4 className="font-black text-slate-900 text-lg">Confirm Order</h4>
+                  <h4 className="font-extrabold text-slate-900 text-lg">Confirm Order</h4>
                   <p className="text-xs text-slate-400 font-bold">Please verify the details before billing.</p>
                 </div>
                 <button
@@ -720,8 +770,8 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                 )}
                 <div className="pt-3 border-t border-slate-200/55 flex justify-between items-center text-sm font-sans">
                   <span className="text-slate-500 font-bold text-xs uppercase tracking-wider">Total Due:</span>
-                  <span className="text-lg font-black text-purple-600 tracking-tight">
-                    {formatCurrency(type === 'data' ? (selectedPlan?.retail_price ?? selectedPlan?.amount ?? selectedPlan?.price ?? 0) : Number(airtimeAmount))}
+                  <span className="text-lg font-black text-blue-600 tracking-tight">
+                    {formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount))}
                   </span>
                 </div>
               </div>
@@ -729,7 +779,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <button
                   onClick={() => setShowConfirmModal(false)}
-                  className="bg-slate-50 hover:bg-slate-105 border border-slate-250 text-slate-600 font-bold rounded-xl py-3 text-xs transition-all"
+                  className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold rounded-xl py-3 text-xs transition-all"
                 >
                   Back
                 </button>
@@ -739,7 +789,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                     setShowConfirmModal(false);
                     handlePurchaseSubmit();
                   }}
-                  className="bg-purple-650 hover:bg-purple-700 text-white font-extrabold rounded-xl py-3 text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-purple-100"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3 text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-500/10"
                 >
                   {loading ? (
                     <Loader2 className="animate-spin" size={14} />

@@ -5,10 +5,16 @@ export interface UserProfile {
   email: string;
   fullName: string;
   balance: number;
+  wallet_balance?: number;
+  available_balance?: number;
   role: UserRole;
+  is_reseller?: boolean;
+  user_role?: string;
   referralCode: string;
   referredBy?: string;
   phoneNumber?: string;
+  transactionPin?: string;
+  transaction_pin?: string;
   createdAt: string;
   monnifyBankName?: string;
   monnifyAccountNumber?: string;
@@ -40,6 +46,7 @@ export interface ServicePlan {
   name: string;
   price: number;
   resellerPrice?: number;
+  reseller_price?: number;
   agentPrice?: number;
   duration?: string;
   
@@ -60,4 +67,6 @@ export interface ServicePlan {
   peyflex_id?: string;
   badge?: string;
   expiresAt?: any;
+  createdAt?: string;
+  created_at?: string;
 }

@@ -4,6 +4,7 @@ import { Tv, Zap, FileText, Activity, ArrowRight, CheckCircle2, AlertTriangle, L
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
+import SuccessFeedback from './SuccessFeedback';
 
 type BillType = 'cable' | 'electricity' | 'exam' | 'betting';
 
@@ -560,11 +561,9 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 /* STEP 3 - SUCCESS DELIVERED MODAL WITH PRINTING RECEIPT */
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8 max-w-xl">
                   <div className="text-center py-6 space-y-3">
-                    <div className="w-16 h-16 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto shadow-md shadow-green-100">
-                      <CheckCircle2 size={32} className="animate-bounce" />
-                    </div>
+                    <SuccessFeedback size={70} showConfetti={true} />
                     <div>
-                      <h4 className="text-2xl font-black text-slate-900">Transaction Successful!</h4>
+                      <h4 className="text-2xl font-black text-slate-900 mt-2">Transaction Successful!</h4>
                       <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">DISPATCH CONFIRMED OUTFLOW</p>
                     </div>
                   </div>

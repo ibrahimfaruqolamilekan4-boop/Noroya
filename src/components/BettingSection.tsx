@@ -4,6 +4,7 @@ import { Trophy, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Loader2, Pr
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
+import SuccessFeedback from './SuccessFeedback';
 
 interface BettingProvider {
   code: string;
@@ -423,11 +424,9 @@ export default function BettingSection() {
           >
             {/* SUCCESS BANNER */}
             <div className="text-center py-6 space-y-3">
-              <div className="w-16 h-16 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto shadow-md shadow-green-100">
-                <CheckCircle2 size={32} className="animate-bounce" />
-              </div>
+              <SuccessFeedback size={70} showConfetti={true} />
               <div>
-                <h4 className="text-2xl font-black text-slate-900">Wallet Funded!</h4>
+                <h4 className="text-2xl font-black text-slate-900 mt-2">Wallet Funded!</h4>
                 <p className="text-xs text-slate-400 font-extrabold tracking-widest uppercase">AUTOMATED WALLET CLEARANCE DONE</p>
               </div>
             </div>

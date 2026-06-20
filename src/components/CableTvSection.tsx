@@ -4,6 +4,7 @@ import { Tv, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Loader2, Printe
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
+import SuccessFeedback from './SuccessFeedback';
 
 interface CableProvider {
   code: string;
@@ -470,11 +471,9 @@ export default function CableTvSection() {
           >
             {/* SUCCESS INTERFACE */}
             <div className="text-center py-6 space-y-3">
-              <div className="w-16 h-16 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto shadow-md shadow-green-100">
-                <CheckCircle2 size={32} className="animate-bounce" />
-              </div>
+              <SuccessFeedback size={70} showConfetti={true} />
               <div>
-                <h4 className="text-2xl font-black text-slate-900">Subscription Completed!</h4>
+                <h4 className="text-2xl font-black text-slate-900 mt-2">Subscription Completed!</h4>
                 <p className="text-xs text-slate-400 font-extrabold tracking-widest uppercase font-sans">AUTOMATED CABLE DECODER RECHARGED</p>
               </div>
             </div>
