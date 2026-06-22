@@ -1,12 +1,24 @@
 import { createClient } from "@supabase/supabase-js";
 
 const getEnv = (key: string): string | null => {
-  if (typeof window !== "undefined" && (window as any).SUPABASE_CONFIG) {
+  if (typeof window !== "undefined") {
     if (key === "VITE_SUPABASE_URL" || key === "SUPABASE_URL") {
+      const overridingUrl = localStorage.getItem("DYNAMIC_SUPABASE_URL");
+      if (overridingUrl && overridingUrl.trim() !== "" && !overridingUrl.includes("placeholder")) {
+        return overridingUrl.trim();
+      }
+    }
+    if (key === "VITE_SUPABASE_ANON_KEY" || key === "SUPABASE_ANON_KEY") {
+      const overridingKey = localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY");
+      if (overridingKey && overridingKey.trim() !== "" && !overridingKey.includes("placeholder")) {
+        return overridingKey.trim();
+      }
+    }
+    if ((window as any).SUPABASE_CONFIG) {
       const u = (window as any).SUPABASE_CONFIG.supabaseUrl;
       if (u && !u.includes("placeholder-project") && !u.includes("undefined")) return u;
     }
-    if (key === "VITE_SUPABASE_ANON_KEY" || key === "SUPABASE_ANON_KEY") {
+    if ((window as any).SUPABASE_CONFIG) {
       const k = (window as any).SUPABASE_CONFIG.supabaseAnonKey;
       if (k && !k.includes("placeholder-anon-key") && !k.includes("undefined")) return k;
     }

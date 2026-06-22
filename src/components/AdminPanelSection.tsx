@@ -92,6 +92,10 @@ export default function AdminPanelSection() {
   
   // Search state
   const [userSearchText, setUserSearchText] = React.useState('');
+
+  // Dynamic Supabase Overrides
+  const [supabaseUrlInput, setSupabaseUrlInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_URL") || "");
+  const [supabaseKeyInput, setSupabaseKeyInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY") || "");
   
   // Credit/Debit Modals
   const [adjustingUser, setAdjustingUser] = React.useState<UserProfile | null>(null);
@@ -237,7 +241,7 @@ export default function AdminPanelSection() {
 
     // Comprehensive defense against empty or unconfigured database keys
     if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined") || (supabase as any).supabaseUrl.includes("placeholder-project")) {
-      alert("Configuration Error: Your website cannot find your Supabase URL. Please add your SUPABASE_URL environment variable to your Cloud Run / hosting provider dashboard settings.");
+      toast.error("Supplied Supabase credentials are empty or placeholder defaults! Please configure your credentials using the 'Supabase Integration Gateway' panel at the top of the Admin dashboard overview.", { duration: 8000 });
       setIsPublishingPeyflex(false);
       return;
     }
@@ -725,8 +729,8 @@ export default function AdminPanelSection() {
       return;
     }
 
-    if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined")) {
-      alert("Configuration Error: Your website cannot find your Supabase URL. Please add your SUPABASE_URL environment variable to your Cloud Run / hosting provider dashboard settings.");
+    if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined") || (supabase as any).supabaseUrl.includes("placeholder-project")) {
+      toast.error("Supplied Supabase credentials are empty or placeholder defaults! Please configure your credentials using the 'Supabase Integration Gateway' panel at the top of the Admin dashboard overview.", { duration: 8000 });
       setSaving(false);
       return;
     }
@@ -827,8 +831,8 @@ export default function AdminPanelSection() {
     }
 
     if (plan.collectionName === 'data_plans' || plan.type === 'data') {
-      if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined")) {
-        alert("Configuration Error: Your website cannot find your Supabase URL. Please add your SUPABASE_URL environment variable to your Cloud Run / hosting provider dashboard settings.");
+      if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined") || (supabase as any).supabaseUrl.includes("placeholder-project")) {
+        toast.error("Supplied Supabase credentials are empty or placeholder defaults! Please configure your credentials using the 'Supabase Integration Gateway' panel at the top of the Admin dashboard overview.", { duration: 8000 });
         return;
       }
     }
@@ -1013,8 +1017,8 @@ export default function AdminPanelSection() {
       return;
     }
 
-    if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined")) {
-      alert("Configuration Error: Your website cannot find your Supabase URL. Please add your SUPABASE_URL environment variable to your Cloud Run / hosting provider dashboard settings.");
+    if (!(supabase as any).supabaseUrl || (supabase as any).supabaseUrl.includes("undefined") || (supabase as any).supabaseUrl.includes("placeholder-project")) {
+      toast.error("Supplied Supabase credentials are empty or placeholder defaults! Please configure your credentials using the 'Supabase Integration Gateway' panel at the top of the Admin dashboard overview.", { duration: 8000 });
       setSaving(false);
       return;
     }
@@ -1223,6 +1227,87 @@ export default function AdminPanelSection() {
 
       {adminSubTab === 'overview' && (
         <>
+          {/* SUPABASE CONNECTION CREDENTIALS PANEL */}
+          <div className="bg-amber-50/40 border-2 border-amber-200 p-6 rounded-3xl space-y-4 shadow-sm relative overflow-hidden">
+            <div className="absolute right-0 top-0 translate-x-1/4 -translate-y-1/4 rotate-12 opacity-5 pointer-events-none">
+              <Database size={200} />
+            </div>
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-700 shrink-0 border border-amber-200">
+                <Database size={20} />
+              </div>
+              <div className="space-y-1 max-w-2xl">
+                <h5 className="font-extrabold text-amber-900 text-sm">Supabase Integration Gateway</h5>
+                <p className="text-xs text-amber-700 font-bold leading-relaxed">
+                  Connect your live database to load plans dynamically. Enter your Supabase connection parameters below. They will be securely stored inside your local browser storage and override defaults automatically without requiring clean redeployment.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4 max-w-4xl pt-2">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Supabase URL Link</label>
+                <input
+                  type="text"
+                  value={supabaseUrlInput}
+                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                  placeholder="https://your-project.supabase.co"
+                  className="w-full bg-white border-2 border-slate-200 focus:border-black rounded-xl py-2.5 px-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all text-black"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Supabase Anon key</label>
+                <input
+                  type="password"
+                  value={supabaseKeyInput}
+                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                  placeholder="eyJhbGciOi..."
+                  className="w-full bg-white border-2 border-slate-200 focus:border-black rounded-xl py-2.5 px-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all text-black"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!supabaseUrlInput.trim() || !supabaseKeyInput.trim()) {
+                    toast.error("Both fields are required to secure the bridge.");
+                    return;
+                  }
+                  localStorage.setItem("DYNAMIC_SUPABASE_URL", supabaseUrlInput.trim());
+                  localStorage.setItem("DYNAMIC_SUPABASE_ANON_KEY", supabaseKeyInput.trim());
+                  toast.success("Bridge successfully mapped! Reloading connection...");
+                  setTimeout(() => window.location.reload(), 1000);
+                }}
+                className="bg-black hover:bg-slate-900 text-white font-black uppercase text-[10px] tracking-wider py-2.5 px-5 rounded-xl border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer"
+              >
+                Save Configuration Settings
+              </button>
+              {localStorage.getItem("DYNAMIC_SUPABASE_URL") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem("DYNAMIC_SUPABASE_URL");
+                    localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
+                    setSupabaseUrlInput("");
+                    setSupabaseKeyInput("");
+                    toast.success("Values reset to repository defaults! Tuning down connection...");
+                    setTimeout(() => window.location.reload(), 1000);
+                  }}
+                  className="bg-white hover:bg-slate-50 text-rose-600 font-black uppercase text-[10px] tracking-wider py-2.5 px-5 rounded-xl border-2 border-rose-200 cursor-pointer text-center"
+                >
+                  Reset Default Settings
+                </button>
+              )}
+            </div>
+
+            <div className="pt-2 text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+              <span>Current URL:</span>
+              <span className="font-mono text-slate-600 lowercase bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{(supabase as any).supabaseUrl || 'None / Not Initialized'}</span>
+            </div>
+          </div>
+
           {/* CORE TWO BLOCK SECTOR: USER MANAGEMENT & UTILITIES */}
           <div className="grid lg:grid-cols-3 gap-8">
             
