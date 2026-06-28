@@ -355,7 +355,7 @@ export default function AdminPanelSection() {
         uid: 'admin_ibrahim_vtu_uid',
         email: 'ibrahimfaruqolamilekan4@gmail.com',
         fullName: 'Faruq Ibrahim (Admin)',
-        balance: 1000000,
+        balance: 0,
         role: 'admin',
         referralCode: 'NOROYA-ADMIN-99',
         createdAt: new Date().toISOString()

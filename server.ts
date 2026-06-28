@@ -1149,7 +1149,7 @@ async function startServer() {
           uid,
           email: email.toLowerCase(),
           fullName: "Faruq Ibrahim (Admin)",
-          balance: 1000000, // Large balance for admin
+          balance: 0, // Default 0 balance for admin
           role: "admin",
           referralCode: "NOROYA-ADMIN-99",
           createdAt: FieldValue.serverTimestamp()
@@ -1178,7 +1178,7 @@ async function startServer() {
             uid,
             email: email.toLowerCase(),
             fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 1000000) : 1000000,
+            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
             role: "admin",
             referralCode: "NOROYA-ADMIN-99",
             createdAt: new Date().toISOString()
@@ -1195,7 +1195,7 @@ async function startServer() {
             uid,
             email: email.toLowerCase(),
             fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 1000000) : 1000000,
+            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
             role: "admin",
             referralCode: "NOROYA-ADMIN-99",
             createdAt: new Date().toISOString()

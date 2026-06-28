@@ -20,13 +20,8 @@ import {
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth as firebaseAuth } from '../lib/firebase';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  updateProfile, 
-  sendPasswordResetEmail 
-} from 'firebase/auth';
+import { db } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
 type AuthMode = 'login' | 'signup' | 'reset';
@@ -42,6 +37,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [fullName, setFullName] = React.useState('');
+  const [username, setUsername] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [pin, setPin] = React.useState('');
   const [rememberMe, setRememberMe] = React.useState(false);
@@ -133,24 +129,28 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     name: string, 
     referredByUid?: string, 
     userPhone?: string,
-    transactionPin?: string
+    transactionPin?: string,
+    userUsername?: string
   ) => {
     const userRef = doc(db, 'users', uid);
     const userSnap = await getDoc(userRef);
     const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
+    const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     
     if (!userSnap.exists()) {
-      const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      
       const payload: any = {
         uid,
         email: email.toLowerCase().trim(),
         fullName: name,
-        balance: isAdminEmail ? 50000 : 0,
+        balance: 0,
         role: isAdminEmail ? 'admin' : 'user',
         referralCode: generatedCode,
         createdAt: serverTimestamp()
       };
+
+      if (userUsername) {
+        payload.username = userUsername;
+      }
 
       if (referredByUid) {
         payload.referredBy = referredByUid;
@@ -195,6 +195,59 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         }, { merge: true });
       }
     }
+
+    // Always ensure Supabase profiles and users tables are synchronized too
+    try {
+      const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
+      const sbPayload = {
+        id: uid,
+        email: email.toLowerCase().trim(),
+        fullName: name,
+        full_name: name,
+        username: userUsername || userSnap.data()?.username || '',
+        balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        available_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        role: isAdminEmail ? 'admin' : 'user',
+        user_role: isAdminEmail ? 'admin' : 'user',
+        referralCode: sbCode,
+        referral_code: sbCode,
+        phoneNumber: userPhone || userSnap.data()?.phoneNumber || '',
+        phone_number: userPhone || userSnap.data()?.phoneNumber || '',
+        transactionPin: transactionPin || userSnap.data()?.transactionPin || '',
+        transaction_pin: transactionPin || userSnap.data()?.transactionPin || ''
+      };
+
+      await supabase.from('profiles').upsert(sbPayload, { onConflict: 'id' });
+    } catch (sbErr: any) {
+      console.warn("Could not upsert into Supabase profiles:", sbErr.message);
+    }
+
+    try {
+      const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
+      const sbPayload = {
+        id: uid,
+        email: email.toLowerCase().trim(),
+        fullName: name,
+        full_name: name,
+        username: userUsername || userSnap.data()?.username || '',
+        balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        available_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        role: isAdminEmail ? 'admin' : 'user',
+        user_role: isAdminEmail ? 'admin' : 'user',
+        referralCode: sbCode,
+        referral_code: sbCode,
+        phoneNumber: userPhone || userSnap.data()?.phoneNumber || '',
+        phone_number: userPhone || userSnap.data()?.phoneNumber || '',
+        transactionPin: transactionPin || userSnap.data()?.transactionPin || '',
+        transaction_pin: transactionPin || userSnap.data()?.transactionPin || ''
+      };
+
+      await supabase.from('users').upsert(sbPayload, { onConflict: 'id' });
+    } catch (sbErr: any) {
+      console.warn("Could not upsert into Supabase users:", sbErr.message);
+    }
   };
 
   const handleSimulatedAuthBypass = () => {
@@ -208,7 +261,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       uid: isOwnerEmail ? 'admin_ibrahim_vtu_uid' : generatedId,
       email: cleanEmail.toLowerCase(),
       fullName: isOwnerEmail ? 'Faruq Ibrahim (Admin)' : cleanName,
-      balance: isOwnerEmail ? 1000000 : 2500,
+      balance: 0,
       role: (isOwnerEmail ? 'admin' : 'user') as any,
       referralCode: isOwnerEmail ? 'NOROYA-ADMIN-99' : generatedCode,
       is_reseller: false,
@@ -220,6 +273,16 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     setSimulatedUser(simulatedProfile);
     toast.success("Welcome! Your local Sandbox Session is fully authenticated and unblocked. ✨", { duration: 5000 });
     onBack();
+  };
+
+  const handleForgotPassword = async (resetEmail: string) => {
+    const redirectUrl = `${window.location.origin}/recovery`;
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
+      redirectTo: redirectUrl
+    });
+    if (resetError) throw resetError;
+    toast.success('Password reset link successfully sent! Check your inbox.');
+    setMode('login');
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -245,18 +308,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
             });
             const data = await res.json();
             if (data.success) {
-              if (data.simulated) {
-                try {
-                  const { signInAnonymously } = await import('firebase/auth');
-                  await signInAnonymously(firebaseAuth);
-                } catch (anonErr) {
-                  console.warn("Could not login anonymously as guest background shell:", anonErr);
-                }
-                setSimulatedUser(data.userData);
-              } else {
-                const { signInWithCustomToken } = await import('firebase/auth');
-                await signInWithCustomToken(firebaseAuth, data.token);
-              }
+              setSimulatedUser(data.userData);
               toast.success("Admin Session loaded successfully!");
               onBack();
               return;
@@ -269,7 +321,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
               uid: 'admin_ibrahim_vtu_uid',
               email: 'ibrahimfaruqolamilekan4@gmail.com',
               fullName: 'Faruq Ibrahim (Admin)',
-              balance: 1000000,
+              balance: 0,
               role: 'admin',
               referralCode: 'NOROYA-ADMIN-99',
               createdAt: new Date().toISOString()
@@ -280,9 +332,16 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
           }
         }
 
-        const cred = await signInWithEmailAndPassword(firebaseAuth, email, password);
-        await initializeUserProfile(cred.user.uid, cred.user.email!, cred.user.displayName || 'User');
-        toast.success("Signed in successfully! ⚡", { icon: "👋" });
+        const { data, error: loginError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password
+        });
+        if (loginError) throw loginError;
+
+        if (data.user) {
+          await initializeUserProfile(data.user.id, data.user.email!, data.user.user_metadata?.fullName || data.user.user_metadata?.name || 'User');
+          toast.success("Signed in successfully! ⚡", { icon: "👋" });
+        }
       } else if (mode === 'signup') {
         // Validation Checks
         if (password.length < 6) {
@@ -297,6 +356,9 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         if (phone && (phone.length < 10 || phone.length > 11)) {
           throw new Error("Please enter a valid Nigerian Phone Number (10 or 11 digits)!");
         }
+        if (!username.trim()) {
+          throw new Error("Username is required!");
+        }
 
         let verifiedReferrerUid: string | undefined = undefined;
         if (referralCodeInput.trim()) {
@@ -309,30 +371,32 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         }
 
         toast.loading("Provisioning secure wallet infrastructure...", { id: "loading-signup" });
-        const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-        await updateProfile(cred.user, { displayName: fullName });
-        await initializeUserProfile(cred.user.uid, cred.user.email!, fullName, verifiedReferrerUid, phone, pin);
         
-        toast.dismiss("loading-signup");
-        toast.success("Account loaded and registration complete!", { icon: "🎉" });
+        const { data, error: signupError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              name: fullName,
+              username: username,
+              phone_number: phone,
+              referral_code: referralCodeInput.trim()
+            }
+          }
+        });
+        if (signupError) throw signupError;
+
+        if (data.user) {
+          await initializeUserProfile(data.user.id, data.user.email!, fullName, verifiedReferrerUid, phone, pin, username);
+          toast.dismiss("loading-signup");
+          toast.success("Account loaded and registration complete!", { icon: "🎉" });
+        }
       } else {
-        await sendPasswordResetEmail(firebaseAuth, email);
-        toast.success('Password reset link successfully sent! Check your inbox.');
-        setMode('login');
+        await handleForgotPassword(email);
       }
     } catch (err: any) {
       toast.dismiss("loading-signup");
-      if (err.code === 'auth/operation-not-allowed' || err.message?.includes('auth/operation-not-allowed')) {
-        setError(
-          'Email/password sign-in is not yet enabled in your Firebase Console. To enable it:\n\n' +
-          '1. Go to your Firebase Console (Authentication tab).\n' +
-          '2. Go to "Sign-in method" -> click "Add new provider".\n' +
-          '3. Select "Email/Password" and toggle it to enabled.\n\n' +
-          '💡 Alternatively, you can click the "Google Account" button below to log in instantly!'
-        );
-      } else {
-        setError(err.message || 'Authentication failed');
-      }
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -343,11 +407,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     setLoading(true);
     try {
       await signInWithGoogle();
-      const user = firebaseAuth.currentUser;
-      if (user) {
-        await initializeUserProfile(user.uid, user.email!, user.displayName || 'User');
-        toast.success("Welcome back!", { icon: "⭐" });
-      }
     } catch (err: any) {
       setError(err.message || 'Google sign in failed');
     } finally {
@@ -453,6 +512,21 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       placeholder="e.g. Faruq Ibrahim" 
+                      className="w-full bg-slate-50 border-2 border-slate-200 focus:border-black rounded-xl py-3 pl-11 pr-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all font-sans text-black"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Username</label>
+                  <div className="relative">
+                    <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <input 
+                      required
+                      type="text" 
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                      placeholder="e.g. faruq_ibrahim" 
                       className="w-full bg-slate-50 border-2 border-slate-200 focus:border-black rounded-xl py-3 pl-11 pr-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all font-sans text-black"
                     />
                   </div>
