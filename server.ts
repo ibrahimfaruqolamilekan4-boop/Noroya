@@ -2437,18 +2437,27 @@ async function startServer() {
 
       console.log(`[Flutterwave Webhook Received] Reference: ${reference}, Amount: ${amount}, Email: ${customerEmail}, User ID: ${userId}`);
 
-      // 5. Idempotency check: prevent double-crediting (Using Offline Local DB instead of Firestore)
+      // 5. Idempotency check: prevent double-crediting via Supabase direct query
       try {
-        const localStore = loadLocalDb();
-        if (localStore.processed_payments && localStore.processed_payments[reference]) {
-          console.log(`[Flutterwave Webhook] Reference ${reference} already processed in offline local DB. Skipping.`);
+        const { data: existingTx, error: txCheckError } = await supabase
+          .from("transactions")
+          .select("id")
+          .eq("reference", reference)
+          .maybeSingle();
+
+        if (txCheckError) {
+          console.warn("[Flutterwave Webhook Idempotency Warning] Supabase query error:", txCheckError.message);
+        }
+
+        if (existingTx) {
+          console.log(`[Flutterwave Webhook] Reference ${reference} already processed in Supabase. Skipping.`);
           return res.status(200).json({ received: true, status: "skipped" });
         }
-      } catch (localDbErr: any) {
-        console.warn("[Flutterwave Webhook] Idempotency check error (local store fallback):", localDbErr.message);
+      } catch (checkErr: any) {
+        console.warn("[Flutterwave Webhook Idempotency Catch] Supabase lookup exception:", checkErr.message || checkErr);
       }
 
-      // Wrap the entire database processing block in a try/catch block
+      // Wrap the database processing block in a try/catch block
       try {
         // 6. Update user balance in Supabase securely (STRICTLY 'profiles' table)
         let sbUser: any = null;
@@ -2549,36 +2558,121 @@ async function startServer() {
             throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
           } else {
             console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${targetUserId} with +₦${amount}. New wallet_balance should be: ${currentWalletBalance + amount}`);
+
+            // Add a Transaction Log to Supabase 'transactions' table
+            const txId = `fw_fund_${Date.now()}`;
+            try {
+              const pgUuid = ensureUUID(targetUserId);
+              const { error: pgTxErr } = await supabase
+                .from('transactions')
+                .insert({
+                  id: txId,
+                  user_id: pgUuid,
+                  userId: targetUserId,
+                  amount: amount,
+                  status: 'success',
+                  platform: 'flutterwave',
+                  reference: reference,
+                  payment_method: 'flutterwave',
+                  description: `Flutterwave deposit of NGN ${amount}`,
+                  created_at: new Date().toISOString()
+                });
+
+              if (pgTxErr) {
+                console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
+                await supabase
+                  .from('transactions')
+                  .insert({
+                    id: txId,
+                    user_id: targetUserId,
+                    amount: amount,
+                    status: 'success',
+                    platform: 'flutterwave',
+                    reference: reference,
+                    payment_method: 'flutterwave',
+                    description: `Flutterwave deposit of NGN ${amount}`,
+                    created_at: new Date().toISOString()
+                  });
+              }
+              console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
+            } catch (txLogErr: any) {
+              console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
+            }
           }
         } else {
           console.warn(`[Flutterwave Webhook] CRITICAL: User not found in Supabase "profiles" table by ID ${userId} or email ${customerEmail}`);
         }
 
-        // 7. Save to Local Offline DB to keep transaction records and idempotency in sync without using Firestore
+        // 7. Optional secondary Firestore sync. Completely isolated: any error is logged and IGNORED, letting Supabase update finish
         try {
-          const localStore = loadLocalDb();
-          const activeId = targetUserId || userId || "unknown";
-          
-          if (activeId !== "unknown" && localStore.users[activeId]) {
-            const currentLocalBal = localStore.users[activeId].balance || 0;
-            localStore.users[activeId].wallet_balance = (localStore.users[activeId].wallet_balance || 0) + amount;
-            localStore.users[activeId].balance = currentLocalBal + amount;
-            localStore.users[activeId].available_balance = (localStore.users[activeId].available_balance || 0) + amount;
-          }
+          if (rawDb) {
+            let firestoreUserDoc: any = null;
+            if (targetUserId) {
+              const directDoc = await rawDb.collection("users").doc(targetUserId).get();
+              if (directDoc.exists) {
+                firestoreUserDoc = directDoc;
+              }
+            }
 
-          if (!localStore.processed_payments) localStore.processed_payments = {};
-          localStore.processed_payments[reference] = {
-            reference,
-            userId: activeId,
-            amount,
-            email: customerEmail,
-            status: "completed",
-            createdAt: new Date().toISOString()
-          };
-          saveLocalDb(localStore);
-          console.log(`[Flutterwave Webhook Local Sync] Offline DB saved successfully for reference: ${reference}`);
-        } catch (localStoreErr: any) {
-          console.warn("[Flutterwave Webhook Local Sync Warning]:", localStoreErr.message);
+            if (!firestoreUserDoc && customerEmail) {
+              const userQuery = await rawDb.collection("users").where("email", "==", customerEmail).limit(1).get();
+              if (!userQuery.empty) {
+                firestoreUserDoc = userQuery.docs[0];
+              }
+            }
+
+            if (firestoreUserDoc) {
+              const userRef = firestoreUserDoc.ref;
+              const finalUserId = firestoreUserDoc.id;
+
+              await rawDb.runTransaction(async (transaction: any) => {
+                const freshUserSnap = await transaction.get(userRef);
+                if (freshUserSnap.exists) {
+                  const balanceVal = Number(freshUserSnap.data()?.balance || 0);
+                  const walletBalanceVal = Number(freshUserSnap.data()?.wallet_balance || 0);
+                  const availableBalanceVal = Number(freshUserSnap.data()?.available_balance || 0);
+
+                  transaction.update(userRef, {
+                    balance: balanceVal + amount,
+                    wallet_balance: walletBalanceVal + amount,
+                    available_balance: availableBalanceVal + amount,
+                    lastFundingAt: FieldValue.serverTimestamp()
+                  });
+                }
+              });
+
+              // Record processed payment in Firestore for secondary idempotency
+              const processedRef = rawDb.collection("processed_payments").doc(reference);
+              await processedRef.set({
+                reference,
+                userId: finalUserId,
+                amount,
+                status: "success",
+                source: "flutterwave_webhook",
+                processedAt: FieldValue.serverTimestamp()
+              });
+
+              // Record transaction log in Firestore
+              const fsTxId = `fw_webhook_${Date.now()}`;
+              await rawDb.collection("transactions").doc(fsTxId).set({
+                id: fsTxId,
+                userId: finalUserId,
+                type: "funding",
+                amount,
+                status: "completed",
+                description: `Flutterwave Webhook (Ref: ${reference})`,
+                reference,
+                paymentMethod: "Flutterwave Webhook",
+                createdAt: FieldValue.serverTimestamp()
+              });
+
+              console.log(`[Flutterwave Webhook Firestore success] Sync'd user ${finalUserId} with +₦${amount} in Firestore`);
+            } else {
+              console.warn(`[Flutterwave Webhook Firestore Sync] User not found in Firestore database by ID or email.`);
+            }
+          }
+        } catch (firestoreErr: any) {
+          console.error("[Flutterwave Webhook Firestore Error (ignored as requested)]:", firestoreErr.message || firestoreErr);
         }
 
       } catch (dbError: any) {
@@ -2595,32 +2689,44 @@ async function startServer() {
     }
   });
 
-  // Support administrative revenue audit (using Offline Local DB instead of Google Application Credentials Firestore to avoid crashes)
+  // Support administrative revenue audit via direct Supabase query
   app.get("/api/admin/opay-revenue", async (req, res) => {
     try {
-      console.log("[Admin Revenue Audit] Processing audit records via offline local database to avoid Google Application Credentials crashes.");
-      const localStore = loadLocalDb();
-      const processedPayments = localStore.processed_payments || {};
+      console.log("[Admin Revenue Audit] Processing audit records via direct Supabase query.");
+      const { data: txs, error: txError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('platform', 'flutterwave')
+        .limit(100);
+
+      if (txError) {
+        throw new Error(`Supabase query error: ${txError.message}`);
+      }
 
       let totalRevenue = 0;
       let successfulCount = 0;
       let failedCount = 0;
       const payments: any[] = [];
 
-      Object.keys(processedPayments).forEach((ref) => {
-        const tx = processedPayments[ref];
+      (txs || []).forEach((tx: any) => {
         const amt = Number(tx.amount || 0);
+        const isCompleted = tx.status === 'success' || tx.status === 'completed';
+
         payments.push({
-          reference: tx.reference || ref,
-          userId: tx.userId || "unknown",
+          reference: tx.reference || tx.id,
+          userId: tx.user_id || tx.userId || "unknown",
           amount: amt,
-          status: tx.status === "completed" ? "success" : "failed",
-          createdAt: tx.createdAt || new Date().toISOString(),
-          paymentMethod: tx.paymentMethod || "Flutterwave"
+          status: isCompleted ? "success" : "failed",
+          createdAt: tx.created_at || new Date().toISOString(),
+          paymentMethod: tx.payment_method || "Flutterwave"
         });
 
-        totalRevenue += amt;
-        successfulCount++;
+        if (isCompleted) {
+          totalRevenue += amt;
+          successfulCount++;
+        } else {
+          failedCount++;
+        }
       });
 
       return res.json({
