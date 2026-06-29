@@ -1169,7 +1169,10 @@ function DashboardOverview({
 
     const scriptLoaded = await loadScript();
     if (!scriptLoaded) {
-      toast.error("Flutterwave payment gateway script failed to load. Please check your network connection.");
+      toast.error(
+        "Flutterwave failed to load! If you are using Brave Browser, an adblocker (like uBlock), AdGuard DNS, or a VPN, please temporarily disable them, refresh the page, and try again.",
+        { duration: 10000 }
+      );
       setFwLoading(false);
       return;
     }
