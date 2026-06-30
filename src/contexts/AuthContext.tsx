@@ -95,7 +95,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           uid: sbUser.id,
           email: sbUser.email || '',
           fullName: sbProfile?.fullName || sbProfile?.full_name || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
-          balance: sbProfile?.balance ?? 0,
+          balance: sbProfile?.balance ?? sbProfile?.wallet_balance ?? 0,
+          wallet_balance: sbProfile?.wallet_balance ?? sbProfile?.balance ?? 0,
           role: sbProfile?.role || sbProfile?.user_role || (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user'),
           referralCode: sbProfile?.referralCode || sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phoneNumber || sbProfile?.phone_number || '',
@@ -103,29 +104,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           createdAt: sbProfile?.createdAt || sbProfile?.created_at || new Date().toISOString()
         };
 
-        // Also keep listening to Firestore users collection in real-time as background fallback
-        try {
-          const userRef = doc(db, 'users', sbUser.id);
-          unsubProfile = onSnapshot(userRef, (docSnap) => {
-            if (docSnap.exists()) {
-              setUserProfile({
-                ...defaultProfile,
-                ...(docSnap.data() as Partial<UserProfile>)
+        setUserProfile(defaultProfile);
+        setLoading(false);
+
+        // Define a function to reload user profile directly from Supabase to sync balances
+        const fetchLatestSupabaseProfile = async () => {
+          try {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', sbUser.id)
+              .maybeSingle();
+
+            if (!error && data) {
+              setUserProfile(prev => {
+                const base = prev || defaultProfile;
+                return {
+                  ...base,
+                  fullName: data.fullName || data.full_name || base.fullName,
+                  balance: data.balance ?? data.wallet_balance ?? base.balance,
+                  wallet_balance: data.wallet_balance ?? data.balance ?? base.wallet_balance,
+                  phoneNumber: data.phoneNumber || data.phone_number || base.phoneNumber,
+                  transactionPin: data.transactionPin || data.transaction_pin || base.transactionPin,
+                  role: data.role || data.user_role || base.role,
+                };
               });
-            } else {
-              setUserProfile(defaultProfile);
             }
-            setLoading(false);
-          }, (error) => {
-            console.warn("Firestore Profile Sync warning:", error);
-            setUserProfile(defaultProfile);
-            setLoading(false);
-          });
-        } catch (err) {
-          console.warn("Could not setup Firestore sync, falling back to database query results:", err);
-          setUserProfile(defaultProfile);
-          setLoading(false);
-        }
+          } catch (err) {
+            console.warn("Error background polling user profile from Supabase:", err);
+          }
+        };
+
+        // 1. Establish a real-time Postgres changes listener in Supabase for immediate balance updates
+        const channel = supabase
+          .channel(`profiles-realtime-${sbUser.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'profiles',
+              filter: `id=eq.${sbUser.id}`
+            },
+            (payload) => {
+              console.log('⚡ [Supabase Realtime Sync]: User profile update received!', payload);
+              if (payload.new) {
+                const updated = payload.new as any;
+                setUserProfile(prev => {
+                  const base = prev || defaultProfile;
+                  return {
+                    ...base,
+                    fullName: updated.fullName || updated.full_name || base.fullName,
+                    balance: updated.balance ?? updated.wallet_balance ?? base.balance,
+                    wallet_balance: updated.wallet_balance ?? updated.balance ?? base.wallet_balance,
+                    phoneNumber: updated.phoneNumber || updated.phone_number || base.phoneNumber,
+                    transactionPin: updated.transactionPin || updated.transaction_pin || base.transactionPin,
+                    role: updated.role || updated.user_role || base.role,
+                  };
+                });
+              }
+            }
+          )
+          .subscribe();
+
+        // 2. Set up a bulletproof background polling interval (every 8 seconds) in case Realtime replication is disabled
+        const pollInterval = setInterval(fetchLatestSupabaseProfile, 8000);
+
+        unsubProfile = () => {
+          channel.unsubscribe();
+          clearInterval(pollInterval);
+        };
       } else {
         if (!isSimulated) {
           setUserProfile(null);
