@@ -2286,14 +2286,19 @@ async function startServer() {
                 const currentPgBalance = Number(sUserData?.balance || sUserData?.wallet_balance || sUserData?.available_balance || 0);
                 const finalPgBalance = currentPgBalance + verifiedAmount;
 
+                const updatePayload: any = {};
+                if (tableName === 'profiles') {
+                  updatePayload.wallet_balance = finalPgBalance;
+                } else {
+                  updatePayload.balance = finalPgBalance;
+                  updatePayload.wallet_balance = finalPgBalance;
+                  updatePayload.available_balance = finalPgBalance;
+                  updatePayload.updated_at = new Date().toISOString();
+                }
+
                 const { error: pgUpdateErr } = await supabase
                   .from(tableName)
-                  .update({
-                    balance: finalPgBalance,
-                    wallet_balance: finalPgBalance,
-                    available_balance: finalPgBalance,
-                    updated_at: new Date().toISOString()
-                  })
+                  .update(updatePayload)
                   .eq('id', tryId);
 
                 if (pgUpdateErr) {
@@ -2487,11 +2492,27 @@ async function startServer() {
           return `${part1}-${part2}-${part3}-${part4}-${part5}`;
         };
 
-        if (targetUserId) {
-          const pgUuid = ensureUUID(targetUserId);
-          const idsToTry = [pgUuid, targetUserId];
+        let resolvedUserId = targetUserId;
 
-          console.log(`[Flutterwave Webhook Debug] Target User ID determined: ${targetUserId}. Attempting lookup in "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
+        // If targetUserId is missing but we have customerEmail, try looking up Firestore UID
+        if (!resolvedUserId && customerEmail && rawDb) {
+          try {
+            console.log(`[Flutterwave Webhook Debug] Target user ID missing. Querying Firestore for user with email: ${customerEmail}`);
+            const userSnapshot = await rawDb.collection("users").where("email", "==", customerEmail.toLowerCase().trim()).limit(1).get();
+            if (!userSnapshot.empty) {
+              resolvedUserId = userSnapshot.docs[0].id;
+              console.log(`[Flutterwave Webhook Debug] Resolved Firestore UID: ${resolvedUserId} for email: ${customerEmail}`);
+            }
+          } catch (fsErr: any) {
+            console.warn(`[Firestore lookup exception during webhook]:`, fsErr.message);
+          }
+        }
+
+        if (resolvedUserId) {
+          const pgUuid = ensureUUID(resolvedUserId);
+          const idsToTry = [pgUuid, resolvedUserId];
+
+          console.log(`[Flutterwave Webhook Debug] Attempting lookup in Supabase "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
 
           for (const tryId of idsToTry) {
             try {
@@ -2502,8 +2523,8 @@ async function startServer() {
                 .maybeSingle();
               if (!error && data) {
                 sbUser = data;
-                targetUserId = tryId;
-                console.log(`[Flutterwave Webhook Debug] Successfully found Supabase user in "profiles" by ID: ${tryId}`);
+                resolvedUserId = tryId;
+                console.log(`[Flutterwave Webhook Debug] Successfully found existing profile in "profiles" by ID: ${tryId}`);
                 break;
               }
               if (error) {
@@ -2515,60 +2536,92 @@ async function startServer() {
           }
         }
 
-        if (!sbUser && customerEmail) {
-          console.log(`[Flutterwave Webhook Debug] User not found by ID. Attempting email lookup in "profiles" table using: ${customerEmail}`);
+        // If user profile is STILL not found in Supabase profiles, auto-create it on the fly!
+        if (!sbUser && resolvedUserId) {
+          const pgUuid = ensureUUID(resolvedUserId);
+          const newUsername = customerEmail ? customerEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+          const newName = customerEmail ? (customerEmail.split('@')[0].toUpperCase()) : "User";
+          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+
+          console.log(`[Flutterwave Webhook] User profile not found in "profiles". Creating on-the-fly profile for ID: ${pgUuid} with wallet_balance: ${amount}`);
+          
           try {
-            const { data, error } = await supabase
+            const { error: pgInsertErr } = await supabase
               .from("profiles")
-              .select("*")
-              .eq("email", customerEmail)
-              .maybeSingle();
-            if (!error && data) {
-              sbUser = data;
-              targetUserId = data.id;
-              console.log(`[Flutterwave Webhook Debug] Successfully found Supabase user in "profiles" by email: ${customerEmail}`);
+              .insert({
+                id: pgUuid,
+                name: newName,
+                username: newUsername,
+                phone_number: "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: amount
+              });
+
+            if (pgInsertErr) {
+              console.error(`[Flutterwave Webhook Supabase Create Error]:`, pgInsertErr.message);
+              throw new Error(`Failed to create on-the-fly user profile: ${pgInsertErr.message}`);
+            } else {
+              console.log(`[Flutterwave Webhook Supabase success] Successfully created "profiles" row and credited user ID ${pgUuid} with +₦${amount}.`);
+              sbUser = { id: pgUuid, wallet_balance: amount, name: newName };
+              resolvedUserId = pgUuid;
             }
-            if (error) {
-              console.warn(`[Flutterwave Webhook Debug] Error querying "profiles" table with email "${customerEmail}":`, error.message);
-            }
-          } catch (err: any) {
-            console.warn(`[Supabase Webhook Lookup Exception in "profiles" for email ${customerEmail}]:`, err.message);
+          } catch (insertExc: any) {
+            console.error(`[Flutterwave Webhook Supabase Create Exception]:`, insertExc.message || insertExc);
+            throw insertExc;
           }
-        }
-
-        if (sbUser) {
+        } else if (sbUser) {
+          // If existing user is found, update their wallet_balance ONLY
           const currentWalletBalance = Number(sbUser.wallet_balance || 0);
-          const currentBalance = Number(sbUser.balance || 0);
-          const currentAvailableBalance = Number(sbUser.available_balance || 0);
+          const updatedWalletBalance = currentWalletBalance + amount;
 
-          console.log(`[Flutterwave Webhook Debug] Current user balances in "profiles": wallet_balance=${currentWalletBalance}, balance=${currentBalance}, available_balance=${currentAvailableBalance}`);
+          console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
 
           const { error: pgUpdateErr } = await supabase
             .from("profiles")
             .update({
-              wallet_balance: currentWalletBalance + amount,
-              balance: currentBalance + amount,
-              available_balance: currentAvailableBalance + amount,
-              updated_at: new Date().toISOString()
+              wallet_balance: updatedWalletBalance
             })
-            .eq("id", targetUserId);
+            .eq("id", resolvedUserId);
 
           if (pgUpdateErr) {
             console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
             throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
           } else {
-            console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${targetUserId} with +₦${amount}. New wallet_balance should be: ${currentWalletBalance + amount}`);
+            console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
+          }
+        } else {
+          console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
+          throw new Error(`User not found and could not resolve ID for email ${customerEmail}`);
+        }
 
-            // Add a Transaction Log to Supabase 'transactions' table
-            const txId = `fw_fund_${Date.now()}`;
-            try {
-              const pgUuid = ensureUUID(targetUserId);
-              const { error: pgTxErr } = await supabase
+        // Add a Transaction Log to Supabase 'transactions' table (failure here doesn't halt the flow)
+        if (resolvedUserId) {
+          const txId = `fw_fund_${Date.now()}`;
+          try {
+            const pgUuid = ensureUUID(resolvedUserId);
+            const { error: pgTxErr } = await supabase
+              .from('transactions')
+              .insert({
+                id: txId,
+                user_id: pgUuid,
+                userId: resolvedUserId,
+                amount: amount,
+                status: 'success',
+                platform: 'flutterwave',
+                reference: reference,
+                payment_method: 'flutterwave',
+                description: `Flutterwave deposit of NGN ${amount}`,
+                created_at: new Date().toISOString()
+              });
+
+            if (pgTxErr) {
+              console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
+              await supabase
                 .from('transactions')
                 .insert({
                   id: txId,
-                  user_id: pgUuid,
-                  userId: targetUserId,
+                  user_id: resolvedUserId,
                   amount: amount,
                   status: 'success',
                   platform: 'flutterwave',
@@ -2577,30 +2630,11 @@ async function startServer() {
                   description: `Flutterwave deposit of NGN ${amount}`,
                   created_at: new Date().toISOString()
                 });
-
-              if (pgTxErr) {
-                console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
-                await supabase
-                  .from('transactions')
-                  .insert({
-                    id: txId,
-                    user_id: targetUserId,
-                    amount: amount,
-                    status: 'success',
-                    platform: 'flutterwave',
-                    reference: reference,
-                    payment_method: 'flutterwave',
-                    description: `Flutterwave deposit of NGN ${amount}`,
-                    created_at: new Date().toISOString()
-                  });
-              }
-              console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
-            } catch (txLogErr: any) {
-              console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
             }
+            console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
+          } catch (txLogErr: any) {
+            console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
           }
-        } else {
-          console.warn(`[Flutterwave Webhook] CRITICAL: User not found in Supabase "profiles" table by ID ${userId} or email ${customerEmail}`);
         }
 
         // 7. Optional secondary Firestore sync. Completely isolated: any error is logged and IGNORED, letting Supabase update finish

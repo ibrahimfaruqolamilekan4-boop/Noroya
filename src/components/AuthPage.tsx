@@ -196,29 +196,20 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       }
     }
 
-    // Always ensure Supabase profiles and users tables are synchronized too
+    // Always ensure Supabase profiles is synchronized too
     try {
       const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
-      const sbPayload = {
+      const sbPayloadProfiles = {
         id: uid,
-        email: email.toLowerCase().trim(),
-        fullName: name,
-        full_name: name,
-        username: userUsername || userSnap.data()?.username || '',
-        balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
-        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
-        available_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
-        role: isAdminEmail ? 'admin' : 'user',
-        user_role: isAdminEmail ? 'admin' : 'user',
-        referralCode: sbCode,
-        referral_code: sbCode,
-        phoneNumber: userPhone || userSnap.data()?.phoneNumber || '',
+        name: name || userSnap.data()?.fullName || 'User',
+        username: userUsername || userSnap.data()?.username || email.split('@')[0],
         phone_number: userPhone || userSnap.data()?.phoneNumber || '',
-        transactionPin: transactionPin || userSnap.data()?.transactionPin || '',
-        transaction_pin: transactionPin || userSnap.data()?.transactionPin || ''
+        referral_code: sbCode,
+        transaction_pin: transactionPin || userSnap.data()?.transactionPin || '',
+        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0
       };
 
-      await supabase.from('profiles').upsert(sbPayload, { onConflict: 'id' });
+      await supabase.from('profiles').upsert(sbPayloadProfiles, { onConflict: 'id' });
     } catch (sbErr: any) {
       console.warn("Could not upsert into Supabase profiles:", sbErr.message);
     }

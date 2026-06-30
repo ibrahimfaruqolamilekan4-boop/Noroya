@@ -1241,9 +1241,7 @@ function DashboardOverview({
           const { data: updateData, error: updateError } = await supabase
             .from('profiles')
             .update({ 
-              balance: updatedBalance,
               wallet_balance: updatedBalance,
-              available_balance: updatedBalance
             })
             .eq('id', currentUserId);
 

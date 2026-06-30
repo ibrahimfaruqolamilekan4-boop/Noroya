@@ -94,13 +94,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const defaultProfile: UserProfile = {
           uid: sbUser.id,
           email: sbUser.email || '',
-          fullName: sbProfile?.fullName || sbProfile?.full_name || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
-          balance: sbProfile?.balance ?? sbProfile?.wallet_balance ?? 0,
-          wallet_balance: sbProfile?.wallet_balance ?? sbProfile?.balance ?? 0,
+          fullName: sbProfile?.name || sbProfile?.username || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
+          balance: sbProfile?.wallet_balance ?? 0,
+          wallet_balance: sbProfile?.wallet_balance ?? 0,
           role: sbProfile?.role || sbProfile?.user_role || (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user'),
-          referralCode: sbProfile?.referralCode || sbProfile?.referral_code || '',
-          phoneNumber: sbProfile?.phoneNumber || sbProfile?.phone_number || '',
-          transactionPin: sbProfile?.transactionPin || sbProfile?.transaction_pin || '',
+          referralCode: sbProfile?.referral_code || '',
+          phoneNumber: sbProfile?.phone_number || '',
+          transactionPin: sbProfile?.transaction_pin || '',
           createdAt: sbProfile?.createdAt || sbProfile?.created_at || new Date().toISOString()
         };
 
@@ -121,12 +121,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const base = prev || defaultProfile;
                 return {
                   ...base,
-                  fullName: data.fullName || data.full_name || base.fullName,
-                  balance: data.balance ?? data.wallet_balance ?? base.balance,
-                  wallet_balance: data.wallet_balance ?? data.balance ?? base.wallet_balance,
-                  phoneNumber: data.phoneNumber || data.phone_number || base.phoneNumber,
-                  transactionPin: data.transactionPin || data.transaction_pin || base.transactionPin,
-                  role: data.role || data.user_role || base.role,
+                  fullName: data.name || data.username || base.fullName,
+                  balance: data.wallet_balance ?? base.balance,
+                  wallet_balance: data.wallet_balance ?? base.wallet_balance,
+                  phoneNumber: data.phone_number || base.phoneNumber,
+                  transactionPin: data.transaction_pin || base.transactionPin,
                 };
               });
             }
@@ -154,12 +153,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const base = prev || defaultProfile;
                   return {
                     ...base,
-                    fullName: updated.fullName || updated.full_name || base.fullName,
-                    balance: updated.balance ?? updated.wallet_balance ?? base.balance,
-                    wallet_balance: updated.wallet_balance ?? updated.balance ?? base.wallet_balance,
-                    phoneNumber: updated.phoneNumber || updated.phone_number || base.phoneNumber,
-                    transactionPin: updated.transactionPin || updated.transaction_pin || base.transactionPin,
-                    role: updated.role || updated.user_role || base.role,
+                    fullName: updated.name || updated.username || base.fullName,
+                    balance: updated.wallet_balance ?? base.balance,
+                    wallet_balance: updated.wallet_balance ?? base.wallet_balance,
+                    phoneNumber: updated.phone_number || base.phoneNumber,
+                    transactionPin: updated.transaction_pin || base.transactionPin,
                   };
                 });
               }
