@@ -2433,7 +2433,78 @@ async function startServer() {
       const reference = payload.data?.tx_ref || payload.tx_ref || payload.data?.id?.toString() || payload.id?.toString() || `flw_webhook_${Date.now()}`;
       const amount = Number(payload.data?.amount || payload.amount);
       const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-      const userId = payload.data?.meta?.user_id || payload.data?.meta?.userId || payload.data?.userId || payload.userId || payload.meta?.user_id || payload.meta?.userId;
+
+      // 👇 PASTE THE FIX RIGHT HERE 👇
+      let userId = payload.data?.meta_data?.userId || payload.data?.meta?.userId || payload.data?.meta?.user_id || payload.data?.userId || payload.userId || payload.data?.customer?.id;
+
+      if (!userId || userId === 'undefined') {
+          console.log("User ID missing, searching Supabase tables by email...");
+          
+          let foundProfileId: string | null = null;
+
+          // Try querying Supabase 'users' table by email first
+          if (customerEmail) {
+            try {
+              const { data: sbUserRow, error } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('email', customerEmail)
+                  .maybeSingle();
+
+              if (!error && sbUserRow) {
+                  foundProfileId = sbUserRow.id;
+                  console.log(`[Flutterwave Webhook] Found user in Supabase users table by email: ${foundProfileId}`);
+              }
+            } catch (sbErr: any) {
+              console.warn("[Flutterwave Webhook] Supabase users table email query failed:", sbErr.message);
+            }
+          }
+
+          // Try querying Supabase 'profiles' table by email (as fallback)
+          if (!foundProfileId && customerEmail) {
+            try {
+              const { data: profile, error } = await supabase
+                  .from('profiles')
+                  .select('id')
+                  .eq('email', customerEmail)
+                  .maybeSingle();
+
+              if (!error && profile) {
+                  foundProfileId = profile.id;
+                  console.log(`[Flutterwave Webhook] Found user in Supabase profiles table by email: ${foundProfileId}`);
+              }
+            } catch (sbErr: any) {
+              console.warn("[Flutterwave Webhook] Supabase profiles table email query failed (column probably doesn't exist):", sbErr.message);
+            }
+          }
+
+          // Try querying Supabase 'profiles' table by username prefix
+          if (!foundProfileId && customerEmail) {
+            try {
+              const prefix = customerEmail.split('@')[0];
+              const { data: profile, error } = await supabase
+                  .from('profiles')
+                  .select('id')
+                  .eq('username', prefix)
+                  .maybeSingle();
+
+              if (!error && profile) {
+                  foundProfileId = profile.id;
+                  console.log(`[Flutterwave Webhook] Found user in Supabase profiles by username prefix: ${foundProfileId}`);
+              }
+            } catch (sbErr: any) {
+              console.warn("[Flutterwave Webhook] Supabase username prefix query failed:", sbErr.message);
+            }
+          }
+
+          if (!foundProfileId) {
+              console.error("Could not find a matching profile in Supabase for this email:", customerEmail);
+              return res.status(404).json({ error: "User profile not found in Supabase" });
+          }
+
+          userId = foundProfileId; 
+      }
+      // 👆 PASTE THE FIX RIGHT HERE 👆
 
       if (isNaN(amount) || amount <= 0) {
         console.warn(`[Flutterwave Webhook] Invalid amount detected: ${amount}`);
@@ -2493,20 +2564,6 @@ async function startServer() {
         };
 
         let resolvedUserId = targetUserId;
-
-        // If targetUserId is missing but we have customerEmail, try looking up Firestore UID
-        if (!resolvedUserId && customerEmail && rawDb) {
-          try {
-            console.log(`[Flutterwave Webhook Debug] Target user ID missing. Querying Firestore for user with email: ${customerEmail}`);
-            const userSnapshot = await rawDb.collection("users").where("email", "==", customerEmail.toLowerCase().trim()).limit(1).get();
-            if (!userSnapshot.empty) {
-              resolvedUserId = userSnapshot.docs[0].id;
-              console.log(`[Flutterwave Webhook Debug] Resolved Firestore UID: ${resolvedUserId} for email: ${customerEmail}`);
-            }
-          } catch (fsErr: any) {
-            console.warn(`[Firestore lookup exception during webhook]:`, fsErr.message);
-          }
-        }
 
         if (resolvedUserId) {
           const pgUuid = ensureUUID(resolvedUserId);
@@ -2637,77 +2694,7 @@ async function startServer() {
           }
         }
 
-        // 7. Optional secondary Firestore sync. Completely isolated: any error is logged and IGNORED, letting Supabase update finish
-        try {
-          if (rawDb) {
-            let firestoreUserDoc: any = null;
-            if (targetUserId) {
-              const directDoc = await rawDb.collection("users").doc(targetUserId).get();
-              if (directDoc.exists) {
-                firestoreUserDoc = directDoc;
-              }
-            }
-
-            if (!firestoreUserDoc && customerEmail) {
-              const userQuery = await rawDb.collection("users").where("email", "==", customerEmail).limit(1).get();
-              if (!userQuery.empty) {
-                firestoreUserDoc = userQuery.docs[0];
-              }
-            }
-
-            if (firestoreUserDoc) {
-              const userRef = firestoreUserDoc.ref;
-              const finalUserId = firestoreUserDoc.id;
-
-              await rawDb.runTransaction(async (transaction: any) => {
-                const freshUserSnap = await transaction.get(userRef);
-                if (freshUserSnap.exists) {
-                  const balanceVal = Number(freshUserSnap.data()?.balance || 0);
-                  const walletBalanceVal = Number(freshUserSnap.data()?.wallet_balance || 0);
-                  const availableBalanceVal = Number(freshUserSnap.data()?.available_balance || 0);
-
-                  transaction.update(userRef, {
-                    balance: balanceVal + amount,
-                    wallet_balance: walletBalanceVal + amount,
-                    available_balance: availableBalanceVal + amount,
-                    lastFundingAt: FieldValue.serverTimestamp()
-                  });
-                }
-              });
-
-              // Record processed payment in Firestore for secondary idempotency
-              const processedRef = rawDb.collection("processed_payments").doc(reference);
-              await processedRef.set({
-                reference,
-                userId: finalUserId,
-                amount,
-                status: "success",
-                source: "flutterwave_webhook",
-                processedAt: FieldValue.serverTimestamp()
-              });
-
-              // Record transaction log in Firestore
-              const fsTxId = `fw_webhook_${Date.now()}`;
-              await rawDb.collection("transactions").doc(fsTxId).set({
-                id: fsTxId,
-                userId: finalUserId,
-                type: "funding",
-                amount,
-                status: "completed",
-                description: `Flutterwave Webhook (Ref: ${reference})`,
-                reference,
-                paymentMethod: "Flutterwave Webhook",
-                createdAt: FieldValue.serverTimestamp()
-              });
-
-              console.log(`[Flutterwave Webhook Firestore success] Sync'd user ${finalUserId} with +₦${amount} in Firestore`);
-            } else {
-              console.warn(`[Flutterwave Webhook Firestore Sync] User not found in Firestore database by ID or email.`);
-            }
-          }
-        } catch (firestoreErr: any) {
-          console.error("[Flutterwave Webhook Firestore Error (ignored as requested)]:", firestoreErr.message || firestoreErr);
-        }
+        // 7. No secondary Firestore sync (Supabase is used exclusively)
 
       } catch (dbError: any) {
         console.error("[Flutterwave Webhook Database Processing Error]:", dbError);

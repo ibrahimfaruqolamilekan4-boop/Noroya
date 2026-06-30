@@ -42,7 +42,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
     },
     {
       q: "How do I fund my wallet?",
-      a: "Immediately upon signing up, you are assigned unique, dedicated virtual bank accounts (Monnify Reserved Accounts). Simply transfer money to any of these accounts, and your wallet will be credited instantly."
+      a: "Immediately upon signing up, you can fund your wallet instantly using our secure Flutterwave checkout or via instant bank transfers directly to your custom dedicated bank accounts."
     },
     {
       q: "What is your Referral Program?",

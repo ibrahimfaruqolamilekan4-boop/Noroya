@@ -2630,121 +2630,10 @@ function DashboardOverview({
 
               {/* Accounts Content List */}
               <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto bg-white">
-                <div className="grid grid-cols-2 gap-4 pb-2">
-                  <button
-                    type="button"
-                    onClick={() => setFundingTab('paystack')}
-                    className={cn(
-                      "p-3.5 rounded-xl border-2 border-black font-black text-xs uppercase tracking-wider text-center transition-all shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none cursor-pointer",
-                      fundingTab === 'paystack'
-                        ? "bg-[#FFCC00] text-black"
-                        : "bg-white text-slate-700 hover:bg-slate-50"
-                    )}
-                  >
-                    💳 Paystack Checkout
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFundingTab('flutterwave')}
-                    className={cn(
-                      "p-3.5 rounded-xl border-2 border-black font-black text-xs uppercase tracking-wider text-center transition-all shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none cursor-pointer",
-                      fundingTab === 'flutterwave'
-                        ? "bg-[#2dd4bf] text-black"
-                        : "bg-white text-slate-700 hover:bg-slate-50"
-                    )}
-                  >
-                    🏦 Flutterwave Transfer/Inline
-                  </button>
-                </div>
-
-                {fundingTab === 'paystack' ? (
-                  <form onSubmit={handlePaystackFundSubmit} className="space-y-6 font-sans">
-                    <div className="text-slate-600 text-xs leading-relaxed font-bold bg-slate-50 border-2 border-black p-4 rounded-xl shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      Enter the top-up amount you wish to credit your secure wallet balance, then complete standard authorization through the Paystack Secure Checkout.
-                    </div>
-
-                    {/* Amount Input */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Top-up Amount (₦)</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 font-extrabold text-lg">₦</span>
-                        <input
-                          type="text"
-                          required
-                          value={opayAmount}
-                          onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
-                          placeholder="e.g. 2000"
-                          className="w-full bg-slate-50 border-2 border-black focus:border-purple-600 rounded-xl py-4 pl-10 pr-4 font-mono font-extrabold text-slate-800 text-lg focus:outline-none transition-all placeholder:text-slate-350"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Quick presets */}
-                    <div className="grid grid-cols-4 gap-2">
-                      {['1000', '2000', '5000', '10000'].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setOpayAmount(preset)}
-                          className={cn(
-                            "py-2 px-1 text-xs font-black border-2 border-black rounded-xl transition-all font-mono cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none",
-                            opayAmount === preset
-                              ? "bg-[#FFCC00] text-black"
-                              : "bg-white text-slate-600 hover:text-slate-900"
-                          )}
-                        >
-                          ₦{Number(preset).toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Balance forecast */}
-                    <div className="p-4 rounded-xl bg-slate-50 border-2 border-black space-y-2 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      <div className="flex justify-between items-center text-xs font-bold">
-                        <span className="text-slate-500">Current Balance:</span>
-                        <span className="font-extrabold font-mono text-slate-800">{formatCurrency(user.balance)}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs border-t border-slate-200 pt-2 font-bold">
-                        <span className="text-[#5B21B6]">Projected Balance:</span>
-                        <span className="font-black font-mono text-[#5B21B6] text-sm font-sans">
-                          {formatCurrency(user.balance + Number(opayAmount || 0))}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Submit Button */}
-                    <button
-                      type="submit"
-                      disabled={opayLoading || !opayAmount || Number(opayAmount) <= 0}
-                      className="w-full bg-black border-2 border-black hover:bg-slate-800 disabled:bg-slate-300 disabled:border-slate-300 text-white font-black uppercase tracking-wider py-4 rounded-xl transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer text-xs"
-                    >
-                      {opayLoading ? (
-                        <>
-                          <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                          <span>Preparing Secure Checkout...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>💳 Pay Now with Paystack</span>
-                        </>
-                      )}
-                    </button>
-
-                    <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-[#DBE2EF] border-2 border-black text-slate-800 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      <AlertCircle size={18} className="text-[#5B21B6] flex-shrink-0" />
-                      <div>
-                        <p className="font-extrabold block">Automated Credit Sync</p>
-                        <p className="text-[10px] leading-relaxed font-bold">
-                          Deposits clear and reflect instantly on approved webhook response.
-                        </p>
-                      </div>
-                    </div>
-                  </form>
-                ) : (
-                  <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-6 font-sans">
-                    <div className="text-slate-700 text-xs leading-relaxed font-bold bg-[#DBE2EF]/65 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
-                      🦋 Fund your secure wallet instantly with **Flutterwave**. Your balance is credited automatically across our cloud nodes upon secure server validation.
-                    </div>
+                <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-6 font-sans">
+                  <div className="text-slate-700 text-xs leading-relaxed font-bold bg-[#DBE2EF]/65 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
+                    🦋 Fund your secure wallet instantly with **Flutterwave**. Your balance is credited automatically across our cloud nodes upon secure server validation.
+                  </div>
 
                     {/* Amount Input */}
                     <div className="space-y-2">
@@ -2859,7 +2748,6 @@ function DashboardOverview({
                       </div>
                     </div>
                   </form>
-                )}
               </div>
             </motion.div>
           </div>

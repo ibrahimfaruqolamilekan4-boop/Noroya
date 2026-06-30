@@ -2764,7 +2764,7 @@ export default function AdminPanelSection() {
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
           <div className="flex justify-between items-center pb-6 border-b border-slate-50">
             <div>
-              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Paystack & Monnify) Audit & Logs</h5>
+              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
               <p className="text-sm text-slate-400 font-medium font-sans">
                 Real-time transaction values, status checks, and revenue auditing.
               </p>
@@ -2837,7 +2837,7 @@ export default function AdminPanelSection() {
                       </div>
                     ))
                   ) : (
-                    <div className="p-12 text-center text-slate-500">No OPay payment gateway transactions recorded yet.</div>
+                    <div className="p-12 text-center text-slate-500">No Flutterwave payment gateway transactions recorded yet.</div>
                   )}
                 </div>
               </div>
