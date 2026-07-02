@@ -889,6 +889,390 @@ async function startServer() {
   // POST /buy-data and POST /api/vtu/buy-data / POST /api/buy-data (Unified Bigisub purchase flow)
   app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], handleVtuPurchase);
 
+  // ============================================================================
+  // Unified Bigisub Service Configuration & Purchase Routes (Migration)
+  // ============================================================================
+
+  // 1. Unified GET API route to pull active services and prices dynamically
+  app.get("/api/services/:type", async (req, res) => {
+    try {
+      const { type } = req.params;
+      const { network, provider } = req.query;
+
+      // Validate service type
+      const allowedTypes = ['data', 'airtime', 'cable', 'electricity', 'exam_pin'];
+      if (!allowedTypes.includes(type)) {
+        return res.status(400).json({ error: `Invalid service type: ${type}. Must be one of: ${allowedTypes.join(', ')}` });
+      }
+
+      let queryBuilder = supabase
+        .from('services_config')
+        .select('*')
+        .eq('service_type', type)
+        .eq('is_active', true);
+
+      // Support optional filtering by network or provider
+      const filterVal = network || provider;
+      if (filterVal) {
+        queryBuilder = queryBuilder.ilike('network_or_provider', `%${filterVal}%`);
+      }
+
+      const { data: services, error: queryErr } = await queryBuilder;
+
+      if (queryErr) {
+        console.error("[Supabase GET Services Error]:", queryErr);
+        return res.status(500).json({ error: `Database error: ${queryErr.message}` });
+      }
+
+      return res.json(services || []);
+    } catch (err: any) {
+      console.error("[GET /api/services/:type Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // 2. PUT Admin route to instantly update service parameters from admin panel
+  app.put("/api/admin/services/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { cost_price, selling_price, is_active } = req.body;
+
+      // Prepare fields to update dynamically
+      const updateData: any = {};
+      if (cost_price !== undefined) updateData.cost_price = Number(cost_price);
+      if (selling_price !== undefined) updateData.selling_price = Number(selling_price);
+      if (is_active !== undefined) updateData.is_active = Boolean(is_active);
+      updateData.updated_at = new Date().toISOString();
+
+      if (Object.keys(updateData).length <= 1) {
+        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, or is_active." });
+      }
+
+      const { data: updatedRecord, error: updateErr } = await supabase
+        .from('services_config')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+
+      if (updateErr) {
+        console.error("[Supabase PUT Service Error]:", updateErr);
+        return res.status(500).json({ error: `Database update error: ${updateErr.message}` });
+      }
+
+      if (!updatedRecord) {
+        return res.status(404).json({ error: "Service config item not found." });
+      }
+
+      return res.json({
+        success: true,
+        message: "Service configuration updated successfully!",
+        service: updatedRecord
+      });
+    } catch (err: any) {
+      console.error("[PUT /api/admin/services/:id Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // 3. Secure POST API route to process user utility purchases using Bigisub API
+  app.post("/api/purchase/utility", async (req, res) => {
+    try {
+      const {
+        userId,
+        service_id,
+        // Optional custom parameters passed from client
+        phone,
+        phoneNumber,
+        phone_number,
+        smartcard_number,
+        meter_number,
+        meter_type,
+        quantity,
+        amount
+      } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "Missing required parameter: userId" });
+      }
+
+      if (!service_id) {
+        return res.status(400).json({ error: "Missing required parameter: service_id" });
+      }
+
+      // Fetch the chosen service configuration from Supabase to prevent price/id tampering
+      const { data: service, error: serviceErr } = await supabase
+        .from('services_config')
+        .select('*')
+        .eq('id', service_id)
+        .maybeSingle();
+
+      if (serviceErr || !service) {
+        console.error("[Supabase Service Lookup Error]:", serviceErr);
+        return res.status(404).json({ error: "Service configuration not found or inactive." });
+      }
+
+      if (!service.is_active) {
+        return res.status(400).json({ error: "This service is currently disabled by the administrator." });
+      }
+
+      // Determine purchase cost
+      let finalPrice = Number(service.selling_price);
+      const isCustomAmountAirtime = service.service_type === 'airtime';
+      const isCustomAmountElectricity = service.service_type === 'electricity';
+
+      if (isCustomAmountAirtime || isCustomAmountElectricity) {
+        const inputAmount = Number(amount);
+        if (!inputAmount || isNaN(inputAmount) || inputAmount <= 0) {
+          return res.status(400).json({ error: "Invalid purchase amount specified." });
+        }
+        // If custom airtime/electricity, charge the custom input amount
+        finalPrice = inputAmount;
+      }
+
+      if (service.service_type === 'exam_pin') {
+        const qty = Number(quantity) || 1;
+        if (qty <= 0) return res.status(400).json({ error: "Quantity must be at least 1." });
+        finalPrice = finalPrice * qty;
+      }
+
+      // Verify the user's Supabase wallet balance
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profileErr || !profile) {
+        console.error("[Supabase Profile Query Error]:", profileErr);
+        return res.status(404).json({ error: "User profile not found in Supabase database." });
+      }
+
+      const currentBalance = Number(profile.wallet_balance || 0);
+      if (currentBalance < finalPrice) {
+        return res.status(400).json({ 
+          error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` 
+        });
+      }
+
+      // Resolve variables for Bigisub payload
+      const finalPhone = phone || phoneNumber || phone_number || "";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      // Network identifier mapper (MTN: 1, Glo: 2, 9mobile: 3, Airtel: 4)
+      let bigiNetworkId = 1;
+      const netUpper = String(service.network_or_provider).toUpperCase().trim();
+      if (netUpper.includes("MTN")) bigiNetworkId = 1;
+      else if (netUpper.includes("GLO")) bigiNetworkId = 2;
+      else if (netUpper.includes("9MOBILE")) bigiNetworkId = 3;
+      else if (netUpper.includes("AIRTEL")) bigiNetworkId = 4;
+
+      // Define endpoint & payload based on service type
+      let endpoint = "data";
+      let payload: any = {};
+
+      if (service.service_type === 'data') {
+        endpoint = "data";
+        payload = {
+          network: bigiNetworkId,
+          mobile_number: finalPhone,
+          plan: service.bigisub_identifier_id,
+          Ported_number: true
+        };
+      } else if (service.service_type === 'airtime') {
+        endpoint = "airtime";
+        payload = {
+          network: bigiNetworkId,
+          mobile_number: finalPhone,
+          amount: finalPrice,
+          airtime_type: "VTU",
+          Ported_number: true
+        };
+      } else if (service.service_type === 'cable') {
+        endpoint = "cable";
+        // Map cable types (GOTV = 1, DSTV = 2, StarTimes = 3, etc.)
+        let cableTvCode = 1;
+        if (netUpper.includes("DSTV")) cableTvCode = 2;
+        else if (netUpper.includes("STARTIMES")) cableTvCode = 3;
+
+        payload = {
+          cablename: cableTvCode,
+          smartcard_number: smartcard_number,
+          cableplan: service.bigisub_identifier_id,
+          plan: service.bigisub_identifier_id
+        };
+      } else if (service.service_type === 'electricity') {
+        endpoint = "electricity";
+        // Map disco codes (e.g., IKEDC = 1, EKEDC = 2, AEDC = 3, IBEDC = 4, etc.)
+        let discoCode = 1;
+        if (netUpper.includes("EKEDC")) discoCode = 2;
+        else if (netUpper.includes("AEDC")) discoCode = 3;
+        else if (netUpper.includes("IBEDC")) discoCode = 4;
+
+        payload = {
+          disco_name: discoCode,
+          meter_number: meter_number,
+          amount: finalPrice,
+          meter_type: meter_type === 'postpaid' || meter_type === 2 || meter_type === '2' ? 2 : 1 // 1 = prepaid, 2 = postpaid
+        };
+      } else if (service.service_type === 'exam_pin') {
+        endpoint = "exam";
+        payload = {
+          exam_name: service.bigisub_identifier_id,
+          quantity: Number(quantity) || 1
+        };
+      }
+
+      let apiSuccess = false;
+      let apiResponseData: any = null;
+      let apiErrorMsg = "";
+
+      // Check if simulation mode is active (dummy key)
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        console.log(`[Bigisub Simulation Mode] Simulating ${service.service_type} purchase...`);
+        await new Promise(resolve => setTimeout(resolve, 800)); // Simulate response latency
+
+        apiSuccess = true;
+        apiResponseData = {
+          status: "success",
+          success: true,
+          reference: `BIGI-SIM-UTL-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+          message: "Simulated utility purchase successful!"
+        };
+      } else {
+        try {
+          const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
+          console.log(`[Bigisub Outbound HTTP Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
+
+          const response = await axios.post(bigisubUrl, payload, {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+            },
+            timeout: 8000 // enforce strict 8-second timeout limit
+          });
+
+          apiResponseData = response.data;
+          console.log("[Bigisub Gateway API Response]:", apiResponseData);
+
+          if (response.status === 200 || response.status === 201) {
+            const isSuccessStatus = apiResponseData.status === "success" || 
+                                    apiResponseData.status === "SUCCESSFUL" || 
+                                    apiResponseData.success === true ||
+                                    apiResponseData.status === "completed";
+            if (isSuccessStatus) {
+              apiSuccess = true;
+            } else {
+              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Gateway transaction rejected.";
+            }
+          } else {
+            apiErrorMsg = `Gateway error status code: ${response.status}`;
+          }
+        } catch (axiosErr: any) {
+          console.error("[Bigisub Gateway API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+          
+          if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
+            apiErrorMsg = "8-second Gateway timeout limit reached. The gateway is slow or non-responsive.";
+          } else {
+            const respData = axiosErr.response?.data;
+            apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
+          }
+        }
+      }
+
+      // Deduct balance and insert transactions if successful
+      if (apiSuccess) {
+        const deductedBalance = currentBalance - finalPrice;
+
+        // Atomically update balance in Supabase profiles
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ wallet_balance: deductedBalance })
+          .eq('id', userId);
+
+        if (updateErr) {
+          console.error("[Supabase Wallet Deduct Error]:", updateErr);
+          return res.status(500).json({ 
+            error: "Purchase succeeded at gateway, but database balance update failed. Please contact support.",
+            reference: apiResponseData?.reference || apiResponseData?.id 
+          });
+        }
+
+        // Keep fallback users table in sync if it exists
+        try {
+          await supabase
+            .from('users')
+            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
+            .eq('id', userId);
+        } catch (e) {}
+
+        // Keep Firestore in sync as fallback
+        try {
+          if (db) {
+            await db.collection('users').doc(userId).update({
+              wallet_balance: deductedBalance,
+              available_balance: deductedBalance,
+              balance: deductedBalance
+            });
+          }
+        } catch (e) {}
+
+        // Create transaction record in Supabase
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        try {
+          await supabase.from('transactions').insert({
+            id: `bigi_utl_${Date.now()}`,
+            userId: userId,
+            type: service.service_type,
+            amount: finalPrice,
+            status: 'completed',
+            description: `${service.network_or_provider} ${service.item_name} to ${finalPhone || 'Utility'}`,
+            reference: referenceCode,
+            createdAt: new Date().toISOString()
+          });
+        } catch (txErr: any) {
+          console.warn("[Supabase Utility transaction logging skipped]:", txErr.message || txErr);
+        }
+
+        // Secondary Firestore transaction mirror
+        try {
+          if (db) {
+            const txId = `bigi_utl_${Date.now()}`;
+            await db.collection('transactions').doc(txId).set({
+              id: txId,
+              userId: userId,
+              type: service.service_type,
+              amount: finalPrice,
+              status: 'completed',
+              description: `${service.network_or_provider} ${service.item_name} to ${finalPhone || 'Utility'}`,
+              reference: referenceCode,
+              createdAt: FieldValue.serverTimestamp()
+            });
+          }
+        } catch (e) {}
+
+        return res.json({
+          status: "success",
+          message: `${service.item_name} purchase successful!`,
+          transaction: {
+            reference: referenceCode,
+            amount: finalPrice,
+            provider: service.network_or_provider,
+            service_type: service.service_type
+          }
+        });
+      } else {
+        return res.status(400).json({ 
+          error: `Purchase Failed: ${apiErrorMsg}. No funds were deducted from your wallet.` 
+        });
+      }
+    } catch (err: any) {
+      console.error("[POST /api/purchase/utility Exception]:", err);
+      return res.status(500).json({ error: `Internal processing exception: ${err.message}` });
+    }
+  });
+
   // JWT Registration Route
   app.post("/api/auth/register", async (req, res) => {
     const { email, password, fullName, phoneNumber } = req.body;
