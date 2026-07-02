@@ -658,7 +658,41 @@ async function startServer() {
         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
       }
 
-      // 2. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
+      // 2. Resolve original Bigisub plan code and network code mappings dynamically
+      let resolvedPlanCode = finalPlan;
+      if (finalType === "data" && finalPlan) {
+        try {
+          const { data: dbPlan, error: dbPlanErr } = await supabase
+            .from('data_plans')
+            .select('*')
+            .or(`id.eq.${finalPlan},api_plan_id.eq.${finalPlan}`)
+            .maybeSingle();
+
+          if (dbPlan) {
+            console.log(`[Supabase Resolve Plan SUCCESS] Matched data plan:`, dbPlan);
+            resolvedPlanCode = dbPlan.api_plan_id || dbPlan.id;
+          } else if (dbPlanErr) {
+            console.warn("[handleVtuPurchase Resolve Plan Warning]:", dbPlanErr.message);
+          }
+        } catch (resolvePlanExc: any) {
+          console.warn("[handleVtuPurchase Resolve Plan Exception]:", resolvePlanExc.message);
+        }
+      }
+
+      // Map network string names (e.g. "MTN", "Airtel") to Bigisub.ng's required numeric network codes
+      let bigiNetworkId: any = finalNetwork;
+      const netStr = String(finalNetwork).toUpperCase().trim();
+      if (netStr === "MTN" || netStr === "1") {
+        bigiNetworkId = 1;
+      } else if (netStr === "GLO" || netStr === "2") {
+        bigiNetworkId = 2;
+      } else if (netStr === "9MOBILE" || netStr === "9MOB" || netStr === "3") {
+        bigiNetworkId = 3;
+      } else if (netStr === "AIRTEL" || netStr === "4") {
+        bigiNetworkId = 4;
+      }
+
+      // 3. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
@@ -688,19 +722,22 @@ async function startServer() {
           const endpoint = finalType === "airtime" ? "airtime" : "data";
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
 
-          // Construct standard Bigisub payload
+          // Construct standard Bigisub payload matching mapping requirements of bigisub.ng
           const payload: any = {
-            network: finalNetwork,
+            network: bigiNetworkId,
             mobile_number: finalPhone,
             phone: finalPhone,
+            phone_number: finalPhone,
             amount: finalAmount,
             Ported_number: true
           };
 
           if (finalType === "data") {
-            payload.plan = finalPlan;
-            payload.plan_id = finalPlan;
-            payload.data_plan = finalPlan;
+            payload.plan = resolvedPlanCode;
+            payload.plan_id = resolvedPlanCode;
+            payload.data_plan = resolvedPlanCode;
+          } else {
+            payload.airtime_type = "VTU";
           }
 
           console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
@@ -741,7 +778,7 @@ async function startServer() {
         }
       }
 
-      // 3. Decrement the user's Supabase balance only if the Bigisub API call succeeds
+      // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalAmount;
         
@@ -1256,7 +1293,8 @@ async function startServer() {
           wholesaleCost: Number(p.wholesaleCost || 0),
           created_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          original_api_plan_id: String(originalId).trim()
         };
       });
 
@@ -1271,7 +1309,7 @@ async function startServer() {
           plan_category: String(p.plan_category).toUpperCase().trim(),
           plan_name: String(p.plan_name).trim(),
           price: parseFloat(String(p.price)),
-          api_plan_id: String(p.peyflex_id || p.id || '').trim(),
+          api_plan_id: String(p.original_api_plan_id || p.peyflex_id || p.id || '').trim(),
           created_at: p.created_at || new Date().toISOString(),
           expires_at: p.expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         };
