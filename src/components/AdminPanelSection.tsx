@@ -187,11 +187,11 @@ export default function AdminPanelSection() {
         .from('services_config')
         .insert({
           service_type: planType,
-          network_or_provider: planNetwork.toUpperCase(),
+          provider_or_network: planNetwork.toUpperCase(),
           item_name: planName.trim(),
           cost_price: Number(planPrice) * 0.95, // mock cost
           selling_price: Number(planPrice),
-          bigisub_identifier_id: planPeyflexId.trim() || `manual_${Date.now()}`,
+          bigisub_plan_id: planPeyflexId.trim() || `manual_${Date.now()}`,
           is_active: true
         })
         .select()
@@ -224,10 +224,10 @@ export default function AdminPanelSection() {
         .from('services_config')
         .update({
           service_type: editPlanType,
-          network_or_provider: editPlanNetwork.toUpperCase(),
+          provider_or_network: editPlanNetwork.toUpperCase(),
           item_name: editPlanName.trim(),
           selling_price: Number(editPlanPrice),
-          bigisub_identifier_id: editPlanPeyflexId.trim()
+          bigisub_plan_id: editPlanPeyflexId.trim()
         })
         .eq('id', editingPlan.id);
 
@@ -236,10 +236,10 @@ export default function AdminPanelSection() {
       setServicesConfig(prev => prev.map(p => p.id === editingPlan.id ? {
         ...p,
         service_type: editPlanType,
-        network_or_provider: editPlanNetwork.toUpperCase(),
+        provider_or_network: editPlanNetwork.toUpperCase(),
         item_name: editPlanName.trim(),
         selling_price: Number(editPlanPrice),
-        bigisub_identifier_id: editPlanPeyflexId.trim()
+        bigisub_plan_id: editPlanPeyflexId.trim()
       } : p));
       setEditingPlan(null);
     } catch (err: any) {
@@ -296,11 +296,11 @@ export default function AdminPanelSection() {
         .from('services_config')
         .insert({
           service_type: newServiceType,
-          network_or_provider: newNetworkOrProvider.toUpperCase().trim(),
+          provider_or_network: newNetworkOrProvider.toUpperCase().trim(),
           item_name: newItemName.trim(),
           cost_price: Number(newCostPrice),
           selling_price: Number(newSellingPrice),
-          bigisub_identifier_id: newBigisubIdentifierId.trim(),
+          bigisub_plan_id: newBigisubIdentifierId.trim(),
           is_active: true
         })
         .select()
@@ -483,7 +483,7 @@ export default function AdminPanelSection() {
           .from('services_config')
           .select('*')
           .order('service_type', { ascending: true })
-          .order('network_or_provider', { ascending: true });
+          .order('provider_or_network', { ascending: true });
         if (error) throw error;
         if (data) {
           setServicesConfig(data);
@@ -1365,9 +1365,9 @@ export default function AdminPanelSection() {
                     const matchCategory = inventoryCategoryTab === 'all' || item.service_type === inventoryCategoryTab;
                     const matchSearch = !planSearchQuery.trim() ||
                       String(item.item_name || '').toLowerCase().includes(planSearchQuery.toLowerCase()) ||
-                      String(item.bigisub_identifier_id || '').toLowerCase().includes(planSearchQuery.toLowerCase());
+                      String(item.bigisub_plan_id || '').toLowerCase().includes(planSearchQuery.toLowerCase());
                     const matchProvider = !peyflexSearchQuery.trim() ||
-                      String(item.network_or_provider || '').toLowerCase().includes(peyflexSearchQuery.toLowerCase());
+                      String(item.provider_or_network || '').toLowerCase().includes(peyflexSearchQuery.toLowerCase());
 
                     return matchCategory && matchSearch && matchProvider;
                   });
@@ -1412,13 +1412,13 @@ export default function AdminPanelSection() {
                           <div className="flex flex-wrap items-center gap-1.5 font-sans">
                             <span className={cn(
                               "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
-                              item.network_or_provider?.toUpperCase() === 'MTN' ? "bg-yellow-400 text-black" :
-                              item.network_or_provider?.toUpperCase() === 'AIRTEL' ? "bg-red-500 text-white" :
-                              item.network_or_provider?.toUpperCase() === 'GLO' ? "bg-green-500 text-white" :
-                              item.network_or_provider?.toUpperCase() === '9MOBILE' ? "bg-emerald-600 text-white" :
+                              item.provider_or_network?.toUpperCase() === 'MTN' ? "bg-yellow-400 text-black" :
+                              item.provider_or_network?.toUpperCase() === 'AIRTEL' ? "bg-red-500 text-white" :
+                              item.provider_or_network?.toUpperCase() === 'GLO' ? "bg-green-500 text-white" :
+                              item.provider_or_network?.toUpperCase() === '9MOBILE' ? "bg-emerald-600 text-white" :
                               "bg-slate-900 text-white"
                             )}>
-                              {item.network_or_provider}
+                              {item.provider_or_network}
                             </span>
                             <span className="text-[9px] bg-slate-200 text-slate-800 font-extrabold px-1.5 py-0.5 rounded leading-none uppercase border border-slate-300 font-mono">
                               {item.service_type}
@@ -1431,7 +1431,7 @@ export default function AdminPanelSection() {
                           
                           <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400">
                             <span>Bigisub ID:</span>
-                            <span className="font-extrabold text-black font-sans">{item.bigisub_identifier_id}</span>
+                            <span className="font-extrabold text-black font-sans">{item.bigisub_plan_id}</span>
                           </div>
                         </div>
 

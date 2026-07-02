@@ -893,13 +893,90 @@ async function startServer() {
   // Unified Bigisub Service Configuration & Purchase Routes (Migration)
   // ============================================================================
 
-  // 1. Unified GET API route to pull active services and prices dynamically
+  // 1. Automated Plan Generator: Processes and maps/upserts plans directly from Bigisub API payload
+  app.post("/api/admin/generate-plans", async (req, res) => {
+    try {
+      const { plans } = req.body;
+      if (!plans || !Array.isArray(plans)) {
+        return res.status(400).json({ error: "Missing or invalid parameter: 'plans' must be an array of plan objects." });
+      }
+
+      const upsertedPlans = [];
+
+      for (const plan of plans) {
+        // Handle various payload representations dynamically
+        const bigisub_plan_id = String(plan.id || plan.plan_id || plan.bigisub_plan_id || plan.api_id || plan.bigisub_identifier_id || "").trim();
+        if (!bigisub_plan_id) continue;
+
+        const item_name = String(plan.name || plan.plan_name || plan.item_name || "").trim();
+        const cost_price = Number(plan.cost || plan.cost_price || plan.price || plan.selling_price || 0);
+        const service_type = String(plan.service_type || plan.type || "data").toLowerCase().trim();
+
+        // Validate service type alignment
+        const validTypes = ['data', 'airtime', 'cable', 'electricity', 'exam_pin'];
+        const finalType = validTypes.includes(service_type) ? service_type : 'data';
+
+        let provider_or_network = String(plan.network || plan.provider || plan.provider_or_network || plan.network_or_provider || "").toUpperCase().trim();
+        if (plan.network_id) {
+          if (Number(plan.network_id) === 1) provider_or_network = "MTN";
+          else if (Number(plan.network_id) === 2) provider_or_network = "GLO";
+          else if (Number(plan.network_id) === 3) provider_or_network = "9MOBILE";
+          else if (Number(plan.network_id) === 4) provider_or_network = "AIRTEL";
+        }
+
+        if (!provider_or_network) {
+          provider_or_network = "UNKNOWN";
+        }
+
+        // Apply a safe default markup if selling price isn't set or is under cost
+        let selling_price = Number(plan.selling_price || plan.price || 0);
+        if (!selling_price || selling_price <= cost_price) {
+          selling_price = Math.ceil(cost_price * 1.08); // 8% markup
+        }
+
+        const is_active = plan.is_active !== undefined ? Boolean(plan.is_active) : true;
+
+        const payload = {
+          service_type: finalType,
+          provider_or_network,
+          item_name,
+          cost_price,
+          selling_price,
+          bigisub_plan_id,
+          is_active,
+          updated_at: new Date().toISOString()
+        };
+
+        const { data, error } = await supabase
+          .from('services_config')
+          .upsert(payload, { onConflict: 'bigisub_plan_id' })
+          .select()
+          .maybeSingle();
+
+        if (error) {
+          console.error(`[Bigisub Plan Generator Upsert Error for ${bigisub_plan_id}]:`, error);
+          continue;
+        }
+        upsertedPlans.push(data || payload);
+      }
+
+      return res.json({
+        success: true,
+        message: `Successfully processed and upserted ${upsertedPlans.length} plans.`,
+        plans: upsertedPlans
+      });
+    } catch (err: any) {
+      console.error("[POST /api/admin/generate-plans Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // 2. Unified GET route to pull active plans (grouped logically or in flat representation)
   app.get("/api/services/:type", async (req, res) => {
     try {
       const { type } = req.params;
-      const { network, provider } = req.query;
+      const { group, provider, network } = req.query;
 
-      // Validate service type
       const allowedTypes = ['data', 'airtime', 'cable', 'electricity', 'exam_pin'];
       if (!allowedTypes.includes(type)) {
         return res.status(400).json({ error: `Invalid service type: ${type}. Must be one of: ${allowedTypes.join(', ')}` });
@@ -909,12 +986,13 @@ async function startServer() {
         .from('services_config')
         .select('*')
         .eq('service_type', type)
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .order('provider_or_network', { ascending: true })
+        .order('selling_price', { ascending: true });
 
-      // Support optional filtering by network or provider
       const filterVal = network || provider;
       if (filterVal) {
-        queryBuilder = queryBuilder.ilike('network_or_provider', `%${filterVal}%`);
+        queryBuilder = queryBuilder.ilike('provider_or_network', `%${filterVal}%`);
       }
 
       const { data: services, error: queryErr } = await queryBuilder;
@@ -924,6 +1002,19 @@ async function startServer() {
         return res.status(500).json({ error: `Database error: ${queryErr.message}` });
       }
 
+      // Group outputs logically if requested
+      if (group === 'true') {
+        const grouped: Record<string, any[]> = {};
+        for (const item of (services || [])) {
+          const key = String(item.provider_or_network).toUpperCase().trim();
+          if (!grouped[key]) {
+            grouped[key] = [];
+          }
+          grouped[key].push(item);
+        }
+        return res.json(grouped);
+      }
+
       return res.json(services || []);
     } catch (err: any) {
       console.error("[GET /api/services/:type Exception]:", err);
@@ -931,21 +1022,21 @@ async function startServer() {
     }
   });
 
-  // 2. PUT Admin route to instantly update service parameters from admin panel
+  // 3. PUT Admin Control Route: Allows instant modifications of plan parameters
   app.put("/api/admin/services/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { cost_price, selling_price, is_active } = req.body;
+      const { cost_price, selling_price, is_active, bigisub_plan_id } = req.body;
 
-      // Prepare fields to update dynamically
       const updateData: any = {};
       if (cost_price !== undefined) updateData.cost_price = Number(cost_price);
       if (selling_price !== undefined) updateData.selling_price = Number(selling_price);
       if (is_active !== undefined) updateData.is_active = Boolean(is_active);
+      if (bigisub_plan_id !== undefined) updateData.bigisub_plan_id = String(bigisub_plan_id).trim();
       updateData.updated_at = new Date().toISOString();
 
       if (Object.keys(updateData).length <= 1) {
-        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, or is_active." });
+        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, or is_active." });
       }
 
       const { data: updatedRecord, error: updateErr } = await supabase
@@ -961,7 +1052,7 @@ async function startServer() {
       }
 
       if (!updatedRecord) {
-        return res.status(404).json({ error: "Service config item not found." });
+        return res.status(404).json({ error: "Service configuration item not found." });
       }
 
       return res.json({
@@ -975,13 +1066,12 @@ async function startServer() {
     }
   });
 
-  // 3. Secure POST API route to process user utility purchases using Bigisub API
+  // 4. Secure POST API Route: Process user utility purchases using Bigisub API
   app.post("/api/purchase/utility", async (req, res) => {
     try {
       const {
         userId,
         service_id,
-        // Optional custom parameters passed from client
         phone,
         phoneNumber,
         phone_number,
@@ -992,15 +1082,26 @@ async function startServer() {
         amount
       } = req.body;
 
-      if (!userId) {
-        return res.status(400).json({ error: "Missing required parameter: userId" });
+      // Securely fetch user context from Supabase Auth header first, falling back to body
+      let resolvedUserId = userId;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        if (!authErr && user) {
+          resolvedUserId = user.id;
+        }
+      }
+
+      if (!resolvedUserId) {
+        return res.status(400).json({ error: "Missing required parameter: resolved user context is required." });
       }
 
       if (!service_id) {
         return res.status(400).json({ error: "Missing required parameter: service_id" });
       }
 
-      // Fetch the chosen service configuration from Supabase to prevent price/id tampering
+      // Fetch the service configuration securely to prevent pricing or ID tampering
       const { data: service, error: serviceErr } = await supabase
         .from('services_config')
         .select('*')
@@ -1016,7 +1117,6 @@ async function startServer() {
         return res.status(400).json({ error: "This service is currently disabled by the administrator." });
       }
 
-      // Determine purchase cost
       let finalPrice = Number(service.selling_price);
       const isCustomAmountAirtime = service.service_type === 'airtime';
       const isCustomAmountElectricity = service.service_type === 'electricity';
@@ -1026,7 +1126,6 @@ async function startServer() {
         if (!inputAmount || isNaN(inputAmount) || inputAmount <= 0) {
           return res.status(400).json({ error: "Invalid purchase amount specified." });
         }
-        // If custom airtime/electricity, charge the custom input amount
         finalPrice = inputAmount;
       }
 
@@ -1036,11 +1135,11 @@ async function startServer() {
         finalPrice = finalPrice * qty;
       }
 
-      // Verify the user's Supabase wallet balance
+      // Query user balance from Supabase
       const { data: profile, error: profileErr } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', userId)
+        .eq('id', resolvedUserId)
         .maybeSingle();
 
       if (profileErr || !profile) {
@@ -1055,20 +1154,17 @@ async function startServer() {
         });
       }
 
-      // Resolve variables for Bigisub payload
       const finalPhone = phone || phoneNumber || phone_number || "";
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
-      // Network identifier mapper (MTN: 1, Glo: 2, 9mobile: 3, Airtel: 4)
       let bigiNetworkId = 1;
-      const netUpper = String(service.network_or_provider).toUpperCase().trim();
+      const netUpper = String(service.provider_or_network).toUpperCase().trim();
       if (netUpper.includes("MTN")) bigiNetworkId = 1;
       else if (netUpper.includes("GLO")) bigiNetworkId = 2;
       else if (netUpper.includes("9MOBILE")) bigiNetworkId = 3;
       else if (netUpper.includes("AIRTEL")) bigiNetworkId = 4;
 
-      // Define endpoint & payload based on service type
       let endpoint = "data";
       let payload: any = {};
 
@@ -1077,7 +1173,7 @@ async function startServer() {
         payload = {
           network: bigiNetworkId,
           mobile_number: finalPhone,
-          plan: service.bigisub_identifier_id,
+          plan: service.bigisub_plan_id,
           Ported_number: true
         };
       } else if (service.service_type === 'airtime') {
@@ -1091,7 +1187,6 @@ async function startServer() {
         };
       } else if (service.service_type === 'cable') {
         endpoint = "cable";
-        // Map cable types (GOTV = 1, DSTV = 2, StarTimes = 3, etc.)
         let cableTvCode = 1;
         if (netUpper.includes("DSTV")) cableTvCode = 2;
         else if (netUpper.includes("STARTIMES")) cableTvCode = 3;
@@ -1099,12 +1194,11 @@ async function startServer() {
         payload = {
           cablename: cableTvCode,
           smartcard_number: smartcard_number,
-          cableplan: service.bigisub_identifier_id,
-          plan: service.bigisub_identifier_id
+          cableplan: service.bigisub_plan_id,
+          plan: service.bigisub_plan_id
         };
       } else if (service.service_type === 'electricity') {
         endpoint = "electricity";
-        // Map disco codes (e.g., IKEDC = 1, EKEDC = 2, AEDC = 3, IBEDC = 4, etc.)
         let discoCode = 1;
         if (netUpper.includes("EKEDC")) discoCode = 2;
         else if (netUpper.includes("AEDC")) discoCode = 3;
@@ -1114,12 +1208,12 @@ async function startServer() {
           disco_name: discoCode,
           meter_number: meter_number,
           amount: finalPrice,
-          meter_type: meter_type === 'postpaid' || meter_type === 2 || meter_type === '2' ? 2 : 1 // 1 = prepaid, 2 = postpaid
+          meter_type: meter_type === 'postpaid' || meter_type === 2 || meter_type === '2' ? 2 : 1
         };
       } else if (service.service_type === 'exam_pin') {
         endpoint = "exam";
         payload = {
-          exam_name: service.bigisub_identifier_id,
+          exam_name: service.bigisub_plan_id,
           quantity: Number(quantity) || 1
         };
       }
@@ -1128,10 +1222,10 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      // Check if simulation mode is active (dummy key)
+      // Simulation mode if key is placeholder
       if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
         console.log(`[Bigisub Simulation Mode] Simulating ${service.service_type} purchase...`);
-        await new Promise(resolve => setTimeout(resolve, 800)); // Simulate response latency
+        await new Promise(resolve => setTimeout(resolve, 800));
 
         apiSuccess = true;
         apiResponseData = {
@@ -1181,7 +1275,6 @@ async function startServer() {
         }
       }
 
-      // Deduct balance and insert transactions if successful
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalPrice;
 
@@ -1189,7 +1282,7 @@ async function startServer() {
         const { error: updateErr } = await supabase
           .from('profiles')
           .update({ wallet_balance: deductedBalance })
-          .eq('id', userId);
+          .eq('id', resolvedUserId);
 
         if (updateErr) {
           console.error("[Supabase Wallet Deduct Error]:", updateErr);
@@ -1199,18 +1292,17 @@ async function startServer() {
           });
         }
 
-        // Keep fallback users table in sync if it exists
+        // Maintain fallback syncing
         try {
           await supabase
             .from('users')
             .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', userId);
+            .eq('id', resolvedUserId);
         } catch (e) {}
 
-        // Keep Firestore in sync as fallback
         try {
           if (db) {
-            await db.collection('users').doc(userId).update({
+            await db.collection('users').doc(resolvedUserId).update({
               wallet_balance: deductedBalance,
               available_balance: deductedBalance,
               balance: deductedBalance
@@ -1218,16 +1310,15 @@ async function startServer() {
           }
         } catch (e) {}
 
-        // Create transaction record in Supabase
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
         try {
           await supabase.from('transactions').insert({
             id: `bigi_utl_${Date.now()}`,
-            userId: userId,
+            userId: resolvedUserId,
             type: service.service_type,
             amount: finalPrice,
             status: 'completed',
-            description: `${service.network_or_provider} ${service.item_name} to ${finalPhone || 'Utility'}`,
+            description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
             reference: referenceCode,
             createdAt: new Date().toISOString()
           });
@@ -1235,17 +1326,16 @@ async function startServer() {
           console.warn("[Supabase Utility transaction logging skipped]:", txErr.message || txErr);
         }
 
-        // Secondary Firestore transaction mirror
         try {
           if (db) {
             const txId = `bigi_utl_${Date.now()}`;
             await db.collection('transactions').doc(txId).set({
               id: txId,
-              userId: userId,
+              userId: resolvedUserId,
               type: service.service_type,
               amount: finalPrice,
               status: 'completed',
-              description: `${service.network_or_provider} ${service.item_name} to ${finalPhone || 'Utility'}`,
+              description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
               reference: referenceCode,
               createdAt: FieldValue.serverTimestamp()
             });
@@ -1258,7 +1348,7 @@ async function startServer() {
           transaction: {
             reference: referenceCode,
             amount: finalPrice,
-            provider: service.network_or_provider,
+            provider: service.provider_or_network,
             service_type: service.service_type
           }
         });
@@ -2388,7 +2478,7 @@ async function startServer() {
     }
   });
 
-  // NEW: Peyflex Verification API Route
+  // Bigisub Utility Validation Endpoint (Migrated from Peyflex)
   app.post("/api/v1/utility/validate", async (req, res) => {
     const { type, provider, number } = req.body;
 
@@ -2397,10 +2487,10 @@ async function startServer() {
     }
 
     try {
-      const PEYFLEX_API_TOKEN = process.env.PEYFLEX_API_TOKEN || process.env.VTU_API_KEY || "peyflex_dummy_token";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
 
-      // Simulation/Sandbox fallback if no real token set
-      if (!PEYFLEX_API_TOKEN || PEYFLEX_API_TOKEN.includes("dummy") || PEYFLEX_API_TOKEN.includes("your_peyflex") || PEYFLEX_API_TOKEN.includes("test")) {
+      // Simulation/Sandbox fallback if no real token is set
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
         await new Promise(resolve => setTimeout(resolve, 800));
 
         const names = [
@@ -2460,42 +2550,58 @@ async function startServer() {
         });
       }
 
-      // Real API Call to Peyflex validation endpoint
-      const apiResponse = await fetch("https://peyflex.com.ng/api/v1/utility/validate", {
-        method: "POST",
+      // Real API Call to Bigisub validation endpoint
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+      const isElectricity = type === 'electricity' || ['ekedc', 'ikedc', 'aedc', 'phed', 'ibedc', 'kaedco', 'kedco', 'eedc'].includes(String(provider).toLowerCase());
+      const endpoint = isElectricity ? "electricity/validate" : "cable/validate";
+      
+      const payload: any = {};
+      if (isElectricity) {
+        let discoCode = 1;
+        const provUpper = String(provider).toUpperCase();
+        if (provUpper.includes("EKEDC")) discoCode = 2;
+        else if (provUpper.includes("AEDC")) discoCode = 3;
+        else if (provUpper.includes("IBEDC")) discoCode = 4;
+        payload.disco_name = discoCode;
+        payload.meter_number = number;
+      } else {
+        let cableTvCode = 1;
+        const provUpper = String(provider).toUpperCase();
+        if (provUpper.includes("DSTV")) cableTvCode = 2;
+        else if (provUpper.includes("STARTIMES")) cableTvCode = 3;
+        payload.cablename = cableTvCode;
+        payload.smartcard_number = number;
+      }
+
+      const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${PEYFLEX_API_TOKEN}`
+          "Authorization": `Bearer ${BIGISUB_API_KEY}`
         },
-        body: JSON.stringify({
-          service: String(provider).toLowerCase(),
-          number: number
-        })
+        timeout: 8000
       });
 
-      const responseBody = await apiResponse.json().catch(() => ({}));
-      console.log(`[PEYFLEX UTILITY VALIDATE RESPONSE]:`, responseBody);
-
-      if (apiResponse.ok && (responseBody.status === "success" || responseBody.success || responseBody.customer_name || responseBody.name)) {
+      const responseBody = response.data;
+      if (response.status === 200 && (responseBody.status === "success" || responseBody.success)) {
         return res.json({
           success: true,
-          customerName: responseBody.customer_name || responseBody.customerName || responseBody.name || "Peyflex Verified Customer",
-          address: responseBody.address || responseBody.customer_address || "",
-          debtAmount: responseBody.debt || responseBody.debtAmount || 0,
+          customerName: responseBody.customer_name || responseBody.name || "Bigisub Verified Customer",
+          address: responseBody.address || "",
+          debtAmount: responseBody.debt || 0,
           meterNumber: number,
           smartcardNo: number,
           provider: String(provider).toUpperCase()
         });
       } else {
-        return res.status(400).json({ error: responseBody.error || responseBody.message || "Peyflex verification failed." });
+        return res.status(400).json({ error: responseBody.error || responseBody.message || "Bigisub verification failed." });
       }
     } catch (err: any) {
-      console.error("[Peyflex Utility Validate Exception]:", err);
+      console.error("[Bigisub Utility Validate Exception]:", err);
       return res.status(500).json({ error: "Gateway verification error. Please retry." });
     }
   });
 
-  // NEW: Peyflex Purchase & Wallet Ledger Routing
+  // Bigisub-powered Purchase & Wallet Ledger Routing (Migrated from Peyflex)
   app.post("/api/v1/utility/pay", async (req, res) => {
     const { userId, type, provider, amount, number, plan } = req.body;
 
@@ -2504,6 +2610,16 @@ async function startServer() {
     }
 
     try {
+      // Find matching service configuration in services_config first using provider and plan (bigisub_plan_id)
+      const { data: service, error: serviceErr } = await supabase
+        .from('services_config')
+        .select('*')
+        .eq('service_type', type === 'cable' ? 'cable' : 'electricity')
+        .ilike('provider_or_network', `%${provider}%`)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
       const userRef = db.collection('users').doc(userId);
       const userDoc = await userRef.get();
       if (!userDoc.exists) {
@@ -2533,6 +2649,14 @@ async function startServer() {
         available_balance: debitedBalance,
         balance: debitedBalance
       });
+
+      // Update Supabase profiles in tandem
+      try {
+        await supabase
+          .from('profiles')
+          .update({ wallet_balance: debitedBalance })
+          .eq('id', userId);
+      } catch (e) {}
 
       // Write Transaction log
       const txRef = db.collection('transactions').doc();
@@ -2579,13 +2703,14 @@ async function startServer() {
         }
       }
 
-      // 2. Dispatch to live Peyflex gateway
-      const PEYFLEX_API_TOKEN = process.env.PEYFLEX_API_TOKEN || process.env.VTU_API_KEY || "peyflex_dummy_token";
+      // 2. Dispatch to live Bigisub gateway
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
       let dispatchSuccess = false;
       let responseBody: any = null;
       let networkErr = "";
 
-      if (!PEYFLEX_API_TOKEN || PEYFLEX_API_TOKEN.includes("dummy") || PEYFLEX_API_TOKEN.includes("your_peyflex") || PEYFLEX_API_TOKEN.includes("test")) {
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
         // sandbox simulation
         await new Promise(r => setTimeout(r, 1000));
         dispatchSuccess = true;
@@ -2597,42 +2722,72 @@ async function startServer() {
 
         responseBody = {
           status: "success",
-          reference: `PEY-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Processed through simulator sandbox successfully",
+          reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+          message: "Processed through Bigisub simulator sandbox successfully",
           token: generatedToken || undefined
         };
       } else {
         try {
-          const apiResponse = await fetch("https://peyflex.com.ng/api/v1/utility/pay", {
-            method: "POST",
+          const endpoint = type === 'cable' ? 'cable' : 'electricity';
+          const payload: any = {};
+          
+          if (type === 'cable') {
+            let cableTvCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("DSTV")) cableTvCode = 2;
+            else if (provUpper.includes("STARTIMES")) cableTvCode = 3;
+
+            payload.cablename = cableTvCode;
+            payload.smartcard_number = number;
+            payload.cableplan = plan || service?.bigisub_plan_id || "gotv_lite";
+          } else {
+            let discoCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("EKEDC")) discoCode = 2;
+            else if (provUpper.includes("AEDC")) discoCode = 3;
+            else if (provUpper.includes("IBEDC")) discoCode = 4;
+
+            payload.disco_name = discoCode;
+            payload.meter_number = number;
+            payload.amount = amount;
+            payload.meter_type = plan?.toLowerCase().includes("postpaid") ? 2 : 1;
+          }
+
+          const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${PEYFLEX_API_TOKEN}`
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
             },
-            body: JSON.stringify({
-              service: provider.toLowerCase(),
-              number: number,
-              amount: amount,
-              variation_id: plan || ""
-            })
+            timeout: 8000
           });
 
-          responseBody = await apiResponse.json().catch(() => ({}));
-          console.log(`[PEYFLEX UTILITY SYSTEM DISPATCH RESPONSE]:`, responseBody);
-
-          if (apiResponse.ok && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
+          responseBody = response.data;
+          if (response.status === 200 && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
             dispatchSuccess = true;
           } else {
-            networkErr = responseBody.error || responseBody.message || `Peyflex utility gateway error code ${apiResponse.status}`;
+            networkErr = responseBody.error || responseBody.message || `Bigisub utility gateway error code ${response.status}`;
           }
         } catch (fetchErr: any) {
-          console.error("[Peyflex Utility Dispatch fetch Exception]:", fetchErr);
+          console.error("[Bigisub Utility Dispatch fetch Exception]:", fetchErr);
           networkErr = fetchErr.message || "Network Timeout";
         }
       }
 
       if (dispatchSuccess) {
-        // Success
+        // Success: write to Supabase transactions as well for unified reporting
+        try {
+          await supabase.from('transactions').insert({
+            id: `bigi_utl_v1_${Date.now()}`,
+            userId: userId,
+            type: type === 'cable' ? 'cable' : 'electricity',
+            amount: amount,
+            status: 'completed',
+            description: `${provider.toUpperCase()} ${plan || (type === 'cable' ? 'Cable TV' : 'Electricity')} to ${number}`,
+            reference: responseBody?.reference || txRefCode,
+            createdAt: new Date().toISOString()
+          });
+        } catch (e) {}
+
         return res.json({
           status: "success",
           message: "Transaction completed successfully",
@@ -2653,6 +2808,13 @@ async function startServer() {
           balance: refundedBalance
         });
 
+        try {
+          await supabase
+            .from('profiles')
+            .update({ wallet_balance: refundedBalance })
+            .eq('id', userId);
+        } catch (e) {}
+
         await txRef.update({
           status: 'failed_refunded',
           description: `FAILED: ${provider.toUpperCase()} to ${number} (Refunded: ${networkErr})`
@@ -2661,7 +2823,7 @@ async function startServer() {
         return res.status(400).json({ error: `Billing gateway rejected payload: ${networkErr}. Refunded wallet successfully.` });
       }
     } catch (err: any) {
-      console.error("[Peyflex Utility Purchase Checkout Exception]:", err);
+      console.error("[Bigisub Utility Purchase Checkout Exception]:", err);
       return res.status(500).json({ error: "Local processing gateway error. Please retry." });
     }
   });
