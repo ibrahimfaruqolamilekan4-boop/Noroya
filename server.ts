@@ -1155,6 +1155,41 @@ async function startServer() {
       }
 
       const finalPhone = phone || phoneNumber || phone_number || "";
+      const transactionId = `bigi_utl_${Date.now()}`;
+      const localReference = `TRX-BIGI-${Date.now()}`;
+
+      // 1. Immediately insert a row into the 'transactions' table with a status of 'pending'
+      try {
+        await supabase.from('transactions').insert({
+          id: transactionId,
+          userId: resolvedUserId,
+          type: service.service_type,
+          amount: finalPrice,
+          status: 'pending',
+          description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
+          reference: localReference,
+          createdAt: new Date().toISOString()
+        });
+      } catch (txErr: any) {
+        console.warn("[Supabase Utility pending transaction logging skipped]:", txErr.message || txErr);
+      }
+
+      // Sync 'pending' status to Firestore fallback
+      try {
+        if (db) {
+          await db.collection('transactions').doc(transactionId).set({
+            id: transactionId,
+            userId: resolvedUserId,
+            type: service.service_type,
+            amount: finalPrice,
+            status: 'pending',
+            description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
+            reference: localReference,
+            createdAt: FieldValue.serverTimestamp()
+          });
+        }
+      } catch (e) {}
+
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
@@ -1310,34 +1345,27 @@ async function startServer() {
           }
         } catch (e) {}
 
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
+        
+        // 2. After making the Axios request to Bigisub, if the API response returns a successful status, update transaction to 'success' and save Bigisub transaction reference code into 'api_reference'
         try {
-          await supabase.from('transactions').insert({
-            id: `bigi_utl_${Date.now()}`,
-            userId: resolvedUserId,
-            type: service.service_type,
-            amount: finalPrice,
-            status: 'completed',
-            description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
-            reference: referenceCode,
-            createdAt: new Date().toISOString()
-          });
+          await supabase
+            .from('transactions')
+            .update({
+              status: 'success',
+              reference: referenceCode,
+              api_reference: referenceCode
+            })
+            .eq('id', transactionId);
         } catch (txErr: any) {
-          console.warn("[Supabase Utility transaction logging skipped]:", txErr.message || txErr);
+          console.warn("[Supabase Utility success transaction update failed]:", txErr.message || txErr);
         }
 
         try {
           if (db) {
-            const txId = `bigi_utl_${Date.now()}`;
-            await db.collection('transactions').doc(txId).set({
-              id: txId,
-              userId: resolvedUserId,
-              type: service.service_type,
-              amount: finalPrice,
-              status: 'completed',
-              description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
-              reference: referenceCode,
-              createdAt: FieldValue.serverTimestamp()
+            await db.collection('transactions').doc(transactionId).update({
+              status: 'success',
+              reference: referenceCode
             });
           }
         } catch (e) {}
@@ -1353,6 +1381,28 @@ async function startServer() {
           }
         });
       } else {
+        // 3. If Bigisub API request fails or errors out, update transaction to 'failed', log the error text inside 'api_response_message', and ensure user's wallet balance is untouched (no update is performed on balance)
+        try {
+          await supabase
+            .from('transactions')
+            .update({
+              status: 'failed',
+              api_response_message: apiErrorMsg || "Gateway transaction rejected."
+            })
+            .eq('id', transactionId);
+        } catch (txErr: any) {
+          console.warn("[Supabase Utility failed transaction update failed]:", txErr.message || txErr);
+        }
+
+        try {
+          if (db) {
+            await db.collection('transactions').doc(transactionId).update({
+              status: 'failed',
+              description: `FAILED: ${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'} (${apiErrorMsg || "Gateway transaction rejected."})`
+            });
+          }
+        } catch (e) {}
+
         return res.status(400).json({ 
           error: `Purchase Failed: ${apiErrorMsg}. No funds were deducted from your wallet.` 
         });
