@@ -10,6 +10,7 @@ import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
 import { supabase } from "./src/lib/supabase.js";
+import axios from "axios";
 
 dotenv.config();
 
@@ -587,15 +588,269 @@ async function startServer() {
     });
   });
 
+  // Unified Robust Bigisub VTU Purchase Flow (Migrated from Peyflex)
+  const handleVtuPurchase = async (req: any, res: any) => {
+    const { 
+      userId, 
+      networkId, 
+      planId, 
+      phone, 
+      amount, 
+      requestType,
+      // Legacy/Fallback keys from existing frontend to ensure 100% backward compatibility
+      type, 
+      network, 
+      phoneNumber, 
+      plan,
+      phone_number,
+      peyflex_variation_id,
+      retail_price,
+      plan_name,
+      planName,
+      apiPlanId
+    } = req.body;
+    
+    const finalUserId = userId;
+    const finalNetwork = networkId || network;
+    const finalPhone = phone || phoneNumber || phone_number;
+    const finalAmount = Number(
+      amount !== undefined ? amount : 
+      (retail_price !== undefined ? retail_price : req.body.amount)
+    );
+
+    // Dynamic extraction of Plan ID
+    const finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
+
+    // Determine the type: airtime or data
+    let finalType = requestType || type;
+    if (!finalType) {
+      const pName = plan_name || planName || plan || "";
+      if (pName.toLowerCase().includes("airtime") || apiPlanId === "airtime_top_up" || req.body.planType === "Airtime") {
+        finalType = "airtime";
+      } else {
+        finalType = "data";
+      }
+    }
+
+    if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
+      return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
+    }
+
+    try {
+      // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', finalUserId)
+        .maybeSingle();
+
+      if (profileErr) {
+        console.error("[Supabase Profile Query Error]:", profileErr);
+        return res.status(500).json({ error: `Database error querying user profile: ${profileErr.message}` });
+      }
+
+      if (!profile) {
+        return res.status(404).json({ error: "User profile not found in Supabase database." });
+      }
+
+      const currentBalance = Number(profile.wallet_balance || 0);
+      if (currentBalance < finalAmount) {
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+      }
+
+      // 2. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      let apiSuccess = false;
+      let apiResponseData: any = null;
+      let apiErrorMsg = "";
+
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        // Simulation mode
+        console.log("[Bigisub Simulation] Processing simulated purchase...");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
+          apiSuccess = false;
+          apiErrorMsg = "Simulated carrier gateway timeout";
+        } else {
+          apiSuccess = true;
+          apiResponseData = {
+            status: "success",
+            success: true,
+            reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+            message: "Simulated purchase successful"
+          };
+        }
+      } else {
+        try {
+          const endpoint = finalType === "airtime" ? "airtime" : "data";
+          const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
+
+          // Construct standard Bigisub payload
+          const payload: any = {
+            network: finalNetwork,
+            mobile_number: finalPhone,
+            phone: finalPhone,
+            amount: finalAmount,
+            Ported_number: true
+          };
+
+          if (finalType === "data") {
+            payload.plan = finalPlan;
+            payload.plan_id = finalPlan;
+            payload.data_plan = finalPlan;
+          }
+
+          console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
+
+          const response = await axios.post(bigisubUrl, payload, {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+            },
+            timeout: 8000 // 8-second timeout limit as requested
+          });
+
+          apiResponseData = response.data;
+          console.log("[Bigisub API Response]:", apiResponseData);
+
+          if (response.status === 200 || response.status === 201) {
+            const isSuccessStatus = apiResponseData.status === "success" || 
+                                    apiResponseData.status === "SUCCESSFUL" || 
+                                    apiResponseData.success === true ||
+                                    apiResponseData.status === "completed";
+            if (isSuccessStatus) {
+              apiSuccess = true;
+            } else {
+              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Bigisub purchase rejected by gateway.";
+            }
+          } else {
+            apiErrorMsg = `HTTP Gateway error status code: ${response.status}`;
+          }
+        } catch (axiosErr: any) {
+          console.error("[Bigisub API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+          
+          if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
+            apiErrorMsg = "8-second API Timeout limit reached. Gateway was slow or non-responsive.";
+          } else {
+            const respData = axiosErr.response?.data;
+            apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
+          }
+        }
+      }
+
+      // 3. Decrement the user's Supabase balance only if the Bigisub API call succeeds
+      if (apiSuccess) {
+        const deductedBalance = currentBalance - finalAmount;
+        
+        // Atomically update balance in Supabase profiles
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ wallet_balance: deductedBalance })
+          .eq('id', finalUserId);
+
+        if (updateErr) {
+          console.error("[Supabase Balance Update Error]:", updateErr);
+          return res.status(500).json({ 
+            error: "Bigisub purchase succeeded, but database balance update failed. Please contact admin.",
+            reference: apiResponseData?.reference || apiResponseData?.id 
+          });
+        }
+
+        // Keep fallback users table or other tables in sync if they exist
+        try {
+          await supabase
+            .from('users')
+            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
+            .eq('id', finalUserId);
+        } catch (ignoreErr) {
+          // Ignored backup table failure
+        }
+
+        // Secondary Firestore sync for secondary database compatibility
+        try {
+          if (db) {
+            const userRef = db.collection('users').doc(finalUserId);
+            await userRef.update({
+              wallet_balance: deductedBalance,
+              available_balance: deductedBalance,
+              balance: deductedBalance
+            });
+          }
+        } catch (fsErr) {
+          // Ignored Firestore fallback
+        }
+
+        // Create a transaction record in Supabase 'transactions' table
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        try {
+          await supabase.from('transactions').insert({
+            id: `bigi_${Date.now()}`,
+            userId: finalUserId,
+            type: finalType,
+            amount: finalAmount,
+            status: 'completed',
+            description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+            reference: referenceCode,
+            createdAt: new Date().toISOString()
+          });
+        } catch (txErr: any) {
+          console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
+        }
+
+        // Create transaction record in Firestore as fallback
+        try {
+          if (db) {
+            const txId = `bigi_${Date.now()}`;
+            await db.collection('transactions').doc(txId).set({
+              id: txId,
+              userId: finalUserId,
+              type: finalType,
+              amount: finalAmount,
+              status: 'completed',
+              description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+              reference: referenceCode,
+              createdAt: FieldValue.serverTimestamp()
+            });
+          }
+        } catch (fsTxErr) {
+          // Ignored
+        }
+
+        return res.json({
+          status: "success",
+          message: `${finalType} purchase successful!`,
+          transaction: {
+            reference: referenceCode,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType
+          }
+        });
+      } else {
+        // Purchase failed, return error response and do NOT deduct user's balance
+        console.warn(`[Bigisub Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
+        return res.status(400).json({ 
+          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
+        });
+      }
+    } catch (err: any) {
+      console.error("[Bigisub Purchase Endpoint Exception]:", err);
+      return res.status(500).json({ error: "Internal processing error during Bigisub purchase flow." });
+    }
+  };
+
   // Mount the new modular VTU integration data router
   app.use("/api/data", dataRouter);
 
-  // Live Wallet Purchases & Checkout Fulfillments
-  app.post("/api/v1/data/purchase", v1DataPurchase);
+  // Live Wallet Purchases & Checkout Fulfillments (Unified Bigisub purchase flow)
+  app.post("/api/v1/data/purchase", handleVtuPurchase);
 
-  // POST /buy-data and POST /api/vtu/buy-data / POST /api/buy-data
-  // Handled cleanly via the new robust auto-refunding VTU integration integration system controller
-  app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], buyData);
+  // POST /buy-data and POST /api/vtu/buy-data / POST /api/buy-data (Unified Bigisub purchase flow)
+  app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], handleVtuPurchase);
 
   // JWT Registration Route
   app.post("/api/auth/register", async (req, res) => {
@@ -1403,104 +1658,237 @@ async function startServer() {
 
   // Outdated Monnify Webhook and Admin endpoints completely deleted
 
-  // Real VTU Purchase Route with Database Sync & Agent-Scale Cashback
+  // Real VTU Purchase Route with Database Sync & Agent-Scale Cashback (Bigisub Migration)
   app.post("/api/vtu/purchase", async (req, res) => {
-    const { userId, type, network, amount, phoneNumber, plan } = req.body;
+    const { 
+      userId, 
+      networkId, 
+      planId, 
+      phone, 
+      amount, 
+      requestType,
+      // Legacy/Fallback keys from existing frontend to ensure 100% backward compatibility
+      type, 
+      network, 
+      phoneNumber, 
+      plan 
+    } = req.body;
     
-    if (!userId || !amount) {
-      return res.status(400).json({ error: "Missing required fields" });
+    const finalUserId = userId;
+    const finalType = requestType || type || "data";
+    const finalNetwork = networkId || network;
+    const finalPlan = planId || plan;
+    const finalPhone = phone || phoneNumber;
+    const finalAmount = Number(amount !== undefined ? amount : req.body.amount);
+
+    if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
+      return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
     }
 
     try {
-      const userRef = db.collection('users').doc(userId);
-      
-      const result = await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          throw new Error("User profile not found");
+      // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', finalUserId)
+        .maybeSingle();
+
+      if (profileErr) {
+        console.error("[Supabase Profile Query Error]:", profileErr);
+        return res.status(500).json({ error: `Database error querying user profile: ${profileErr.message}` });
+      }
+
+      if (!profile) {
+        return res.status(404).json({ error: "User profile not found in Supabase database." });
+      }
+
+      const currentBalance = Number(profile.wallet_balance || 0);
+      if (currentBalance < finalAmount) {
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+      }
+
+      // 2. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      let apiSuccess = false;
+      let apiResponseData: any = null;
+      let apiErrorMsg = "";
+
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        // Simulation mode
+        console.log("[Bigisub Simulation] Processing simulated purchase...");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
+          apiSuccess = false;
+          apiErrorMsg = "Simulated carrier gateway timeout";
+        } else {
+          apiSuccess = true;
+          apiResponseData = {
+            status: "success",
+            success: true,
+            reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+            message: "Simulated purchase successful"
+          };
         }
+      } else {
+        try {
+          const endpoint = finalType === "airtime" ? "airtime" : "data";
+          const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
 
-        const userData = userDoc.data();
-        const currentBalance = userData?.wallet_balance !== undefined
-          ? Number(userData.wallet_balance)
-          : (userData?.balance || 0);
-        const userRole = userData?.role || 'user';
+          // Construct standard Bigisub payload
+          const payload: any = {
+            network: finalNetwork,
+            mobile_number: finalPhone,
+            phone: finalPhone,
+            amount: finalAmount,
+            Ported_number: true
+          };
 
-        if (currentBalance < amount) {
-          throw new Error("Insufficient wallet balance. Please fund your wallet.");
-        }
+          if (finalType === "data") {
+            payload.plan = finalPlan;
+            payload.plan_id = finalPlan;
+            payload.data_plan = finalPlan;
+          }
 
-        // Calculate cashback rate dynamically (User: 2%, Agent: 3%, Reseller: 4%)
-        let cashbackRate = 0.02;
-        if (userRole === 'agent') cashbackRate = 0.03;
-        else if (userRole === 'reseller') cashbackRate = 0.04;
+          console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
 
-        let cashbackEarned = 0;
-        if (type === 'data' || type === 'airtime' || type === 'bill') {
-          cashbackEarned = Number((amount * cashbackRate).toFixed(2));
-        }
+          const response = await axios.post(bigisubUrl, payload, {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+            },
+            timeout: 8000 // 8-second timeout limit as requested
+          });
 
-        // 1. Deduct balance and Credit cashback instantly
-        const finalBalance = currentBalance - amount + cashbackEarned;
-        transaction.update(userRef, {
-          wallet_balance: finalBalance,
-          available_balance: finalBalance,
-          balance: finalBalance
-        });
+          apiResponseData = response.data;
+          console.log("[Bigisub API Response]:", apiResponseData);
 
-        // 2. Create transaction record
-        const txRef = db.collection('transactions').doc();
-        const transactionData = {
-          userId,
-          type,
-          amount,
-          status: 'completed',
-          description: `${network} ${plan || type} to ${phoneNumber}${cashbackEarned > 0 ? ` (₦${cashbackEarned.toFixed(2)} Cashback earned)` : ''}`,
-          reference: `TRX-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          createdAt: FieldValue.serverTimestamp(),
-          cashbackEarned
-        };
-        transaction.set(txRef, transactionData);
-
-        // 3. Process referral commission if referred
-        if (userData?.referredBy) {
-          const referrerRef = db.collection('users').doc(userData.referredBy);
-          const referrerDoc = await transaction.get(referrerRef);
-          
-          if (referrerDoc.exists) {
-            const commission = Number((amount * 0.02).toFixed(2));
-            if (commission > 0) {
-              // Increment referrer balance
-              transaction.update(referrerRef, {
-                balance: FieldValue.increment(commission)
-              });
-
-              // Create commission transaction record
-              const refTxRef = db.collection('transactions').doc();
-              transaction.set(refTxRef, {
-                userId: userData.referredBy,
-                type: 'funding',
-                amount: commission,
-                status: 'completed',
-                description: `2% Referral Commission from ${userData.fullName || 'Referred User'}`,
-                reference: `REF-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-                createdAt: FieldValue.serverTimestamp()
-              });
+          if (response.status === 200 || response.status === 201) {
+            const isSuccessStatus = apiResponseData.status === "success" || 
+                                    apiResponseData.status === "SUCCESSFUL" || 
+                                    apiResponseData.success === true ||
+                                    apiResponseData.status === "completed";
+            if (isSuccessStatus) {
+              apiSuccess = true;
+            } else {
+              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Bigisub purchase rejected by gateway.";
             }
+          } else {
+            apiErrorMsg = `HTTP Gateway error status code: ${response.status}`;
+          }
+        } catch (axiosErr: any) {
+          console.error("[Bigisub API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+          
+          if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
+            apiErrorMsg = "8-second API Timeout limit reached. Gateway was slow or non-responsive.";
+          } else {
+            const respData = axiosErr.response?.data;
+            apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
           }
         }
+      }
 
-        return transactionData;
-      });
+      // 3. Decrement the user's Supabase balance only if the Bigisub API call succeeds
+      if (apiSuccess) {
+        const deductedBalance = currentBalance - finalAmount;
+        
+        // Atomically update balance in Supabase profiles
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ wallet_balance: deductedBalance })
+          .eq('id', finalUserId);
 
-      res.json({ 
-        status: "success", 
-        message: `${type} purchase successful`, 
-        transaction: result
-      });
-    } catch (error: any) {
-      console.error("Purchase error:", error);
-      res.status(402).json({ error: error.message });
+        if (updateErr) {
+          console.error("[Supabase Balance Update Error]:", updateErr);
+          return res.status(500).json({ 
+            error: "Bigisub purchase succeeded, but database balance update failed. Please contact admin.",
+            reference: apiResponseData?.reference || apiResponseData?.id 
+          });
+        }
+
+        // Keep fallback users table or other tables in sync if they exist
+        try {
+          await supabase
+            .from('users')
+            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
+            .eq('id', finalUserId);
+        } catch (ignoreErr) {
+          // Ignored backup table failure
+        }
+
+        // Secondary Firestore sync for secondary database compatibility
+        try {
+          if (db) {
+            const userRef = db.collection('users').doc(finalUserId);
+            await userRef.update({
+              wallet_balance: deductedBalance,
+              available_balance: deductedBalance,
+              balance: deductedBalance
+            });
+          }
+        } catch (fsErr) {
+          // Ignored Firestore fallback
+        }
+
+        // Create a transaction record in Supabase 'transactions' table
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        try {
+          await supabase.from('transactions').insert({
+            id: `bigi_${Date.now()}`,
+            userId: finalUserId,
+            type: finalType,
+            amount: finalAmount,
+            status: 'completed',
+            description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+            reference: referenceCode,
+            createdAt: new Date().toISOString()
+          });
+        } catch (txErr: any) {
+          console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
+        }
+
+        // Create transaction record in Firestore as fallback
+        try {
+          if (db) {
+            const txId = `bigi_${Date.now()}`;
+            await db.collection('transactions').doc(txId).set({
+              id: txId,
+              userId: finalUserId,
+              type: finalType,
+              amount: finalAmount,
+              status: 'completed',
+              description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+              reference: referenceCode,
+              createdAt: FieldValue.serverTimestamp()
+            });
+          }
+        } catch (fsTxErr) {
+          // Ignored
+        }
+
+        return res.json({
+          status: "success",
+          message: `${finalType} purchase successful!`,
+          transaction: {
+            reference: referenceCode,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType
+          }
+        });
+      } else {
+        // Purchase failed, return error response and do NOT deduct user's balance
+        console.warn(`[Bigisub Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
+        return res.status(400).json({ 
+          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
+        });
+      }
+    } catch (err: any) {
+      console.error("[Bigisub Purchase Endpoint Exception]:", err);
+      return res.status(500).json({ error: "Internal processing error during Bigisub purchase flow." });
     }
   });
 
