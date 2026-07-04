@@ -251,13 +251,13 @@ export default function AdminPanelSection() {
   };
 
   // Update a Bigisub service configuration dynamically
-  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean) => {
+  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string) => {
     setIsUpdatingService(id);
     try {
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cost_price, selling_price, is_active })
+        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id })
       });
 
       if (!response.ok) {
@@ -266,12 +266,12 @@ export default function AdminPanelSection() {
       }
 
       const resData = await response.json();
-      toast.success(`Updated ${resData.service?.item_name || 'service'} configuration successfully!`);
+      toast.success(resData.message || `Updated ${resData.service?.item_name || 'service'} configuration successfully!`);
       
       // Update local state
       setServicesConfig(prev => prev.map(item => {
         if (item.id === id) {
-          return { ...item, cost_price, selling_price, is_active };
+          return { ...item, cost_price, selling_price, is_active, bigisub_plan_id: bigisub_plan_id !== undefined ? bigisub_plan_id : item.bigisub_plan_id };
         }
         return item;
       }));
@@ -476,9 +476,19 @@ export default function AdminPanelSection() {
 
     initSupabasePlansSync();
 
-    // Fetch Services Config from Supabase
+    // Fetch Services Config from Supabase via API route with direct failover
     const fetchServicesConfig = async () => {
       try {
+        const response = await fetch('/api/services/all');
+        if (response.ok) {
+          const apiData = await response.json();
+          if (Array.isArray(apiData)) {
+            setServicesConfig(apiData);
+            return;
+          }
+        }
+        
+        // Failover direct query
         const { data, error } = await supabase
           .from('services_config')
           .select('*')
@@ -489,7 +499,7 @@ export default function AdminPanelSection() {
           setServicesConfig(data);
         }
       } catch (err: any) {
-        console.warn("Could not load services_config from Supabase:", err);
+        console.warn("Could not load services_config from API or database:", err);
       }
     };
     fetchServicesConfig();
@@ -1398,7 +1408,7 @@ export default function AdminPanelSection() {
                             <input
                               type="checkbox"
                               checked={item.is_active}
-                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked)}
+                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id)}
                               className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
                             />
                             <span className="text-[10px] font-black uppercase font-sans">
@@ -1429,9 +1439,18 @@ export default function AdminPanelSection() {
                             {item.item_name}
                           </h6>
                           
-                          <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400">
-                            <span>Bigisub ID:</span>
-                            <span className="font-extrabold text-black font-sans">{item.bigisub_plan_id}</span>
+                          <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                            <span className="font-bold">Bigisub Plan ID:</span>
+                            <input
+                              type="text"
+                              value={item.bigisub_plan_id || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, bigisub_plan_id: val } : p));
+                              }}
+                              className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-32"
+                              placeholder="Plan ID"
+                            />
                           </div>
                         </div>
 
@@ -1483,7 +1502,7 @@ export default function AdminPanelSection() {
 
                           <button
                             type="button"
-                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active)}
+                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id)}
                             disabled={isUpdatingService === item.id}
                             className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
                           >

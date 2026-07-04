@@ -132,18 +132,19 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
 
     const fetchBackupPlans = async () => {
       try {
-        const response = await fetch('/api/plans');
+        const response = await fetch('/api/services/data');
         if (response.ok) {
-          const plansList = await response.json();
-          if (Array.isArray(plansList) && plansList.length > 0) {
-            console.log("Successfully loaded plans via fallback API /api/plans:", plansList);
+          const resData = await response.json();
+          const plansList = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
+          if (plansList && plansList.length > 0) {
+            console.log("Successfully loaded plans via clean API /api/services/data:", plansList);
             const mapped = normalizeSupabasePlans(plansList);
             setAllPlans(mapped);
             fallbackLoaded = true;
           }
         }
       } catch (err) {
-        console.warn("Could not read backup plans from /api/plans API:", err);
+        console.warn("Could not read backup plans from /api/services/data API:", err);
       } finally {
         setFetchingPlans(false);
       }
@@ -152,41 +153,47 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     // 1. Initial Load and Realtime Subscription using official Supabase Client
     const initSupabaseSync = async () => {
       try {
-        const { data: initialPlans, error } = await supabase
-          .from('data_plans')
-          .select('*')
-          .gt('expires_at', new Date().toISOString());
-
-        if (error) {
-          throw error;
-        }
-
-        if (initialPlans && initialPlans.length > 0) {
-          console.log("[Supabase Sync] Ingested raw postgres live structures:", initialPlans.length);
-          setAllPlans(normalizeSupabasePlans(initialPlans));
-          setFetchingPlans(false);
+        const response = await fetch('/api/services/data');
+        if (response.ok) {
+          const resData = await response.json();
+          const initialPlans = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
+          if (initialPlans && initialPlans.length > 0) {
+            console.log("[Supabase Sync] Ingested raw services live structures:", initialPlans.length);
+            setAllPlans(normalizeSupabasePlans(initialPlans));
+            setFetchingPlans(false);
+          } else {
+            fetchBackupPlans();
+          }
+        } else {
+          fetchBackupPlans();
         }
       } catch (err: any) {
         console.warn("[Supabase Realtime Initial Fetch] Falling back to traditional load strategy:", err.message);
+        fetchBackupPlans();
       }
     };
 
     initSupabaseSync();
 
-    // Subscribe to pg realtime events
+    // Subscribe to pg realtime events on services_config
     const supabaseChannel = supabase
-      .channel('realtime:data_plans')
+      .channel('realtime:services_config')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'data_plans' },
+        { event: '*', schema: 'public', table: 'services_config' },
         async () => {
-          console.log("[Supabase Realtime] Change detected in postgres plans, reloading list...");
-          const { data: updatedPlans } = await supabase
-            .from('data_plans')
-            .select('*')
-            .gt('expires_at', new Date().toISOString());
-          if (updatedPlans) {
-            setAllPlans(normalizeSupabasePlans(updatedPlans));
+          console.log("[Supabase Realtime] Change detected in postgres services_config, reloading list...");
+          try {
+            const response = await fetch('/api/services/data');
+            if (response.ok) {
+              const resData = await response.json();
+              const updatedPlans = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
+              if (updatedPlans) {
+                setAllPlans(normalizeSupabasePlans(updatedPlans));
+              }
+            }
+          } catch (e) {
+            console.error("Failed to update plans on real-time event:", e);
           }
         }
       )

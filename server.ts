@@ -971,6 +971,91 @@ async function startServer() {
     }
   });
 
+  // GET API route to pull all plans (for admin management)
+  app.get("/api/services/all", async (req, res) => {
+    try {
+      const { data: services, error: queryErr } = await supabase
+        .from('services_config')
+        .select('*')
+        .order('service_type', { ascending: true })
+        .order('provider_or_network', { ascending: true })
+        .order('selling_price', { ascending: true });
+
+      if (queryErr) {
+        console.error("[Supabase GET All Services Error]:", queryErr);
+        return res.status(500).json({ error: `Database error: ${queryErr.message}` });
+      }
+
+      return res.json(services || []);
+    } catch (err: any) {
+      console.error("[GET /api/services/all Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // 1.5 Clean GET route specifically for active Data Plans
+  app.get("/api/services/data", async (req, res) => {
+    try {
+      const { data: services, error: queryErr } = await supabase
+        .from('services_config')
+        .select('*')
+        .eq('service_type', 'data')
+        .eq('is_active', true)
+        .order('provider_or_network', { ascending: true })
+        .order('selling_price', { ascending: true });
+
+      if (queryErr) {
+        console.error("[Supabase GET /api/services/data Error]:", queryErr);
+        return res.status(500).json({ error: `Database error: ${queryErr.message}` });
+      }
+
+      const items = services || [];
+
+      // Format and map items to support both raw database fields and mapped frontend attributes cleanly
+      const formattedPlans = items.map(item => {
+        const pPrice = Number(item.selling_price || 0);
+        return {
+          id: item.id,
+          ...item,
+          plan_name: item.item_name,
+          name: item.item_name,
+          planName: item.item_name,
+          price: pPrice,
+          retail_price: pPrice,
+          reseller_price: Number(item.cost_price || pPrice),
+          resellerPrice: Number(item.cost_price || pPrice),
+          amount: pPrice,
+          network_type: String(item.provider_or_network || 'MTN').toUpperCase(),
+          network: String(item.provider_or_network || 'MTN').toUpperCase(),
+          type: 'data',
+          peyflex_id: item.bigisub_plan_id,
+          peyflex_variation_id: item.bigisub_plan_id,
+          apiPlanId: item.bigisub_plan_id,
+          duration: '30 Days',
+          validity_days: '30 Days',
+          plan_category: 'SME',
+          planType: 'SME'
+        };
+      });
+
+      // Group outputs logically categorized cleanly by network
+      const categorized: Record<string, any[]> = {};
+      for (const plan of formattedPlans) {
+        const key = String(plan.network_type).toUpperCase().trim();
+        if (!categorized[key]) {
+          categorized[key] = [];
+        }
+        categorized[key].push(plan);
+      }
+
+      // Explicitly return a 200 OK with the array of items directly
+      return res.status(200).json(formattedPlans);
+    } catch (err: any) {
+      console.error("[GET /api/services/data Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
   // 2. Unified GET route to pull active plans (grouped logically or in flat representation)
   app.get("/api/services/:type", async (req, res) => {
     try {

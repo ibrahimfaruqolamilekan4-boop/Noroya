@@ -60,6 +60,7 @@ import ElectricitySection from './ElectricitySection';
 import BettingSection from './BettingSection';
 import CableTvSection from './CableTvSection';
 import ResellerPortal from './ResellerPortal';
+import TransactionHistory from './TransactionHistory';
 
 export default function Dashboard({ user, onLogout }: { user: UserProfile, onLogout: () => void }) {
   const { signOut, setSimulatedUser } = useAuth();
@@ -356,7 +357,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
             {activeTab === 'betting' && <BettingSection />}
             {activeTab === 'reseller' && <ResellerPortal />}
             {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
-            {activeTab === 'history' && <TransactionHistory user={user} transactions={transactions} onSelectTx={setSelectedReceiptTx} />}
+            {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
             {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
             {activeTab === 'settings' && <SettingsSection user={user} />}
             {activeTab === 'admin' && <AdminPanelSection />}
@@ -530,210 +531,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
   );
 }
 
-function TransactionHistory({ user, transactions, onSelectTx }: { user: UserProfile, transactions: Transaction[], onSelectTx?: (tx: Transaction) => void }) {
-  const [searchText, setSearchText] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState<'all' | 'funding' | 'purchase' | 'success' | 'pending' | 'failed'>('all');
-  const [isSyncing, setIsSyncing] = React.useState(false);
 
-  const handleSync = () => {
-    setIsSyncing(true);
-    toast.loading("Syncing transaction ledger in real-time...", { id: "tx-sync" });
-    setTimeout(() => {
-      setIsSyncing(false);
-      toast.dismiss("tx-sync");
-      toast.success("Ledger synced successfully! ⚡", { icon: "🔥" });
-    }, 1200);
-  };
+// TransactionHistory has been migrated to its own modular component file: /src/components/TransactionHistory.tsx
 
-  const handleDownloadCSV = () => {
-    if (transactions.length === 0) {
-      toast.error("No transactions to download!");
-      return;
-    }
-    const headers = ["ID", "Description", "Type", "Amount", "Status", "Reference", "Date_Time"];
-    const rows = transactions.map(tx => [
-      tx.id,
-      tx.description || '',
-      tx.type || 'vtu',
-      tx.type === 'funding' ? `+${tx.amount}` : `-${tx.amount}`,
-      tx.status || 'success',
-      tx.reference || 'N/A',
-      new Date(tx.createdAt).toLocaleString()
-    ]);
-    
-    // Convert to CSV string safely
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + [headers.join(","), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))].join("\n");
-    
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `payment_ledger_${user.uid.slice(0, 6)}_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success("CSV table downloaded successfully!", { icon: "📋" });
-  };
-
-  // Filter logic
-  const filtered = transactions.filter(tx => {
-    const term = searchText.toLowerCase();
-    const desc = (tx.description || '').toLowerCase();
-    const ref = (tx.reference || '').toLowerCase();
-    const matchesSearch = desc.includes(term) || ref.includes(term);
-
-    if (!matchesSearch) return false;
-
-    if (statusFilter === 'all') return true;
-    if (statusFilter === 'funding') return tx.type === 'funding';
-    if (statusFilter === 'purchase') return tx.type !== 'funding';
-    if (statusFilter === 'success') return String(tx.status).toLowerCase() === 'success' || String(tx.status).toLowerCase() === 'successful';
-    if (statusFilter === 'pending') return String(tx.status).toLowerCase() === 'pending';
-    if (statusFilter === 'failed') return String(tx.status).toLowerCase() === 'failed' || String(tx.status).toLowerCase() === 'reversed';
-    
-    return true;
-  });
-
-  return (
-    <div className="space-y-6 font-sans">
-      {/* Neo-Brutalist Main Header Card */}
-      <div className="bg-amber-400 text-black border-2 border-black p-6 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h3 className="text-2xl md:text-3xl font-black uppercase tracking-tight">Purchase Logs Ledger</h3>
-          <p className="text-xs font-bold text-black/80 mt-1 uppercase tracking-wider font-mono">User ID: {user.uid.slice(0, 8)} • Verified Account Tier</p>
-        </div>
-        <div className="flex gap-3 w-full md:w-auto shrink-0 font-sans">
-          <button 
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white border-2 border-black hover:bg-slate-50 text-black px-4 py-3 text-xs font-black uppercase tracking-wider rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-          >
-            <RefreshCw size={13} className={cn(isSyncing && "animate-spin")} />
-            {isSyncing ? "Syncing..." : "Sync Logs"}
-          </button>
-          <button 
-            onClick={handleDownloadCSV}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 border-2 border-black hover:bg-blue-500 text-white px-4 py-3 text-xs font-black uppercase tracking-wider rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer active:scale-95"
-          >
-            <Download size={13} />
-            Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar Card */}
-      <div className="bg-white border-2 border-black rounded-2xl p-4 md:p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-4">
-        <div className="flex flex-col md:flex-row gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-            <input 
-              type="text"
-              placeholder="Find transactions by description or reference ID..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none placeholder:text-slate-400 font-sans shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] text-black"
-            />
-          </div>
-          
-          {/* Status Filter Scroll List */}
-          <div className="flex items-center gap-2 bg-slate-50 border-2 border-black px-3 py-1.5 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] overflow-x-auto whitespace-nowrap scrollbar-none">
-            <Filter size={14} className="text-slate-500 shrink-0 ml-1" />
-            <div className="flex gap-1">
-              {[
-                { id: 'all', label: 'All Logs' },
-                { id: 'funding', label: 'Fundings' },
-                { id: 'purchase', label: 'Purchases' },
-                { id: 'success', label: 'Success' },
-                { id: 'pending', label: 'Pending' },
-                { id: 'failed', label: 'Failed' }
-              ].map((filt) => (
-                <button
-                  key={filt.id}
-                  onClick={() => setStatusFilter(filt.id as any)}
-                  className={cn(
-                    "text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition-all cursor-pointer",
-                    statusFilter === filt.id 
-                      ? "bg-black text-white hover:bg-black/95" 
-                      : "text-slate-700 hover:bg-slate-200"
-                  )}
-                >
-                  {filt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Transactions Cards Layout Area */}
-      <div className="space-y-4">
-        {filtered.length > 0 ? (
-          filtered.map(tx => {
-            const isFunding = tx.type === 'funding';
-            const isSuccess = String(tx.status).toLowerCase() === 'success' || String(tx.status).toLowerCase() === 'successful';
-            const isPending = String(tx.status).toLowerCase() === 'pending';
-            
-            return (
-              <div 
-                key={tx.id}
-                onClick={() => onSelectTx?.(tx)}
-                className="bg-white border-2 border-black rounded-2xl p-4 md:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-              >
-                <div className="flex items-center gap-4 w-full sm:w-auto">
-                  <div className={cn(
-                    "w-12 h-12 rounded-xl border-2 border-black flex items-center justify-center shrink-0 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]",
-                    isFunding ? "bg-emerald-100 text-emerald-950" : "bg-rose-100 text-rose-950"
-                  )}>
-                    {isFunding ? <ArrowDownLeft size={22} className="stroke-[2.5]" /> : <ArrowUpRight size={22} className="stroke-[2.5]" />}
-                  </div>
-                  <div className="space-y-1 overflow-hidden">
-                    <p className="font-extrabold text-sm text-slate-900 truncate uppercase tracking-tight">{tx.description}</p>
-                    <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] font-bold text-slate-500">
-                      <span>{new Date(tx.createdAt).toLocaleDateString()} at {new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      {tx.reference && (
-                        <>
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                          <span className="uppercase text-slate-405 select-all truncate max-w-[150px]">Ref: {tx.reference}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center w-full sm:w-auto shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 gap-1.5">
-                  <span className={cn(
-                    "font-mono text-base md:text-lg font-black tracking-tight",
-                    isFunding ? "text-emerald-600" : "text-slate-800"
-                  )}>
-                    {isFunding ? "+" : "-"}{formatCurrency(tx.amount)}
-                  </span>
-                  
-                  <span className={cn(
-                    "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]",
-                    isSuccess ? "bg-emerald-300 text-emerald-950" : 
-                    isPending ? "bg-amber-300 text-amber-950" : 
-                    "bg-rose-300 text-rose-950"
-                  )}>
-                    {tx.status}
-                  </span>
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="bg-white border-2 border-black rounded-2xl p-16 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <div className="w-16 h-16 rounded-full bg-slate-50 border-2 border-black flex items-center justify-center mx-auto mb-4 animate-bounce">
-              <span className="text-2xl">🔍</span>
-            </div>
-            <h4 className="font-black text-slate-700 uppercase tracking-tight">No Transactions Found</h4>
-            <p className="text-xs text-slate-500 font-bold uppercase mt-1">Try resetting filters or sync logs</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 interface ReferralUser {
   uid: string;
