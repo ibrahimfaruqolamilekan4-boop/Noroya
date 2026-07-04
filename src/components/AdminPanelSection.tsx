@@ -116,6 +116,7 @@ export default function AdminPanelSection() {
   const [newSellingPrice, setNewSellingPrice] = React.useState('');
   const [newBigisubIdentifierId, setNewBigisubIdentifierId] = React.useState('');
   const [newValidityDays, setNewValidityDays] = React.useState('30 Days');
+  const [newPlanCategory, setNewPlanCategory] = React.useState<'SME' | 'CG' | 'GIFTING'>('SME');
   const [isAddingService, setIsAddingService] = React.useState(false);
 
   // Plans list filtering state
@@ -252,13 +253,13 @@ export default function AdminPanelSection() {
   };
 
   // Update a Bigisub service configuration dynamically
-  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string) => {
+  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
     setIsUpdatingService(id);
     try {
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days })
+        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category })
       });
 
       if (!response.ok) {
@@ -278,7 +279,9 @@ export default function AdminPanelSection() {
             selling_price, 
             is_active, 
             bigisub_plan_id: bigisub_plan_id !== undefined ? bigisub_plan_id : item.bigisub_plan_id,
-            validity_days: validity_days !== undefined ? validity_days : item.validity_days
+            validity_days: validity_days !== undefined ? validity_days : item.validity_days,
+            item_name: item_name !== undefined ? item_name : item.item_name,
+            plan_category: plan_category !== undefined ? plan_category : item.plan_category
           };
         }
         return item;
@@ -300,11 +303,15 @@ export default function AdminPanelSection() {
 
     setIsAddingService(true);
     try {
+      const finalItemName = newServiceType === 'data' 
+        ? `${newItemName.trim()} - ${newPlanCategory} - ${newValidityDays.trim()}`
+        : newItemName.trim();
+
       // Create payload
       const payload: any = {
         service_type: newServiceType,
         provider_or_network: newNetworkOrProvider.toUpperCase().trim(),
-        item_name: newItemName.trim(),
+        item_name: finalItemName,
         cost_price: Number(newCostPrice),
         selling_price: Number(newSellingPrice),
         bigisub_plan_id: newBigisubIdentifierId.trim(),
@@ -1334,6 +1341,21 @@ export default function AdminPanelSection() {
                   </div>
                 </div>
 
+                {newServiceType === 'data' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Data Plan Category / Type</label>
+                    <select
+                      value={newPlanCategory}
+                      onChange={(e) => setNewPlanCategory(e.target.value as any)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-bold"
+                    >
+                      <option value="SME">SME</option>
+                      <option value="CG">CG (Corporate Gifting)</option>
+                      <option value="GIFTING">GIFTING</option>
+                    </select>
+                  </div>
+                )}
+
                 <button
                   type="submit"
                   disabled={isAddingService}
@@ -1439,6 +1461,27 @@ export default function AdminPanelSection() {
                     const profit = (item.selling_price || 0) - (item.cost_price || 0);
                     const profitPercentage = item.cost_price > 0 ? Math.round((profit / item.cost_price) * 100) : 0;
 
+                    const parts = String(item.item_name || '').split(' - ');
+                    let displayName = item.item_name || '';
+                    let itemCategory = 'GIFTING';
+                    let itemValidity = item.validity_days || item.duration || '30 Days';
+
+                    if (parts.length >= 3) {
+                      displayName = parts[0];
+                      itemCategory = parts[1].trim().toUpperCase();
+                      itemValidity = parts[2].trim();
+                    } else {
+                      // Legacy parsing fallback
+                      const pNameUpper = displayName.toUpperCase();
+                      if (pNameUpper.includes("SME")) {
+                        itemCategory = "SME";
+                      } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+                        itemCategory = "CG";
+                      } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+                        itemCategory = "GIFTING";
+                      }
+                    }
+
                     return (
                       <div
                         key={item.id}
@@ -1453,7 +1496,7 @@ export default function AdminPanelSection() {
                             <input
                               type="checkbox"
                               checked={item.is_active}
-                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id, item.validity_days)}
+                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id, itemValidity, item.item_name, itemCategory)}
                               className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
                             />
                             <span className="text-[10px] font-black uppercase font-sans">
@@ -1480,36 +1523,88 @@ export default function AdminPanelSection() {
                             </span>
                           </div>
 
-                          <h6 className="font-extrabold text-slate-950 text-sm tracking-tight pt-1 leading-snug">
-                            {item.item_name}
-                          </h6>
-                          
-                          <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
-                            <span className="font-bold">Bigisub Plan ID:</span>
-                            <input
-                              type="text"
-                              value={item.bigisub_plan_id || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, bigisub_plan_id: val } : p));
-                              }}
-                              className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-32"
-                              placeholder="Plan ID"
-                            />
+                          {/* Display parsed name and category badge */}
+                          <div className="flex items-center gap-2 pt-1.5">
+                            <h6 className="font-black text-slate-950 text-base tracking-tight leading-snug">
+                              {displayName}
+                            </h6>
+                            <span className={cn(
+                              "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                              itemCategory === 'SME' ? "bg-purple-100 text-purple-800 border-purple-300" :
+                              itemCategory === 'CG' ? "bg-blue-100 text-blue-850 border-blue-300" :
+                              "bg-amber-100 text-amber-800 border-amber-300"
+                            )}>
+                              {itemCategory}
+                            </span>
                           </div>
 
-                          <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500 pt-1">
-                            <span className="font-bold">Plan Days:</span>
-                            <input
-                              type="text"
-                              value={item.validity_days || '30 Days'}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, validity_days: val } : p));
-                              }}
-                              className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-32"
-                              placeholder="e.g. 30 Days"
-                            />
+                          <div className="space-y-2 pt-2 bg-white/60 p-2.5 rounded-lg border border-slate-200">
+                            {/* Display Name Input */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Display Name:</span>
+                              <input
+                                type="text"
+                                value={displayName}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newFullName = `${val.trim()} - ${itemCategory} - ${itemValidity}`;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-sans flex-1"
+                                placeholder="e.g. MTN 1GB"
+                              />
+                            </div>
+
+                            {/* Category Select for Data Plans */}
+                            {item.service_type === 'data' && (
+                              <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                                <span className="font-bold w-20">Category:</span>
+                                <select
+                                  value={itemCategory}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const newFullName = `${displayName} - ${val} - ${itemValidity}`;
+                                    setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName } : p));
+                                  }}
+                                  className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-sans w-full max-w-[140px]"
+                                >
+                                  <option value="SME">SME</option>
+                                  <option value="CG">CG (Corporate Gifting)</option>
+                                  <option value="GIFTING">GIFTING</option>
+                                </select>
+                              </div>
+                            )}
+
+                            {/* Bigisub Plan ID */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Bigisub ID:</span>
+                              <input
+                                type="text"
+                                value={item.bigisub_plan_id || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, bigisub_plan_id: val } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-full max-w-[140px]"
+                                placeholder="Plan ID"
+                              />
+                            </div>
+
+                            {/* Plan Days / Validity */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Validity Days:</span>
+                              <input
+                                type="text"
+                                value={itemValidity}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newFullName = `${displayName} - ${itemCategory} - ${val.trim()}`;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName, validity_days: val } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-full max-w-[140px]"
+                                placeholder="e.g. 30 Days"
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -1561,7 +1656,7 @@ export default function AdminPanelSection() {
 
                           <button
                             type="button"
-                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id, item.validity_days)}
+                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id, itemValidity, item.item_name, itemCategory)}
                             disabled={isUpdatingService === item.id}
                             className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
                           >

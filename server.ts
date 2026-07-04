@@ -1014,25 +1014,39 @@ async function startServer() {
       // Format and map items to support both raw database fields and mapped frontend attributes cleanly
       const formattedPlans = items.map(item => {
         const pPrice = Number(item.selling_price || 0);
-        const pNameUpper = String(item.item_name || '').toUpperCase();
+        const rawName = String(item.item_name || '');
         
         let planCategory = "GIFTING";
-        if (pNameUpper.includes("SME")) {
-          planCategory = "SME";
-        } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-          planCategory = "CG";
-        } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
-          planCategory = "GIFTING";
-        }
+        let planDays = item.validity_days || item.duration || '30 Days';
+        let displayName = rawName;
 
-        const planDays = item.validity_days || item.duration || '30 Days';
+        const parts = rawName.split(' - ');
+        if (parts.length >= 3) {
+          displayName = parts[0].trim();
+          planCategory = parts[1].trim().toUpperCase();
+          planDays = parts[2].trim();
+        } else {
+          const pNameUpper = rawName.toUpperCase();
+          if (pNameUpper.includes("SME")) {
+            planCategory = "SME";
+          } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+            planCategory = "CG";
+          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+            planCategory = "GIFTING";
+          }
+          const match = rawName.match(/(\d+)\s*(Days|Day|Hours|Hour)/i);
+          if (match) {
+            planDays = `${match[1]} ${match[2]}`;
+          }
+        }
 
         return {
           id: item.id,
           ...item,
-          plan_name: item.item_name,
-          name: item.item_name,
-          planName: item.item_name,
+          item_name: displayName,
+          plan_name: displayName,
+          name: displayName,
+          planName: displayName,
           price: pPrice,
           retail_price: pPrice,
           reseller_price: Number(item.cost_price || pPrice),
@@ -1124,18 +1138,20 @@ async function startServer() {
   app.put("/api/admin/services/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days } = req.body;
+      const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
 
       const updateData: any = {};
+      if (item_name !== undefined) updateData.item_name = String(item_name).trim();
       if (cost_price !== undefined) updateData.cost_price = Number(cost_price);
       if (selling_price !== undefined) updateData.selling_price = Number(selling_price);
       if (is_active !== undefined) updateData.is_active = Boolean(is_active);
       if (bigisub_plan_id !== undefined) updateData.bigisub_plan_id = String(bigisub_plan_id).trim();
       if (validity_days !== undefined) updateData.validity_days = String(validity_days).trim();
+      if (plan_category !== undefined) updateData.plan_category = String(plan_category).trim();
       updateData.updated_at = new Date().toISOString();
 
       if (Object.keys(updateData).length <= 1) {
-        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, validity_days, or is_active." });
+        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, validity_days, is_active, or item_name." });
       }
 
       let updatedRecord = null;
@@ -1151,10 +1167,11 @@ async function startServer() {
       updatedRecord = result.data;
       updateErr = result.error;
 
-      // Resilience Fallback: If column "validity_days" does not exist in Supabase services_config
-      if (updateErr && (updateErr.message?.includes('column "validity_days"') || updateErr.code === '42703')) {
-        console.warn("[PUT Admin Service Config] 'validity_days' column missing. Retrying without it...");
+      // Resilience Fallback: If column "validity_days" or "plan_category" does not exist in Supabase services_config
+      if (updateErr && (updateErr.message?.includes('column "validity_days"') || updateErr.message?.includes('column "plan_category"') || updateErr.code === '42703')) {
+        console.warn("[PUT Admin Service Config] Extra columns missing. Retrying without validity_days/plan_category...");
         delete updateData.validity_days;
+        delete updateData.plan_category;
         const retryResult = await supabase
           .from('services_config')
           .update(updateData)
@@ -1168,7 +1185,7 @@ async function startServer() {
         if (!updateErr && updatedRecord) {
           return res.json({
             success: true,
-            message: "Service configuration updated successfully! (Note: validity_days column is missing in your 'services_config' Supabase table, so the new validity was not saved).",
+            message: "Service configuration updated successfully! (Note: validity_days/plan_category columns are missing in your 'services_config' Supabase table, but the updated details were saved in item_name).",
             service: updatedRecord
           });
         }
