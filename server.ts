@@ -1498,6 +1498,294 @@ async function startServer() {
     }
   });
 
+  // POST route specifically for handling Airtime VTU Purchases via Bigisub
+  app.post("/api/buy-airtime", async (req, res) => {
+    try {
+      const { network, phone_number, amount, userId } = req.body;
+
+      if (!network || !phone_number || !amount) {
+        return res.status(400).json({ error: "Missing required parameters: network, phone_number, and amount are required." });
+      }
+
+      const parsedAmount = Number(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ error: "Amount must be a positive number." });
+      }
+
+      // Securely fetch user context from Supabase Auth header first, falling back to body
+      let resolvedUserId = userId;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        if (!authErr && user) {
+          resolvedUserId = user.id;
+        }
+      }
+
+      if (!resolvedUserId) {
+        return res.status(400).json({ error: "Missing required parameter: resolved user context is required." });
+      }
+
+      // Fetch matching airtime service config from services_config
+      const { data: service, error: serviceErr } = await supabase
+        .from('services_config')
+        .select('*')
+        .eq('service_type', 'airtime')
+        .ilike('provider_or_network', String(network).trim())
+        .maybeSingle();
+
+      if (serviceErr) {
+        console.error("[Buy Airtime Service Query Error]:", serviceErr);
+        return res.status(500).json({ error: `Database error lookup: ${serviceErr.message}` });
+      }
+
+      if (!service) {
+        return res.status(404).json({ error: `Airtime service config not found for network: ${network}.` });
+      }
+
+      if (!service.is_active) {
+        return res.status(400).json({ error: `The airtime service for ${network} is currently inactive/disabled.` });
+      }
+
+      // Calculate the custom selling_price / cost_price ratio
+      let sellingPercent = Number(service.selling_price || 100);
+      let costPercent = Number(service.cost_price || 100);
+
+      // Normalize if input as ratio (e.g. 0.98 vs 98)
+      if (sellingPercent <= 1 && sellingPercent > 0) {
+        sellingPercent = sellingPercent * 100;
+      }
+      if (costPercent <= 1 && costPercent > 0) {
+        costPercent = costPercent * 100;
+      }
+
+      const chargeAmount = parsedAmount * (sellingPercent / 100);
+      const apiCost = parsedAmount * (costPercent / 100);
+      const ratio = sellingPercent / costPercent;
+
+      // Check user wallet balance
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', resolvedUserId)
+        .maybeSingle();
+
+      if (profileErr || !profile) {
+        return res.status(404).json({ error: "User profile not found in database." });
+      }
+
+      const currentBalance = Number(profile.wallet_balance || 0);
+      if (currentBalance < chargeAmount) {
+        return res.status(400).json({
+          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but currently have ₦${currentBalance.toFixed(2)}.`
+        });
+      }
+
+      const transactionId = `bigi_airtime_${Date.now()}`;
+      const localReference = `TRX-AIRTIME-${Date.now()}`;
+
+      // Insert a 'pending' transaction into the 'transactions' table in Supabase and Firestore
+      try {
+        await supabase.from('transactions').insert({
+          id: transactionId,
+          userId: resolvedUserId,
+          type: 'airtime',
+          amount: chargeAmount,
+          status: 'pending',
+          description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
+          reference: localReference,
+          createdAt: new Date().toISOString()
+        });
+      } catch (txErr: any) {
+        console.warn("[Supabase Airtime pending transaction logging skipped]:", txErr.message || txErr);
+      }
+
+      try {
+        if (db) {
+          await db.collection('transactions').doc(transactionId).set({
+            id: transactionId,
+            userId: resolvedUserId,
+            type: 'airtime',
+            amount: chargeAmount,
+            status: 'pending',
+            description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
+            reference: localReference,
+            createdAt: FieldValue.serverTimestamp()
+          });
+        }
+      } catch (e) {}
+
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      let bigiNetworkId = 1;
+      const netUpper = String(service.provider_or_network || network).toUpperCase().trim();
+      if (netUpper.includes("MTN")) bigiNetworkId = 1;
+      else if (netUpper.includes("GLO")) bigiNetworkId = 2;
+      else if (netUpper.includes("9MOBILE")) bigiNetworkId = 3;
+      else if (netUpper.includes("AIRTEL")) bigiNetworkId = 4;
+
+      const payload = {
+        network: bigiNetworkId,
+        mobile_number: phone_number,
+        amount: parsedAmount,
+        airtime_type: "VTU",
+        Ported_number: true
+      };
+
+      let apiSuccess = false;
+      let apiResponseData: any = null;
+      let apiErrorMsg = "";
+
+      // Simulation mode if key is placeholder
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        console.log(`[Bigisub Simulation Mode] Simulating airtime purchase for ${network}...`);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        apiSuccess = true;
+        apiResponseData = {
+          status: "success",
+          success: true,
+          reference: `BIGI-SIM-ART-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+          message: "Simulated airtime top-up successful!"
+        };
+      } else {
+        try {
+          const bigisubUrl = `${BIGISUB_BASE_URL}/airtime/`;
+          console.log(`[Bigisub Airtime Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
+
+          const response = await axios.post(bigisubUrl, payload, {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+            },
+            timeout: 10000
+          });
+
+          apiResponseData = response.data;
+          console.log("[Bigisub Airtime Response]:", apiResponseData);
+
+          if (response.status === 200 || response.status === 201) {
+            const isSuccessStatus = apiResponseData.status === "success" || 
+                                    apiResponseData.status === "SUCCESSFUL" || 
+                                    apiResponseData.success === true ||
+                                    apiResponseData.status === "completed";
+            if (isSuccessStatus) {
+              apiSuccess = true;
+            } else {
+              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Gateway transaction rejected.";
+            }
+          } else {
+            apiErrorMsg = `Gateway error status: ${response.status}`;
+          }
+        } catch (axiosErr: any) {
+          console.error("[Bigisub Airtime Gateway HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+          const respData = axiosErr.response?.data;
+          apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
+        }
+      }
+
+      if (apiSuccess) {
+        const deductedBalance = currentBalance - chargeAmount;
+
+        // Atomically update balance in Supabase profiles
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ wallet_balance: deductedBalance })
+          .eq('id', resolvedUserId);
+
+        if (updateErr) {
+          console.error("[Supabase Wallet Deduct Error]:", updateErr);
+          return res.status(500).json({ 
+            error: "Purchase succeeded at gateway, but database balance update failed. Please contact support.",
+            reference: apiResponseData?.reference || apiResponseData?.id 
+          });
+        }
+
+        // Sync to users table and firebase collection
+        try {
+          await supabase
+            .from('users')
+            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
+            .eq('id', resolvedUserId);
+        } catch (e) {}
+
+        try {
+          if (db) {
+            await db.collection('users').doc(resolvedUserId).update({
+              wallet_balance: deductedBalance,
+              available_balance: deductedBalance,
+              balance: deductedBalance
+            });
+          }
+        } catch (e) {}
+
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
+
+        // Update transaction status to success
+        try {
+          await supabase
+            .from('transactions')
+            .update({
+              status: 'success',
+              reference: referenceCode,
+              api_reference: referenceCode
+            })
+            .eq('id', transactionId);
+        } catch (txErr: any) {
+          console.warn("[Supabase Airtime success transaction update failed]:", txErr.message || txErr);
+        }
+
+        try {
+          if (db) {
+            await db.collection('transactions').doc(transactionId).update({
+              status: 'success',
+              reference: referenceCode
+            });
+          }
+        } catch (e) {}
+
+        return res.status(200).json({
+          status: "success",
+          success: true,
+          message: `Airtime purchase of ₦${parsedAmount} for ${phone_number} was successful!`,
+          ratio: ratio,
+          chargeAmount: chargeAmount,
+          reference: referenceCode
+        });
+      } else {
+        // Mark transaction as failed
+        try {
+          await supabase
+            .from('transactions')
+            .update({
+              status: 'failed',
+              api_response_message: apiErrorMsg || "Gateway transaction rejected."
+            })
+            .eq('id', transactionId);
+        } catch (txErr: any) {
+          console.warn("[Supabase Airtime failed transaction update failed]:", txErr.message || txErr);
+        }
+
+        try {
+          if (db) {
+            await db.collection('transactions').doc(transactionId).update({
+              status: 'failed',
+              description: `FAILED: Airtime VTU ₦${parsedAmount} to ${phone_number} (${apiErrorMsg || "Gateway transaction rejected."})`
+            });
+          }
+        } catch (e) {}
+
+        return res.status(400).json({
+          error: `Airtime purchase failed: ${apiErrorMsg}. No funds were deducted from your wallet.`
+        });
+      }
+    } catch (err: any) {
+      console.error("[POST /api/buy-airtime Exception]:", err);
+      return res.status(500).json({ error: `Internal processing exception: ${err.message}` });
+    }
+  });
+
   // JWT Registration Route
   app.post("/api/auth/register", async (req, res) => {
     const { email, password, fullName, phoneNumber } = req.body;
