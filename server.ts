@@ -1014,6 +1014,19 @@ async function startServer() {
       // Format and map items to support both raw database fields and mapped frontend attributes cleanly
       const formattedPlans = items.map(item => {
         const pPrice = Number(item.selling_price || 0);
+        const pNameUpper = String(item.item_name || '').toUpperCase();
+        
+        let planCategory = "GIFTING";
+        if (pNameUpper.includes("SME")) {
+          planCategory = "SME";
+        } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+          planCategory = "CG";
+        } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+          planCategory = "GIFTING";
+        }
+
+        const planDays = item.validity_days || item.duration || '30 Days';
+
         return {
           id: item.id,
           ...item,
@@ -1031,10 +1044,10 @@ async function startServer() {
           peyflex_id: item.bigisub_plan_id,
           peyflex_variation_id: item.bigisub_plan_id,
           apiPlanId: item.bigisub_plan_id,
-          duration: '30 Days',
-          validity_days: '30 Days',
-          plan_category: 'SME',
-          planType: 'SME'
+          duration: planDays,
+          validity_days: planDays,
+          plan_category: planCategory,
+          planType: planCategory
         };
       });
 
@@ -1111,25 +1124,55 @@ async function startServer() {
   app.put("/api/admin/services/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { cost_price, selling_price, is_active, bigisub_plan_id } = req.body;
+      const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days } = req.body;
 
       const updateData: any = {};
       if (cost_price !== undefined) updateData.cost_price = Number(cost_price);
       if (selling_price !== undefined) updateData.selling_price = Number(selling_price);
       if (is_active !== undefined) updateData.is_active = Boolean(is_active);
       if (bigisub_plan_id !== undefined) updateData.bigisub_plan_id = String(bigisub_plan_id).trim();
+      if (validity_days !== undefined) updateData.validity_days = String(validity_days).trim();
       updateData.updated_at = new Date().toISOString();
 
       if (Object.keys(updateData).length <= 1) {
-        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, or is_active." });
+        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, validity_days, or is_active." });
       }
 
-      const { data: updatedRecord, error: updateErr } = await supabase
+      let updatedRecord = null;
+      let updateErr = null;
+
+      const result = await supabase
         .from('services_config')
         .update(updateData)
         .eq('id', id)
         .select()
         .maybeSingle();
+
+      updatedRecord = result.data;
+      updateErr = result.error;
+
+      // Resilience Fallback: If column "validity_days" does not exist in Supabase services_config
+      if (updateErr && (updateErr.message?.includes('column "validity_days"') || updateErr.code === '42703')) {
+        console.warn("[PUT Admin Service Config] 'validity_days' column missing. Retrying without it...");
+        delete updateData.validity_days;
+        const retryResult = await supabase
+          .from('services_config')
+          .update(updateData)
+          .eq('id', id)
+          .select()
+          .maybeSingle();
+        
+        updatedRecord = retryResult.data;
+        updateErr = retryResult.error;
+
+        if (!updateErr && updatedRecord) {
+          return res.json({
+            success: true,
+            message: "Service configuration updated successfully! (Note: validity_days column is missing in your 'services_config' Supabase table, so the new validity was not saved).",
+            service: updatedRecord
+          });
+        }
+      }
 
       if (updateErr) {
         console.error("[Supabase PUT Service Error]:", updateErr);

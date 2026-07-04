@@ -472,6 +472,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   <option value="CG">CORPORATE GIFTING</option>
                   <option value="SME">SME</option>
                   <option value="SME">SME2</option>
+                  <option value="GIFTING">GIFTING</option>
                   <option value="GIFTING">AWOOF DATA</option>
                   <option value="ALL">ALL TYPES</option>
                 </select>

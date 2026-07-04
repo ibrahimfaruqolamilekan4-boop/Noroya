@@ -115,6 +115,7 @@ export default function AdminPanelSection() {
   const [newCostPrice, setNewCostPrice] = React.useState('');
   const [newSellingPrice, setNewSellingPrice] = React.useState('');
   const [newBigisubIdentifierId, setNewBigisubIdentifierId] = React.useState('');
+  const [newValidityDays, setNewValidityDays] = React.useState('30 Days');
   const [isAddingService, setIsAddingService] = React.useState(false);
 
   // Plans list filtering state
@@ -251,13 +252,13 @@ export default function AdminPanelSection() {
   };
 
   // Update a Bigisub service configuration dynamically
-  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string) => {
+  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string) => {
     setIsUpdatingService(id);
     try {
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id })
+        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days })
       });
 
       if (!response.ok) {
@@ -271,7 +272,14 @@ export default function AdminPanelSection() {
       // Update local state
       setServicesConfig(prev => prev.map(item => {
         if (item.id === id) {
-          return { ...item, cost_price, selling_price, is_active, bigisub_plan_id: bigisub_plan_id !== undefined ? bigisub_plan_id : item.bigisub_plan_id };
+          return { 
+            ...item, 
+            cost_price, 
+            selling_price, 
+            is_active, 
+            bigisub_plan_id: bigisub_plan_id !== undefined ? bigisub_plan_id : item.bigisub_plan_id,
+            validity_days: validity_days !== undefined ? validity_days : item.validity_days
+          };
         }
         return item;
       }));
@@ -292,23 +300,46 @@ export default function AdminPanelSection() {
 
     setIsAddingService(true);
     try {
-      const { data, error } = await supabase
+      // Create payload
+      const payload: any = {
+        service_type: newServiceType,
+        provider_or_network: newNetworkOrProvider.toUpperCase().trim(),
+        item_name: newItemName.trim(),
+        cost_price: Number(newCostPrice),
+        selling_price: Number(newSellingPrice),
+        bigisub_plan_id: newBigisubIdentifierId.trim(),
+        is_active: true,
+        validity_days: newValidityDays.trim()
+      };
+
+      let { data, error } = await supabase
         .from('services_config')
-        .insert({
-          service_type: newServiceType,
-          provider_or_network: newNetworkOrProvider.toUpperCase().trim(),
-          item_name: newItemName.trim(),
-          cost_price: Number(newCostPrice),
-          selling_price: Number(newSellingPrice),
-          bigisub_plan_id: newBigisubIdentifierId.trim(),
-          is_active: true
-        })
+        .insert(payload)
         .select()
         .single();
 
+      // Resilience Fallback: If column "validity_days" does not exist in Supabase
+      if (error && (error.message?.includes('column "validity_days"') || error.code === '42703')) {
+        console.warn("[handleAddServiceConfig] 'validity_days' column missing. Retrying without it...");
+        delete payload.validity_days;
+        const retryResult = await supabase
+          .from('services_config')
+          .insert(payload)
+          .select()
+          .single();
+        
+        data = retryResult.data;
+        error = retryResult.error;
+
+        if (!error) {
+          toast.success("Service created! Note: validity_days column is missing in 'services_config' Supabase table. Validity is defaulted to 30 Days.");
+        }
+      } else if (!error) {
+        toast.success("New Bigisub Service Configuration created successfully with validity!");
+      }
+
       if (error) throw error;
 
-      toast.success("New Bigisub Service Configuration created successfully!");
       if (data) {
         setServicesConfig(prev => [data, ...prev]);
       }
@@ -318,6 +349,7 @@ export default function AdminPanelSection() {
       setNewCostPrice('');
       setNewSellingPrice('');
       setNewBigisubIdentifierId('');
+      setNewValidityDays('30 Days');
     } catch (err: any) {
       console.error("[handleAddServiceConfig Error]:", err);
       toast.error(`Failed to create service configuration: ${err.message || err}`);
@@ -1277,16 +1309,29 @@ export default function AdminPanelSection() {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Bigisub Plan/Identifier ID</label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="e.g. MTN_SME_1GB, 1, aedc_prepaid"
-                    value={newBigisubIdentifierId}
-                    onChange={(e) => setNewBigisubIdentifierId(e.target.value)}
-                    className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Bigisub Plan/Identifier ID</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. MTN_SME_1GB, 1, aedc_prepaid"
+                      value={newBigisubIdentifierId}
+                      onChange={(e) => setNewBigisubIdentifierId(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Plan Days / Validity</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. 30 Days"
+                      value={newValidityDays}
+                      onChange={(e) => setNewValidityDays(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
                 </div>
 
                 <button
@@ -1408,7 +1453,7 @@ export default function AdminPanelSection() {
                             <input
                               type="checkbox"
                               checked={item.is_active}
-                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id)}
+                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id, item.validity_days)}
                               className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
                             />
                             <span className="text-[10px] font-black uppercase font-sans">
@@ -1450,6 +1495,20 @@ export default function AdminPanelSection() {
                               }}
                               className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-32"
                               placeholder="Plan ID"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500 pt-1">
+                            <span className="font-bold">Plan Days:</span>
+                            <input
+                              type="text"
+                              value={item.validity_days || '30 Days'}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, validity_days: val } : p));
+                              }}
+                              className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-32"
+                              placeholder="e.g. 30 Days"
                             />
                           </div>
                         </div>
@@ -1502,7 +1561,7 @@ export default function AdminPanelSection() {
 
                           <button
                             type="button"
-                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id)}
+                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id, item.validity_days)}
                             disabled={isUpdatingService === item.id}
                             className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
                           >
