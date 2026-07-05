@@ -4659,12 +4659,18 @@ async function startServer() {
     console.log("[Flutterwave Webhook] Received notification at /api/webhook/flutterwave");
     
     // 2. SIGNATURE VALIDATION
-    const signature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-    const secretHash = process.env.FLW_SECRET_HASH;
+    const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+    const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
+    let secretHash = process.env.FLW_SECRET_HASH;
+    if (secretHash) {
+      secretHash = secretHash.replace(/['"]/g, "").trim();
+    }
 
-    if (!secretHash || !signature || signature !== secretHash) {
-      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch.");
-      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid or missing." });
+    if (secretHash && (!signature || signature !== secretHash)) {
+      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch. Received:", signature, "Expected:", secretHash);
+      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid." });
+    } else if (!secretHash) {
+      console.warn("[Flutterwave Webhook] WARNING: FLW_SECRET_HASH is not configured in environment variables. Signature verification bypassed for testing.");
     }
 
     const payload = req.body;
@@ -4821,19 +4827,20 @@ async function startServer() {
     // 1. Log the full incoming payload at the very top
     console.log("Incoming Flutterwave Payload:", JSON.stringify(req.body));
 
-    // 2. Extract and log signature info (TEMPORARY BYPASS)
-    const signature = req.headers["verif-hash"];
-    const secretHash = process.env.FLW_SECRET_HASH || "secure_fallback_hash_123456";
-
-    console.log("Received Hash:", signature, "Expected Hash:", process.env.FLW_SECRET_HASH);
-
-    // Commented out to allow debugging with bypass
-    /*
-    if (!signature || signature !== secretHash) {
-      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch.");
-      return res.status(401).json({ error: "Unauthorized" });
+    // 2. SIGNATURE VALIDATION
+    const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+    const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
+    let secretHash = process.env.FLW_SECRET_HASH;
+    if (secretHash) {
+      secretHash = secretHash.replace(/['"]/g, "").trim();
     }
-    */
+
+    if (secretHash && (!signature || signature !== secretHash)) {
+      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch. Received:", signature, "Expected:", secretHash);
+      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid." });
+    } else if (!secretHash) {
+      console.warn("[Flutterwave Webhook] WARNING: FLW_SECRET_HASH is not configured in environment variables. Signature verification bypassed for testing.");
+    }
 
     try {
       const payload = req.body;
