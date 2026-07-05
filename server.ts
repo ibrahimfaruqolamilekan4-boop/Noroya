@@ -1416,7 +1416,6 @@ async function startServer() {
   app.post("/api/purchase/utility", async (req, res) => {
     try {
       const {
-        userId,
         service_id,
         phone,
         phoneNumber,
@@ -1428,20 +1427,8 @@ async function startServer() {
         amount
       } = req.body;
 
-      // Securely fetch user context from Supabase Auth header first, falling back to body
-      let resolvedUserId = userId;
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const token = authHeader.substring(7);
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        if (!authErr && user) {
-          resolvedUserId = user.id;
-        }
-      }
-
-      if (!resolvedUserId) {
-        return res.status(400).json({ error: "Missing required parameter: resolved user context is required." });
-      }
+      // Securely fetch user context and profile wallet balance
+      const { userId: resolvedUserId, pgUuid, balance: currentBalance, profile } = await getAuthenticatedUserBalance(req);
 
       if (!service_id) {
         return res.status(400).json({ error: "Missing required parameter: service_id" });
@@ -1481,62 +1468,6 @@ async function startServer() {
         finalPrice = finalPrice * qty;
       }
 
-      // Query user balance from Supabase
-      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
-      let profile: any = null;
-      let profileErr: any = null;
-
-      if (pgUuid) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        profile = data;
-        profileErr = error;
-      }
-
-      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
-      if (!profile && pgUuid) {
-        try {
-          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
-          if (fsUserSnap.exists) {
-            const fsUser = fsUserSnap.data();
-            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-            
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: fsUser?.fullName || "User",
-                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-                phone_number: fsUser?.phoneNumber || "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: walletBal
-              });
-
-            if (!pgInsertErr) {
-              const { data } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', pgUuid)
-                .maybeSingle();
-              profile = data;
-            }
-          }
-        } catch (syncExc) {
-          console.warn("[On-The-Fly Supabase Sync in purchase/utility Warning]:", syncExc);
-        }
-      }
-
-      if (profileErr || !profile) {
-        console.error("[Supabase Profile Query Error]:", profileErr);
-        return res.status(404).json({ error: "User profile not found in Supabase database." });
-      }
-
-      const currentBalance = Number(profile.wallet_balance || 0);
       if (currentBalance < finalPrice) {
         return res.status(400).json({ 
           error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` 
@@ -1808,7 +1739,7 @@ async function startServer() {
   // POST route specifically for handling Airtime VTU Purchases via Bigisub
   app.post("/api/buy-airtime", async (req, res) => {
     try {
-      const { network, phone_number, amount, userId } = req.body;
+      const { network, phone_number, amount } = req.body;
 
       if (!network || !phone_number || !amount) {
         return res.status(400).json({ error: "Missing required parameters: network, phone_number, and amount are required." });
@@ -1819,20 +1750,8 @@ async function startServer() {
         return res.status(400).json({ error: "Amount must be a positive number." });
       }
 
-      // Securely fetch user context from Supabase Auth header first, falling back to body
-      let resolvedUserId = userId;
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const token = authHeader.substring(7);
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        if (!authErr && user) {
-          resolvedUserId = user.id;
-        }
-      }
-
-      if (!resolvedUserId) {
-        return res.status(400).json({ error: "Missing required parameter: resolved user context is required." });
-      }
+      // Securely fetch user context and profile wallet balance
+      const { userId: resolvedUserId, pgUuid, balance: currentBalance, profile } = await getAuthenticatedUserBalance(req);
 
       // Fetch matching airtime service config from services_config
       const { data: service, error: serviceErr } = await supabase
@@ -1871,61 +1790,6 @@ async function startServer() {
       const apiCost = parsedAmount * (costPercent / 100);
       const ratio = sellingPercent / costPercent;
 
-      // Check user wallet balance
-      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
-      let profile: any = null;
-      let profileErr: any = null;
-
-      if (pgUuid) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        profile = data;
-        profileErr = error;
-      }
-
-      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
-      if (!profile && pgUuid) {
-        try {
-          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
-          if (fsUserSnap.exists) {
-            const fsUser = fsUserSnap.data();
-            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-            
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: fsUser?.fullName || "User",
-                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-                phone_number: fsUser?.phoneNumber || "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: walletBal
-              });
-
-            if (!pgInsertErr) {
-              const { data } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', pgUuid)
-                .maybeSingle();
-              profile = data;
-            }
-          }
-        } catch (syncExc) {
-          console.warn("[On-The-Fly Supabase Sync in buy-airtime Warning]:", syncExc);
-        }
-      }
-
-      if (profileErr || !profile) {
-        return res.status(404).json({ error: "User profile not found in database." });
-      }
-
-      const currentBalance = Number(profile.wallet_balance || 0);
       if (currentBalance < chargeAmount) {
         return res.status(400).json({
           error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but currently have ₦${currentBalance.toFixed(2)}.`
@@ -3714,23 +3578,9 @@ async function startServer() {
     }
 
     try {
-      // Securely resolve user context
-      let resolvedUserId = userId;
-      let userEmail = email;
-
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const token = authHeader.substring(7);
-        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-        if (!authErr && user) {
-          resolvedUserId = user.id;
-          userEmail = user.email || userEmail;
-        }
-      }
-
-      if (!resolvedUserId) {
-        return res.status(400).json({ error: "Unauthorized: resolved user context is required to execute a purchase." });
-      }
+      // Securely fetch user context and profile wallet balance
+      const { userId: resolvedUserId, pgUuid, balance: currentBalance, profile } = await getAuthenticatedUserBalance(req);
+      const userEmail = profile.email || email;
 
       // 1. Validate that the active service exists in the 'services_config' table
       let service: any = null;
@@ -3801,64 +3651,7 @@ async function startServer() {
         return res.status(404).json({ error: `The requested service config was not found in 'services_config' or is currently inactive.` });
       }
 
-      // 2. Fetch user profile and verify/deduct balance
-      let profile = null;
-      let profileErr = null;
-      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
-
-      if (pgUuid) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        profile = data;
-        profileErr = error;
-      }
-
-      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
-      if (!profile && pgUuid) {
-        try {
-          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
-          if (fsUserSnap.exists) {
-            const fsUser = fsUserSnap.data();
-            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-            
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: fsUser?.fullName || "User",
-                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-                phone_number: fsUser?.phoneNumber || "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: walletBal
-              });
-
-            if (!pgInsertErr) {
-              const { data } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', pgUuid)
-                .maybeSingle();
-              profile = data;
-            }
-          }
-        } catch (syncExc) {
-          console.warn("[On-The-Fly Supabase Sync in buy-utility Warning]:", syncExc);
-        }
-      }
-
-      if (profileErr) {
-        console.error("[Buy Utility Profile Fetch Error]:", profileErr);
-        return res.status(500).json({ error: "Failed to verify wallet balance. Please try again." });
-      }
-
-      if (!profile) {
-        return res.status(404).json({ error: "User profile not found. Please log in or verify credentials." });
-      }
+      // User profile and balance verified securely via getAuthenticatedUserBalance
 
       // Compute final selling price dynamically from services_config
       let finalPrice = Number(service.selling_price || 0);
@@ -3884,7 +3677,6 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid dynamic utility purchase amount calculated." });
       }
 
-      const currentBalance = Number(profile.balance || profile.wallet_balance || 0);
       if (currentBalance < finalPrice) {
         return res.status(400).json({ 
           error: `Insufficient wallet balance. This transaction requires ₦${finalPrice.toLocaleString()} but you have ₦${currentBalance.toLocaleString()}.` 
