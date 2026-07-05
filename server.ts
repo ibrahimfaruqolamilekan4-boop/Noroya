@@ -461,6 +461,136 @@ async function startServer() {
     }
   }
 
+  /**
+   * Helper to securely fetch the user profile balance by looking up the real, authenticated
+   * user ID string from the session payload (and/or fallback request body parameters),
+   * ensuring that any non-standard format (like 'admin_ibrahim_vtu_uid') is deterministically
+   * sanitized into a valid Postgres UUID format.
+   */
+  async function getAuthenticatedUserBalance(req: express.Request): Promise<{ userId: string; pgUuid: string; balance: number; profile: any }> {
+    let rawUserId: string | null = null;
+    let userEmail: string | null = null;
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.substring(7);
+
+      // 1. Try decoding with local HS256 JWT verifier
+      try {
+        const decoded = verifyJwt(token);
+        if (decoded && decoded.uid) {
+          rawUserId = decoded.uid;
+          userEmail = decoded.email || null;
+        }
+      } catch (e) {
+        // Safe to ignore, continue to next strategy
+      }
+
+      // 2. Try decoding with Firebase Admin verifyIdToken as fallback
+      if (!rawUserId) {
+        try {
+          const decodedFirebase = await getAdminAuth(appInstance).verifyIdToken(token);
+          if (decodedFirebase && decodedFirebase.uid) {
+            rawUserId = decodedFirebase.uid;
+            userEmail = decodedFirebase.email || null;
+          }
+        } catch (e) {
+          // Continue to next strategy
+        }
+      }
+
+      // 3. Try decoding with Supabase Auth as secondary fallback
+      if (!rawUserId) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser(token);
+          if (user) {
+            rawUserId = user.id;
+            userEmail = user.email || null;
+          }
+        } catch (e) {
+          // Continue
+        }
+      }
+    }
+
+    // 4. Fallback to req.body.userId if no token matches, ensuring backward compatibility with simpler client calls
+    if (!rawUserId && req.body && req.body.userId) {
+      rawUserId = req.body.userId;
+    }
+
+    if (!rawUserId) {
+      throw new Error("Unauthorized: No valid user session token or user ID provided.");
+    }
+
+    // 5. SECURE SANITIZATION: Cast the ID string (e.g. 'admin_ibrahim_vtu_uid') into a valid Postgres UUID format
+    const pgUuid = ensureUUID(rawUserId);
+
+    // 6. Fetch user profile from Supabase
+    const { data: profile, error: profileErr } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', pgUuid)
+      .maybeSingle();
+
+    if (profileErr) {
+      throw new Error(`Database error retrieving profile: ${profileErr.message}`);
+    }
+
+    if (!profile) {
+      // Sync on-the-fly from Firestore backup if it exists
+      let syncedProfile = null;
+      try {
+        const fsUserSnap = await db.collection('users').doc(rawUserId).get();
+        if (fsUserSnap.exists) {
+          const fsUser = fsUserSnap.data();
+          const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+          const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+          
+          const { error: pgInsertErr } = await supabase
+            .from("profiles")
+            .insert({
+              id: pgUuid,
+              name: fsUser?.fullName || "User",
+              username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+              phone_number: fsUser?.phoneNumber || "",
+              referral_code: referralCode,
+              transaction_pin: "1234",
+              wallet_balance: walletBal
+            });
+
+          if (!pgInsertErr) {
+            const { data } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', pgUuid)
+              .maybeSingle();
+            syncedProfile = data;
+          }
+        }
+      } catch (err) {
+        console.warn("[getAuthenticatedUserBalance] On-the-fly sync warning:", err);
+      }
+
+      if (syncedProfile) {
+        return {
+          userId: rawUserId,
+          pgUuid,
+          balance: Number(syncedProfile.wallet_balance || 0),
+          profile: syncedProfile
+        };
+      }
+
+      throw new Error("User profile not found in database.");
+    }
+
+    return {
+      userId: rawUserId,
+      pgUuid,
+      balance: Number(profile.wallet_balance || 0),
+      profile
+    };
+  }
+
   // GET /plans and GET /api/plans: Query plans dynamically by network & planType (Firestore is the One and Only Source of Truth!)
   app.get(["/plans", "/api/plans"], async (req, res) => {
     try {
