@@ -3855,6 +3855,168 @@ async function startServer() {
     }
   });
 
+  // Secure Flutterwave Webhook Endpoint
+  app.post("/api/webhook/flutterwave", async (req, res) => {
+    console.log("[Flutterwave Webhook] Received notification at /api/webhook/flutterwave");
+    
+    // 2. SIGNATURE VALIDATION
+    const signature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+    const secretHash = process.env.FLW_SECRET_HASH;
+
+    if (!secretHash || !signature || signature !== secretHash) {
+      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch.");
+      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid or missing." });
+    }
+
+    const payload = req.body;
+    const event = payload.event;
+    const status = payload.data?.status || payload.status;
+
+    // 3. TRANSACTION VERIFICATION
+    const isChargeCompleted = event === "charge.completed";
+    const isSuccessful = status === "successful" || status === "success";
+
+    if (!isChargeCompleted || !isSuccessful) {
+      console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+      return res.status(200).json({ received: true, status: "ignored" });
+    }
+
+    // Extract transaction details
+    const txId = payload.data?.id || payload.id;
+    const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
+    const amount = Number(payload.data?.amount || payload.amount);
+
+    if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
+      console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
+      return res.status(400).json({ error: "Bad Request", message: "Required payload parameters are invalid or missing." });
+    }
+
+    // 6. ACKNOWLEDGE SPEEDILY
+    res.status(200).json({ received: true, status: "processing" });
+
+    // Process database transaction and audit logging asynchronously in the background
+    (async () => {
+      try {
+        console.log(`[Flutterwave Webhook Background] Processing transaction ${txId} for customer ${customerEmail} (Amount: ₦${amount})`);
+
+        // Idempotency check: Prevent double-crediting
+        const { data: existingTx, error: txCheckErr } = await supabase
+          .from("transactions")
+          .select("id")
+          .eq("reference", String(txId))
+          .maybeSingle();
+
+        if (txCheckErr) {
+          console.warn("[Flutterwave Webhook Background] Idempotency query warning:", txCheckErr.message);
+        }
+
+        if (existingTx) {
+          console.log(`[Flutterwave Webhook Background] Reference ${txId} already processed. Skipping balance credit.`);
+          return;
+        }
+
+        // 4. SUPABASE WALLET UPDATE: Look up user in 'profiles' where email matches the customer email
+        const { data: profile, error: selectErr } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("email", customerEmail)
+          .maybeSingle();
+
+        if (selectErr) {
+          console.error(`[Flutterwave Webhook Background] Database error fetching profile for email ${customerEmail}:`, selectErr.message);
+          return;
+        }
+
+        if (!profile) {
+          console.error(`[Flutterwave Webhook Background] No profile found matching email: ${customerEmail}`);
+          return;
+        }
+
+        const currentBalance = Number(profile.balance || profile.wallet_balance || 0);
+        const newBalance = currentBalance + amount;
+
+        // Perform atomic update on user's row
+        const { error: updateErr } = await supabase
+          .from("profiles")
+          .update({
+            balance: newBalance,
+            wallet_balance: newBalance // also update wallet_balance for compatibility
+          })
+          .eq("email", customerEmail);
+
+        if (updateErr) {
+          console.error(`[Flutterwave Webhook Background] Failed to update user balance in Supabase profiles:`, updateErr.message);
+          return;
+        }
+
+        console.log(`[Flutterwave Webhook Background] Successfully credited user ${customerEmail}. Balance updated from ₦${currentBalance} to ₦${newBalance}`);
+
+        // 5. LOG TRANSACTION: Insert audit log into 'transactions' history table
+        const { error: insertErr } = await supabase
+          .from("transactions")
+          .insert({
+            id: `fw_webhook_${txId}`,
+            user_email: customerEmail,
+            amount: amount,
+            type: "deposit",
+            status: "success",
+            reference: String(txId),
+            // Compatibility fields to make sure the app's history dashboard also displays it
+            user_id: profile.id,
+            userId: profile.id,
+            platform: "flutterwave",
+            payment_method: "flutterwave",
+            description: `Flutterwave deposit of NGN ${amount}`,
+            created_at: new Date().toISOString(),
+            createdAt: new Date().toISOString()
+          });
+
+        if (insertErr) {
+          console.warn("[Flutterwave Webhook Background] Error inserting transactions audit log:", insertErr.message);
+        } else {
+          console.log(`[Flutterwave Webhook Background] Audit log created successfully for reference: ${txId}`);
+        }
+
+        // Keep local / Firestore database synchronized if available
+        try {
+          if (db) {
+            const userQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
+            if (!userQuery.empty) {
+              const userDoc = userQuery.docs[0];
+              const userRef = userDoc.ref;
+              const currentFsBalance = Number(userDoc.data()?.balance || userDoc.data()?.wallet_balance || 0);
+              const newFsBalance = currentFsBalance + amount;
+
+              await userRef.update({
+                balance: newFsBalance,
+                wallet_balance: newFsBalance,
+                available_balance: newFsBalance
+              });
+
+              await db.collection("transactions").doc(`fw_webhook_${txId}`).set({
+                id: `fw_webhook_${txId}`,
+                userId: userDoc.id,
+                userEmail: customerEmail,
+                amount: amount,
+                status: "success",
+                type: "deposit",
+                reference: String(txId),
+                description: `Flutterwave deposit of NGN ${amount}`,
+                createdAt: new Date().toISOString()
+              });
+              console.log("[Flutterwave Webhook Background] Successfully synchronized backup Firestore user database.");
+            }
+          }
+        } catch (fsSyncErr: any) {
+          console.warn("[Flutterwave Webhook Background] Firestore sync exception bypassed:", fsSyncErr.message || fsSyncErr);
+        }
+
+      } catch (bgExc: any) {
+        console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
+      }
+    })();
+  });
+
   // Secure Flutterwave Webhook Handler Route
   app.post("/api/webhooks/flutterwave", async (req, res) => {
     // 1. Log the full incoming payload at the very top
