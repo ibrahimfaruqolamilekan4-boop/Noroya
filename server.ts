@@ -12,6 +12,32 @@ import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js
 import { supabase } from "./src/lib/supabase.js";
 import axios from "axios";
 
+const ensureUUID = (strId: string): string => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(strId)) {
+    return strId;
+  }
+  let seed = 0;
+  for (let i = 0; i < strId.length; i++) {
+    seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+  }
+  const r = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed;
+  };
+  const hexChars = '0123456789abcdef';
+  let hex32 = '';
+  for (let i = 0; i < 32; i++) {
+    hex32 += hexChars[r() % 16];
+  }
+  const part1 = hex32.substring(0, 8);
+  const part2 = hex32.substring(8, 12);
+  const part3 = '4' + hex32.substring(12, 15);
+  const part4 = 'a' + hex32.substring(15, 18);
+  const part5 = hex32.substring(18, 30);
+  return `${part1}-${part2}-${part3}-${part4}-${part5}`;
+};
+
 dotenv.config();
 
 import fs from 'fs';
@@ -638,11 +664,54 @@ async function startServer() {
 
     try {
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', finalUserId)
-        .maybeSingle();
+      const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
+      let profile: any = null;
+      let profileErr: any = null;
+
+      if (pgUuid) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        profile = data;
+        profileErr = error;
+      }
+
+      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
+      if (!profile && pgUuid) {
+        try {
+          const fsUserSnap = await db.collection('users').doc(finalUserId).get();
+          if (fsUserSnap.exists) {
+            const fsUser = fsUserSnap.data();
+            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+            
+            const { error: pgInsertErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: pgUuid,
+                name: fsUser?.fullName || "User",
+                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+                phone_number: fsUser?.phoneNumber || "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: walletBal
+              });
+
+            if (!pgInsertErr) {
+              const { data } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', pgUuid)
+                .maybeSingle();
+              profile = data;
+            }
+          }
+        } catch (syncExc) {
+          console.warn("[On-The-Fly Supabase Sync in handleVtuPurchase Warning]:", syncExc);
+        }
+      }
 
       if (profileErr) {
         console.error("[Supabase Profile Query Error]:", profileErr);
@@ -781,12 +850,13 @@ async function startServer() {
       // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalAmount;
+        const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
         
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
           .update({ wallet_balance: deductedBalance })
-          .eq('id', finalUserId);
+          .eq('id', pgUuid);
 
         if (updateErr) {
           console.error("[Supabase Balance Update Error]:", updateErr);
@@ -801,7 +871,7 @@ async function startServer() {
           await supabase
             .from('users')
             .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', finalUserId);
+            .eq('id', pgUuid);
         } catch (ignoreErr) {
           // Ignored backup table failure
         }
@@ -825,7 +895,8 @@ async function startServer() {
         try {
           await supabase.from('transactions').insert({
             id: `bigi_${Date.now()}`,
-            userId: finalUserId,
+            userId: pgUuid,
+            user_id: pgUuid,
             type: finalType,
             amount: finalAmount,
             status: 'completed',
@@ -1281,11 +1352,54 @@ async function startServer() {
       }
 
       // Query user balance from Supabase
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', resolvedUserId)
-        .maybeSingle();
+      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
+      let profile: any = null;
+      let profileErr: any = null;
+
+      if (pgUuid) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        profile = data;
+        profileErr = error;
+      }
+
+      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
+      if (!profile && pgUuid) {
+        try {
+          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
+          if (fsUserSnap.exists) {
+            const fsUser = fsUserSnap.data();
+            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+            
+            const { error: pgInsertErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: pgUuid,
+                name: fsUser?.fullName || "User",
+                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+                phone_number: fsUser?.phoneNumber || "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: walletBal
+              });
+
+            if (!pgInsertErr) {
+              const { data } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', pgUuid)
+                .maybeSingle();
+              profile = data;
+            }
+          }
+        } catch (syncExc) {
+          console.warn("[On-The-Fly Supabase Sync in purchase/utility Warning]:", syncExc);
+        }
+      }
 
       if (profileErr || !profile) {
         console.error("[Supabase Profile Query Error]:", profileErr);
@@ -1305,9 +1419,11 @@ async function startServer() {
 
       // 1. Immediately insert a row into the 'transactions' table with a status of 'pending'
       try {
+        const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
         await supabase.from('transactions').insert({
           id: transactionId,
-          userId: resolvedUserId,
+          userId: pgUuid,
+          user_id: pgUuid,
           type: service.service_type,
           amount: finalPrice,
           status: 'pending',
@@ -1457,12 +1573,13 @@ async function startServer() {
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalPrice;
+        const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
 
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
           .update({ wallet_balance: deductedBalance })
-          .eq('id', resolvedUserId);
+          .eq('id', pgUuid);
 
         if (updateErr) {
           console.error("[Supabase Wallet Deduct Error]:", updateErr);
@@ -1477,7 +1594,7 @@ async function startServer() {
           await supabase
             .from('users')
             .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', resolvedUserId);
+            .eq('id', pgUuid);
         } catch (e) {}
 
         try {
@@ -1625,11 +1742,54 @@ async function startServer() {
       const ratio = sellingPercent / costPercent;
 
       // Check user wallet balance
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', resolvedUserId)
-        .maybeSingle();
+      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
+      let profile: any = null;
+      let profileErr: any = null;
+
+      if (pgUuid) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        profile = data;
+        profileErr = error;
+      }
+
+      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
+      if (!profile && pgUuid) {
+        try {
+          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
+          if (fsUserSnap.exists) {
+            const fsUser = fsUserSnap.data();
+            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+            
+            const { error: pgInsertErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: pgUuid,
+                name: fsUser?.fullName || "User",
+                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+                phone_number: fsUser?.phoneNumber || "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: walletBal
+              });
+
+            if (!pgInsertErr) {
+              const { data } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', pgUuid)
+                .maybeSingle();
+              profile = data;
+            }
+          }
+        } catch (syncExc) {
+          console.warn("[On-The-Fly Supabase Sync in buy-airtime Warning]:", syncExc);
+        }
+      }
 
       if (profileErr || !profile) {
         return res.status(404).json({ error: "User profile not found in database." });
@@ -1649,7 +1809,8 @@ async function startServer() {
       try {
         await supabase.from('transactions').insert({
           id: transactionId,
-          userId: resolvedUserId,
+          userId: pgUuid,
+          user_id: pgUuid,
           type: 'airtime',
           amount: chargeAmount,
           status: 'pending',
@@ -1747,12 +1908,13 @@ async function startServer() {
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - chargeAmount;
+        const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
 
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
           .update({ wallet_balance: deductedBalance })
-          .eq('id', resolvedUserId);
+          .eq('id', pgUuid);
 
         if (updateErr) {
           console.error("[Supabase Wallet Deduct Error]:", updateErr);
@@ -1767,7 +1929,7 @@ async function startServer() {
           await supabase
             .from('users')
             .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', resolvedUserId);
+            .eq('id', pgUuid);
         } catch (e) {}
 
         try {
@@ -2682,11 +2844,54 @@ async function startServer() {
 
     try {
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', finalUserId)
-        .maybeSingle();
+      const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
+      let profile: any = null;
+      let profileErr: any = null;
+
+      if (pgUuid) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        profile = data;
+        profileErr = error;
+      }
+
+      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
+      if (!profile && pgUuid) {
+        try {
+          const fsUserSnap = await db.collection('users').doc(finalUserId).get();
+          if (fsUserSnap.exists) {
+            const fsUser = fsUserSnap.data();
+            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+            
+            const { error: pgInsertErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: pgUuid,
+                name: fsUser?.fullName || "User",
+                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+                phone_number: fsUser?.phoneNumber || "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: walletBal
+              });
+
+            if (!pgInsertErr) {
+              const { data } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', pgUuid)
+                .maybeSingle();
+              profile = data;
+            }
+          }
+        } catch (syncExc) {
+          console.warn("[On-The-Fly Supabase Sync in purchase Warning]:", syncExc);
+        }
+      }
 
       if (profileErr) {
         console.error("[Supabase Profile Query Error]:", profileErr);
@@ -2788,12 +2993,13 @@ async function startServer() {
       // 3. Decrement the user's Supabase balance only if the Bigisub API call succeeds
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalAmount;
+        const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
         
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
           .update({ wallet_balance: deductedBalance })
-          .eq('id', finalUserId);
+          .eq('id', pgUuid);
 
         if (updateErr) {
           console.error("[Supabase Balance Update Error]:", updateErr);
@@ -2808,7 +3014,7 @@ async function startServer() {
           await supabase
             .from('users')
             .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', finalUserId);
+            .eq('id', pgUuid);
         } catch (ignoreErr) {
           // Ignored backup table failure
         }
@@ -2832,7 +3038,8 @@ async function startServer() {
         try {
           await supabase.from('transactions').insert({
             id: `bigi_${Date.now()}`,
-            userId: finalUserId,
+            userId: pgUuid,
+            user_id: pgUuid,
             type: finalType,
             amount: finalAmount,
             status: 'completed',
@@ -3084,6 +3291,670 @@ async function startServer() {
     }
   });
 
+  // GET '/api/validate-smartcard' -> Validates Cable TV smartcard via Bigisub API
+  app.get("/api/validate-smartcard", async (req, res) => {
+    const provider = String(req.query.provider || req.body.provider || "").trim();
+    const smartcard_number = String(req.query.smartcard_number || req.body.smartcard_number || "").trim();
+
+    if (!provider || !smartcard_number) {
+      return res.status(400).json({ error: "Missing required parameters: provider and smartcard_number are required." });
+    }
+
+    try {
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      // Fallback/Sandbox simulation for testing
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const names = [
+          "Ibrahim Faruq Olamilekan",
+          "Tunde Ademola Bakare",
+          "Chioma Henrietta Obi",
+          "Yusuf Olatunji Alhaji",
+          "Olayemi Precious Adebayo"
+        ];
+        const digit = Number(smartcard_number[smartcard_number.length - 1] || "0");
+        const customerName = names[digit % names.length];
+
+        return res.json({
+          success: true,
+          customerName,
+          smartcard_number,
+          provider: provider.toUpperCase()
+        });
+      }
+
+      // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
+      let cableTvCode = 1;
+      const provUpper = provider.toUpperCase();
+      if (provUpper.includes("DSTV")) {
+        cableTvCode = 2;
+      } else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) {
+        cableTvCode = 3;
+      }
+
+      const response = await axios.post(`${BIGISUB_BASE_URL}/cable/validate`, {
+        cablename: cableTvCode,
+        smartcard_number: smartcard_number
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${BIGISUB_API_KEY}`
+        },
+        timeout: 8000
+      });
+
+      const responseBody = response.data;
+      if (response.status === 200 && (responseBody.status === "success" || responseBody.success)) {
+        return res.json({
+          success: true,
+          customerName: responseBody.customer_name || responseBody.name || "Bigisub Verified Customer",
+          smartcard_number,
+          provider: provUpper
+        });
+      } else {
+        return res.status(400).json({ error: responseBody.error || responseBody.message || "Smartcard verification failed." });
+      }
+    } catch (err: any) {
+      console.error("[GET /api/validate-smartcard Exception]:", err);
+      return res.status(500).json({ error: "Gateway smartcard validation error. Please try again." });
+    }
+  });
+
+  // GET '/api/validate-meter' -> Validates Electricity Meter via Bigisub API
+  app.get("/api/validate-meter", async (req, res) => {
+    const disco_name = String(req.query.disco_name || req.body.disco_name || "").trim();
+    const meter_number = String(req.query.meter_number || req.body.meter_number || "").trim();
+
+    if (!disco_name || !meter_number) {
+      return res.status(400).json({ error: "Missing required parameters: disco_name and meter_number are required." });
+    }
+
+    try {
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      // Fallback/Sandbox simulation for testing
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const names = [
+          "Ibrahim Faruq Olamilekan",
+          "Tunde Ademola Bakare",
+          "Chioma Henrietta Obi",
+          "Yusuf Olatunji Alhaji",
+          "Olayemi Precious Adebayo"
+        ];
+        const digit = Number(meter_number[meter_number.length - 1] || "0");
+        const customerName = names[digit % names.length];
+        const address = `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
+
+        return res.json({
+          success: true,
+          customerName,
+          address,
+          meter_number,
+          disco_name: disco_name.toUpperCase()
+        });
+      }
+
+      // Determine Disco name code: 1: IKEDC, 2: EKEDC, 3: AEDC, 4: IBEDC
+      let discoCode = 1;
+      const discoUpper = disco_name.toUpperCase();
+      if (discoUpper.includes("EKEDC")) {
+        discoCode = 2;
+      } else if (discoUpper.includes("AEDC")) {
+        discoCode = 3;
+      } else if (discoUpper.includes("IBEDC")) {
+        discoCode = 4;
+      } else if (!isNaN(Number(disco_name))) {
+        discoCode = Number(disco_name);
+      }
+
+      const response = await axios.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
+        disco_name: discoCode,
+        meter_number: meter_number
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${BIGISUB_API_KEY}`
+        },
+        timeout: 8000
+      });
+
+      const responseBody = response.data;
+      if (response.status === 200 && (responseBody.status === "success" || responseBody.success)) {
+        return res.json({
+          success: true,
+          customerName: responseBody.customer_name || responseBody.name || "Bigisub Verified Customer",
+          address: responseBody.address || "",
+          meter_number,
+          disco_name: discoUpper
+        });
+      } else {
+        return res.status(400).json({ error: responseBody.error || responseBody.message || "Meter validation failed." });
+      }
+    } catch (err: any) {
+      console.error("[GET /api/validate-meter Exception]:", err);
+      return res.status(500).json({ error: "Gateway meter validation error. Please try again." });
+    }
+  });
+
+  // GET '/api/validate-utility' -> Accepts 'provider_name' and 'account_number' (for smartcards/meters) and calls Bigisub's verification API endpoint
+  app.get("/api/validate-utility", async (req, res) => {
+    const provider_name = String(req.query.provider_name || req.body.provider_name || "").trim();
+    const account_number = String(req.query.account_number || req.body.account_number || "").trim();
+    const type = String(req.query.type || req.body.type || "").trim().toLowerCase();
+
+    if (!provider_name || !account_number) {
+      return res.status(400).json({ error: "Missing required parameters: provider_name and account_number are required." });
+    }
+
+    try {
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      const provUpper = provider_name.toUpperCase();
+      const isCable = type === 'cable' || provUpper.includes("DSTV") || provUpper.includes("GOTV") || provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES") || provUpper.includes("CABLE");
+
+      // Fallback/Sandbox simulation for testing
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const names = [
+          "Ibrahim Faruq Olamilekan",
+          "Tunde Ademola Bakare",
+          "Chioma Henrietta Obi",
+          "Yusuf Olatunji Alhaji",
+          "Olayemi Precious Adebayo"
+        ];
+        const digit = Number(account_number[account_number.length - 1] || "0");
+        const customerName = names[digit % names.length];
+        const address = isCable ? undefined : `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
+
+        return res.json({
+          success: true,
+          customerName,
+          address,
+          account_number,
+          provider_name: provider_name.toUpperCase(),
+          type: isCable ? "cable" : "electricity"
+        });
+      }
+
+      if (isCable) {
+        // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
+        let cableTvCode = 1;
+        if (provUpper.includes("DSTV")) {
+          cableTvCode = 2;
+        } else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) {
+          cableTvCode = 3;
+        }
+
+        const response = await axios.post(`${BIGISUB_BASE_URL}/cable/validate`, {
+          cablename: cableTvCode,
+          smartcard_number: account_number
+        }, {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${BIGISUB_API_KEY}`
+          },
+          timeout: 8000
+        });
+
+        const responseBody = response.data;
+        if (response.status === 200 && (responseBody.status === "success" || responseBody.success)) {
+          return res.json({
+            success: true,
+            customerName: responseBody.customer_name || responseBody.name || "Bigisub Verified Customer",
+            account_number,
+            provider_name: provUpper,
+            type: "cable"
+          });
+        } else {
+          return res.status(400).json({ error: responseBody.error || responseBody.message || "Cable smartcard verification failed on Bigisub." });
+        }
+      } else {
+        // Determine Disco name code: 1: IKEDC, 2: EKEDC, 3: AEDC, 4: IBEDC, 5: KAEDCO, 6: KEDCO, 7: PHED, 8: JED, 9: EEDC, 10: YOLA
+        let discoCode = 1;
+        if (provUpper.includes("EKEDC") || provUpper.includes("EKO")) {
+          discoCode = 2;
+        } else if (provUpper.includes("AEDC") || provUpper.includes("ABUJA")) {
+          discoCode = 3;
+        } else if (provUpper.includes("IBEDC") || provUpper.includes("IBADAN")) {
+          discoCode = 4;
+        } else if (provUpper.includes("KAEDCO") || provUpper.includes("KADUNA")) {
+          discoCode = 5;
+        } else if (provUpper.includes("KEDCO") || provUpper.includes("KANO")) {
+          discoCode = 6;
+        } else if (provUpper.includes("PHED") || provUpper.includes("PORT HARCOURT")) {
+          discoCode = 7;
+        } else if (provUpper.includes("JED") || provUpper.includes("JOS")) {
+          discoCode = 8;
+        } else if (provUpper.includes("EEDC") || provUpper.includes("ENUGU")) {
+          discoCode = 9;
+        } else if (provUpper.includes("YOLA") || provUpper.includes("YEDC")) {
+          discoCode = 10;
+        } else if (!isNaN(Number(provider_name))) {
+          discoCode = Number(provider_name);
+        }
+
+        const response = await axios.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
+          disco_name: discoCode,
+          meter_number: account_number
+        }, {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${BIGISUB_API_KEY}`
+          },
+          timeout: 8000
+        });
+
+        const responseBody = response.data;
+        if (response.status === 200 && (responseBody.status === "success" || responseBody.success)) {
+          return res.json({
+            success: true,
+            customerName: responseBody.customer_name || responseBody.name || "Bigisub Verified Customer",
+            address: responseBody.address || "",
+            account_number,
+            provider_name: provUpper,
+            type: "electricity"
+          });
+        } else {
+          return res.status(400).json({ error: responseBody.error || responseBody.message || "Electricity meter verification failed on Bigisub." });
+        }
+      }
+    } catch (err: any) {
+      console.error("[GET /api/validate-utility Exception]:", err);
+      const errMsg = err.response?.data?.message || err.response?.data?.error || err.message || "Utility validation gateway error. Please try again.";
+      return res.status(500).json({ error: errMsg });
+    }
+  });
+
+  // POST '/api/buy-utility' -> Validates service exists in services_config, computes selling price, deducts from Supabase profiles, and drops payload directly to Bigisub
+  app.post("/api/buy-utility", async (req, res) => {
+    const { userId, email, type, provider, amount, number, plan, meter_type } = req.body;
+
+    // Validate inputs
+    const reqType = String(type || '').toLowerCase().trim();
+    if (!provider || !number) {
+      return res.status(400).json({ error: "Missing required parameters: provider and number are required to buy utility." });
+    }
+    if (!reqType) {
+      return res.status(400).json({ error: "Missing required parameter: type is required (airtime, data, cable, or electricity)." });
+    }
+
+    try {
+      // Securely resolve user context
+      let resolvedUserId = userId;
+      let userEmail = email;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+        if (!authErr && user) {
+          resolvedUserId = user.id;
+          userEmail = user.email || userEmail;
+        }
+      }
+
+      if (!resolvedUserId) {
+        return res.status(400).json({ error: "Unauthorized: resolved user context is required to execute a purchase." });
+      }
+
+      // 1. Validate that the active service exists in the 'services_config' table
+      let service: any = null;
+
+      if (reqType === 'cable') {
+        const { data, error: serviceErr } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'cable')
+          .eq('bigisub_plan_id', plan)
+          .eq('is_active', true)
+          .maybeSingle();
+        
+        service = data;
+        if (serviceErr) console.error("[services_config query error for cable]:", serviceErr);
+      } else if (reqType === 'electricity') {
+        // Query based on plan (if exists) or build provider + meter_type identifier
+        const searchId = plan || `${provider.toLowerCase()}_${Number(meter_type) === 2 ? 'postpaid' : 'prepaid'}`;
+        const { data, error: serviceErr } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'electricity')
+          .eq('bigisub_plan_id', searchId)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        service = data;
+        if (serviceErr) console.error("[services_config query error for electricity]:", serviceErr);
+
+        if (!service) {
+          // Try fuzzy network name lookup
+          const { data: altData } = await supabase
+            .from('services_config')
+            .select('*')
+            .eq('service_type', 'electricity')
+            .ilike('provider_or_network', `%${provider}%`)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+          service = altData;
+        }
+      } else if (reqType === 'airtime') {
+        const { data, error: serviceErr } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'airtime')
+          .ilike('provider_or_network', `%${provider}%`)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        service = data;
+        if (serviceErr) console.error("[services_config query error for airtime]:", serviceErr);
+      } else if (reqType === 'data') {
+        const { data, error: serviceErr } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'data')
+          .eq('bigisub_plan_id', plan)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        service = data;
+        if (serviceErr) console.error("[services_config query error for data]:", serviceErr);
+      }
+
+      if (!service) {
+        return res.status(404).json({ error: `The requested service config was not found in 'services_config' or is currently inactive.` });
+      }
+
+      // 2. Fetch user profile and verify/deduct balance
+      let profile = null;
+      let profileErr = null;
+      const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
+
+      if (pgUuid) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        profile = data;
+        profileErr = error;
+      }
+
+      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
+      if (!profile && pgUuid) {
+        try {
+          const fsUserSnap = await db.collection('users').doc(resolvedUserId).get();
+          if (fsUserSnap.exists) {
+            const fsUser = fsUserSnap.data();
+            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+            
+            const { error: pgInsertErr } = await supabase
+              .from("profiles")
+              .insert({
+                id: pgUuid,
+                name: fsUser?.fullName || "User",
+                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+                phone_number: fsUser?.phoneNumber || "",
+                referral_code: referralCode,
+                transaction_pin: "1234",
+                wallet_balance: walletBal
+              });
+
+            if (!pgInsertErr) {
+              const { data } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', pgUuid)
+                .maybeSingle();
+              profile = data;
+            }
+          }
+        } catch (syncExc) {
+          console.warn("[On-The-Fly Supabase Sync in buy-utility Warning]:", syncExc);
+        }
+      }
+
+      if (profileErr) {
+        console.error("[Buy Utility Profile Fetch Error]:", profileErr);
+        return res.status(500).json({ error: "Failed to verify wallet balance. Please try again." });
+      }
+
+      if (!profile) {
+        return res.status(404).json({ error: "User profile not found. Please log in or verify credentials." });
+      }
+
+      // Compute final selling price dynamically from services_config
+      let finalPrice = Number(service.selling_price || 0);
+
+      if (reqType === 'airtime') {
+        let sellingPercent = Number(service.selling_price || 100);
+        if (sellingPercent <= 1 && sellingPercent > 0) {
+          sellingPercent = sellingPercent * 100;
+        }
+        finalPrice = Number(amount) * (sellingPercent / 100);
+      } else if (reqType === 'electricity') {
+        let sellingPercent = Number(service.selling_price || 100);
+        if (sellingPercent > 100) {
+          finalPrice = Number(amount) * (sellingPercent / 100);
+        } else {
+          finalPrice = Number(amount);
+        }
+      } else if (reqType === 'data' || reqType === 'cable') {
+        finalPrice = Number(service.selling_price || amount || 0);
+      }
+
+      if (isNaN(finalPrice) || finalPrice <= 0) {
+        return res.status(400).json({ error: "Invalid dynamic utility purchase amount calculated." });
+      }
+
+      const currentBalance = Number(profile.balance || profile.wallet_balance || 0);
+      if (currentBalance < finalPrice) {
+        return res.status(400).json({ 
+          error: `Insufficient wallet balance. This transaction requires ₦${finalPrice.toLocaleString()} but you have ₦${currentBalance.toLocaleString()}.` 
+        });
+      }
+
+      // 3. Drop payload directly to Bigisub's server
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+
+      let dispatchSuccess = false;
+      let responseBody: any = null;
+      let apiErrorMsg = "";
+
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        // Sandbox simulation
+        await new Promise(r => setTimeout(r, 800));
+        dispatchSuccess = true;
+        let simulatedToken = "";
+        if (reqType === 'electricity' && !(plan || '').toLowerCase().includes("postpaid") && !(meter_type === 2 || meter_type === '2')) {
+          simulatedToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+        responseBody = {
+          status: "success",
+          reference: `BIGI-SIM-UTIL-${Date.now()}`,
+          message: "Processed through Bigisub simulator sandbox successfully",
+          token: simulatedToken || undefined
+        };
+      } else {
+        try {
+          let endpoint = "";
+          let payload: any = {};
+
+          if (reqType === 'airtime') {
+            endpoint = "airtime/";
+            let networkCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("GLO")) networkCode = 2;
+            else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
+            else if (provUpper.includes("AIRTEL")) networkCode = 4;
+
+            payload = {
+              network: networkCode,
+              amount: Number(amount || finalPrice),
+              phone: number,
+              airtime_type: 1 // 1 for VTU
+            };
+          } else if (reqType === 'cable') {
+            endpoint = "cable/";
+            let cableTvCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("DSTV")) cableTvCode = 2;
+            else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) cableTvCode = 3;
+
+            payload = {
+              cablename: cableTvCode,
+              smartcard_number: number,
+              cableplan: plan || service.bigisub_plan_id || "gotv_lite"
+            };
+          } else if (reqType === 'electricity') {
+            endpoint = "electricity/";
+            let discoCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("EKEDC")) discoCode = 2;
+            else if (provUpper.includes("AEDC")) discoCode = 3;
+            else if (provUpper.includes("IBEDC")) discoCode = 4;
+            else if (!isNaN(Number(provider))) discoCode = Number(provider);
+
+            payload = {
+              disco_name: discoCode,
+              meter_number: number,
+              amount: Number(amount || finalPrice),
+              meter_type: meter_type || (plan?.toLowerCase().includes("postpaid") ? 2 : 1)
+            };
+          } else if (reqType === 'data') {
+            endpoint = "data/";
+            let networkCode = 1;
+            const provUpper = String(provider).toUpperCase();
+            if (provUpper.includes("GLO")) networkCode = 2;
+            else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
+            else if (provUpper.includes("AIRTEL")) networkCode = 4;
+
+            payload = {
+              network: networkCode,
+              mobile_number: number,
+              plan: plan || service.bigisub_plan_id
+            };
+          } else {
+            return res.status(400).json({ error: `Unsupported utility type: ${type}` });
+          }
+
+          const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+            },
+            timeout: 12000
+          });
+
+          responseBody = response.data;
+          if (response.status === 200 && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
+            dispatchSuccess = true;
+          } else {
+            apiErrorMsg = responseBody.error || responseBody.message || `Gateway error code ${response.status}`;
+          }
+        } catch (fetchErr: any) {
+          console.error("[Bigisub /api/buy-utility dispatch Exception]:", fetchErr);
+          apiErrorMsg = fetchErr.response?.data?.message || fetchErr.response?.data?.error || fetchErr.message || "Network Gateway Timeout";
+        }
+      }
+
+      if (dispatchSuccess) {
+        // Deduct price from balance
+        const deductedBalance = currentBalance - finalPrice;
+        
+        const { error: updateErr } = await supabase
+          .from('profiles')
+          .update({ 
+            balance: deductedBalance,
+            wallet_balance: deductedBalance
+          })
+          .eq('id', profile.id);
+
+        if (updateErr) {
+          console.error("[Supabase Balance Deduct Error]:", updateErr);
+        }
+
+        // Log transaction
+        const referenceCode = responseBody?.reference || responseBody?.id || `TRX-BIGI-UTIL-${Date.now()}`;
+        const transactionId = `bigi_util_${Date.now()}`;
+        const descriptionText = `${provider.toUpperCase()} ${reqType.toUpperCase()} purchase to ${number} (Simulated/Live)`;
+
+        try {
+          await supabase.from('transactions').insert({
+            id: transactionId,
+            userId: profile.id,
+            user_id: profile.id,
+            user_email: profile.email || userEmail,
+            type: reqType,
+            amount: finalPrice,
+            status: 'completed',
+            description: descriptionText,
+            reference: referenceCode,
+            platform: "bigisub",
+            payment_method: "wallet",
+            created_at: new Date().toISOString(),
+            createdAt: new Date().toISOString()
+          });
+        } catch (txInsertErr: any) {
+          console.error("[Supabase Audit Log Insertion Error]:", txInsertErr.message);
+        }
+
+        // Sync with backup Firestore users database
+        try {
+          if (db) {
+            const userQuery = await db.collection("users").where("email", "==", profile.email).limit(1).get();
+            if (!userQuery.empty) {
+              const userDoc = userQuery.docs[0];
+              await userDoc.ref.update({
+                balance: deductedBalance,
+                wallet_balance: deductedBalance,
+                available_balance: deductedBalance
+              });
+
+              await db.collection("transactions").doc(transactionId).set({
+                id: transactionId,
+                userId: userDoc.id,
+                userEmail: profile.email,
+                amount: finalPrice,
+                status: "success",
+                type: reqType,
+                reference: referenceCode,
+                description: descriptionText,
+                createdAt: new Date().toISOString()
+              });
+            }
+          }
+        } catch (fsSyncErr: any) {
+          console.warn("[Firestore sync bypassed in /api/buy-utility]:", fsSyncErr.message);
+        }
+
+        return res.json({
+          success: true,
+          message: `${reqType.toUpperCase()} purchase completed successfully.`,
+          balance: deductedBalance,
+          reference: referenceCode,
+          token: responseBody?.token || undefined,
+          response: responseBody
+        });
+      } else {
+        return res.status(400).json({ 
+          error: `Gateway purchase rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
+        });
+      }
+    } catch (err: any) {
+      console.error("[POST /api/buy-utility Exception]:", err);
+      return res.status(500).json({ error: "Internal processing error during utility purchase flow." });
+    }
+  });
+
   // Bigisub-powered Purchase & Wallet Ledger Routing (Migrated from Peyflex)
   app.post("/api/v1/utility/pay", async (req, res) => {
     const { userId, type, provider, amount, number, plan } = req.body;
@@ -3093,6 +3964,7 @@ async function startServer() {
     }
 
     try {
+      const pgUuid = userId ? ensureUUID(userId) : null;
       // Find matching service configuration in services_config first using provider and plan (bigisub_plan_id)
       const { data: service, error: serviceErr } = await supabase
         .from('services_config')
@@ -3135,10 +4007,12 @@ async function startServer() {
 
       // Update Supabase profiles in tandem
       try {
-        await supabase
-          .from('profiles')
-          .update({ wallet_balance: debitedBalance })
-          .eq('id', userId);
+        if (pgUuid) {
+          await supabase
+            .from('profiles')
+            .update({ wallet_balance: debitedBalance })
+            .eq('id', pgUuid);
+        }
       } catch (e) {}
 
       // Write Transaction log
@@ -3259,9 +4133,11 @@ async function startServer() {
       if (dispatchSuccess) {
         // Success: write to Supabase transactions as well for unified reporting
         try {
+          const pgUuid = userId ? ensureUUID(userId) : null;
           await supabase.from('transactions').insert({
             id: `bigi_utl_v1_${Date.now()}`,
-            userId: userId,
+            userId: pgUuid,
+            user_id: pgUuid,
             type: type === 'cable' ? 'cable' : 'electricity',
             amount: amount,
             status: 'completed',
@@ -3292,10 +4168,11 @@ async function startServer() {
         });
 
         try {
+          const pgUuid = userId ? ensureUUID(userId) : null;
           await supabase
             .from('profiles')
             .update({ wallet_balance: refundedBalance })
-            .eq('id', userId);
+            .eq('id', pgUuid);
         } catch (e) {}
 
         await txRef.update({
