@@ -91,12 +91,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Standard User Profile payload
+        const initialBalance = sbProfile?.wallet_balance !== undefined ? sbProfile.wallet_balance : (sbProfile?.balance ?? 0);
         const defaultProfile: UserProfile = {
           uid: sbUser.id,
           email: sbUser.email || '',
           fullName: sbProfile?.name || sbProfile?.username || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
-          balance: sbProfile?.wallet_balance ?? 0,
-          wallet_balance: sbProfile?.wallet_balance ?? 0,
+          balance: initialBalance,
+          wallet_balance: initialBalance,
           role: sbProfile?.role || sbProfile?.user_role || (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user'),
           referralCode: sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phone_number || '',
@@ -119,11 +120,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (!error && data) {
               setUserProfile(prev => {
                 const base = prev || defaultProfile;
+                const latestBalance = data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance);
                 return {
                   ...base,
                   fullName: data.name || data.username || base.fullName,
-                  balance: data.wallet_balance ?? base.balance,
-                  wallet_balance: data.wallet_balance ?? base.wallet_balance,
+                  balance: latestBalance,
+                  wallet_balance: latestBalance,
                   phoneNumber: data.phone_number || base.phoneNumber,
                   transactionPin: data.transaction_pin || base.transactionPin,
                 };
@@ -151,11 +153,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const updated = payload.new as any;
                 setUserProfile(prev => {
                   const base = prev || defaultProfile;
+                  const latestBalance = updated.wallet_balance !== undefined ? updated.wallet_balance : (updated.balance ?? base.balance);
                   return {
                     ...base,
                     fullName: updated.name || updated.username || base.fullName,
-                    balance: updated.wallet_balance ?? base.balance,
-                    wallet_balance: updated.wallet_balance ?? base.wallet_balance,
+                    balance: latestBalance,
+                    wallet_balance: latestBalance,
                     phoneNumber: updated.phone_number || base.phoneNumber,
                     transactionPin: updated.transaction_pin || base.transactionPin,
                   };
