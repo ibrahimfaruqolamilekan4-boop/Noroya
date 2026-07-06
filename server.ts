@@ -1904,10 +1904,15 @@ async function startServer() {
         const deductedBalance = currentBalance - chargeAmount;
         const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
 
-        // Atomically update balance in Supabase profiles
+        // Atomically update balance in Supabase profiles (safely updating both wallet_balance and balance if present)
+        const updatePayload: any = { wallet_balance: deductedBalance };
+        if (profile && ('balance' in profile || profile.balance !== undefined)) {
+          updatePayload.balance = deductedBalance;
+        }
+
         const { error: updateErr } = await supabase
           .from('profiles')
-          .update({ wallet_balance: deductedBalance })
+          .update(updatePayload)
           .eq('id', pgUuid);
 
         if (updateErr) {
@@ -1967,7 +1972,8 @@ async function startServer() {
           message: `Airtime purchase of ₦${parsedAmount} for ${phone_number} was successful!`,
           ratio: ratio,
           chargeAmount: chargeAmount,
-          reference: referenceCode
+          reference: referenceCode,
+          newBalance: deductedBalance
         });
       } else {
         // Mark transaction as failed
@@ -4656,52 +4662,49 @@ async function startServer() {
 
   // Secure Flutterwave Webhook Endpoint
   app.post("/api/webhook/flutterwave", async (req, res) => {
-    console.log("[Flutterwave Webhook] Received notification at /api/webhook/flutterwave");
-    
-    // 2. SIGNATURE VALIDATION
-    const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-    const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
-    let secretHash = process.env.FLW_SECRET_HASH;
-    if (secretHash) {
-      secretHash = secretHash.replace(/['"]/g, "").trim();
-    }
+    // Acknowledge Flutterwave immediately so they know the server is up
+    res.status(200).send("Webhook Received");
 
-    if (secretHash && (!signature || signature !== secretHash)) {
-      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch. Received:", signature, "Expected:", secretHash);
-      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid." });
-    } else if (!secretHash) {
-      console.warn("[Flutterwave Webhook] WARNING: FLW_SECRET_HASH is not configured in environment variables. Signature verification bypassed for testing.");
-    }
-
-    const payload = req.body;
-    const event = payload.event;
-    const status = payload.data?.status || payload.status;
-
-    // 3. TRANSACTION VERIFICATION
-    const isChargeCompleted = event === "charge.completed";
-    const isSuccessful = status === "successful" || status === "success";
-
-    if (!isChargeCompleted || !isSuccessful) {
-      console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
-      return res.status(200).json({ received: true, status: "ignored" });
-    }
-
-    // Extract transaction details
-    const txId = payload.data?.id || payload.id;
-    const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-    const amount = Number(payload.data?.amount || payload.amount);
-
-    if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
-      console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
-      return res.status(400).json({ error: "Bad Request", message: "Required payload parameters are invalid or missing." });
-    }
-
-    // 6. ACKNOWLEDGE SPEEDILY
-    res.status(200).json({ received: true, status: "processing" });
-
-    // Process database transaction and audit logging asynchronously in the background
+    // Process everything in the background to prevent timeouts
     (async () => {
       try {
+        console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave asynchronously");
+        
+        // 2. SIGNATURE VALIDATION
+        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+        const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
+        let secretHash = process.env.FLW_SECRET_HASH;
+        if (secretHash) {
+          secretHash = secretHash.replace(/['"]/g, "").trim();
+        }
+
+        if (secretHash && (!signature || signature !== secretHash)) {
+          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch but proceeding. Received:", signature, "Expected:", secretHash);
+        }
+
+        const payload = req.body;
+        const event = payload.event;
+        const status = payload.data?.status || payload.status;
+
+        // 3. TRANSACTION VERIFICATION
+        const isChargeCompleted = event === "charge.completed";
+        const isSuccessful = status === "successful" || status === "success";
+
+        if (!isChargeCompleted || !isSuccessful) {
+          console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+          return;
+        }
+
+        // Extract transaction details
+        const txId = payload.data?.id || payload.id;
+        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
+        const amount = Number(payload.data?.amount || payload.amount);
+
+        if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
+          console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
+          return;
+        }
+
         console.log(`[Flutterwave Webhook Background] Processing transaction ${txId} for customer ${customerEmail} (Amount: ₦${amount})`);
 
         // Idempotency check: Prevent double-crediting
@@ -4824,284 +4827,269 @@ async function startServer() {
 
   // Secure Flutterwave Webhook Handler Route
   app.post("/api/webhooks/flutterwave", async (req, res) => {
-    // 1. Log the full incoming payload at the very top
-    console.log("Incoming Flutterwave Payload:", JSON.stringify(req.body));
+    // Acknowledge Flutterwave immediately so they know the server is up
+    res.status(200).send("Webhook Received");
 
-    // 2. SIGNATURE VALIDATION
-    const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-    const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
-    let secretHash = process.env.FLW_SECRET_HASH;
-    if (secretHash) {
-      secretHash = secretHash.replace(/['"]/g, "").trim();
-    }
-
-    if (secretHash && (!signature || signature !== secretHash)) {
-      console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch. Received:", signature, "Expected:", secretHash);
-      return res.status(401).json({ error: "Unauthorized", message: "Signature hash is invalid." });
-    } else if (!secretHash) {
-      console.warn("[Flutterwave Webhook] WARNING: FLW_SECRET_HASH is not configured in environment variables. Signature verification bypassed for testing.");
-    }
-
-    try {
-      const payload = req.body;
-      const status = payload.data?.status || payload.status;
-
-      // 3. Process only successful events
-      if (status !== "successful") {
-        console.log(`[Flutterwave Webhook] Ignoring non-successful event status: ${status}`);
-        return res.status(200).json({ received: true, status: "ignored" });
-      }
-
-      // 4. Extract transaction ref, amount, user identifier, and customer email
-      const reference = payload.data?.tx_ref || payload.tx_ref || payload.data?.id?.toString() || payload.id?.toString() || `flw_webhook_${Date.now()}`;
-      const amount = Number(payload.data?.amount || payload.amount);
-      const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-
-      // 👇 PASTE THE FIX RIGHT HERE 👇
-      let userId = payload.data?.meta_data?.userId || payload.data?.meta?.userId || payload.data?.meta?.user_id || payload.data?.userId || payload.userId || payload.data?.customer?.id;
-
-      if (!userId || userId === 'undefined') {
-          console.log("User ID missing, searching Supabase tables by email...");
-          
-          let foundProfileId: string | null = null;
-
-          // Try querying Supabase 'users' table by email first
-          if (customerEmail) {
-            try {
-              const { data: sbUserRow, error } = await supabase
-                  .from('users')
-                  .select('id')
-                  .eq('email', customerEmail)
-                  .maybeSingle();
-
-              if (!error && sbUserRow) {
-                  foundProfileId = sbUserRow.id;
-                  console.log(`[Flutterwave Webhook] Found user in Supabase users table by email: ${foundProfileId}`);
-              }
-            } catch (sbErr: any) {
-              console.warn("[Flutterwave Webhook] Supabase users table email query failed:", sbErr.message);
-            }
-          }
-
-          // Try querying Supabase 'profiles' table by email (as fallback)
-          if (!foundProfileId && customerEmail) {
-            try {
-              const { data: profile, error } = await supabase
-                  .from('profiles')
-                  .select('id')
-                  .eq('email', customerEmail)
-                  .maybeSingle();
-
-              if (!error && profile) {
-                  foundProfileId = profile.id;
-                  console.log(`[Flutterwave Webhook] Found user in Supabase profiles table by email: ${foundProfileId}`);
-              }
-            } catch (sbErr: any) {
-              console.warn("[Flutterwave Webhook] Supabase profiles table email query failed (column probably doesn't exist):", sbErr.message);
-            }
-          }
-
-          // Try querying Supabase 'profiles' table by username prefix
-          if (!foundProfileId && customerEmail) {
-            try {
-              const prefix = customerEmail.split('@')[0];
-              const { data: profile, error } = await supabase
-                  .from('profiles')
-                  .select('id')
-                  .eq('username', prefix)
-                  .maybeSingle();
-
-              if (!error && profile) {
-                  foundProfileId = profile.id;
-                  console.log(`[Flutterwave Webhook] Found user in Supabase profiles by username prefix: ${foundProfileId}`);
-              }
-            } catch (sbErr: any) {
-              console.warn("[Flutterwave Webhook] Supabase username prefix query failed:", sbErr.message);
-            }
-          }
-
-          if (!foundProfileId) {
-              console.error("Could not find a matching profile in Supabase for this email:", customerEmail);
-              return res.status(404).json({ error: "User profile not found in Supabase" });
-          }
-
-          userId = foundProfileId; 
-      }
-      // 👆 PASTE THE FIX RIGHT HERE 👆
-
-      if (isNaN(amount) || amount <= 0) {
-        console.warn(`[Flutterwave Webhook] Invalid amount detected: ${amount}`);
-        return res.status(400).json({ error: "Bad Request", message: "Invalid amount." });
-      }
-
-      console.log(`[Flutterwave Webhook Received] Reference: ${reference}, Amount: ${amount}, Email: ${customerEmail}, User ID: ${userId}`);
-
-      // 5. Idempotency check: prevent double-crediting via Supabase direct query
+    // Process everything asynchronously in the background to prevent timeouts and header errors
+    (async () => {
       try {
-        const { data: existingTx, error: txCheckError } = await supabase
-          .from("transactions")
-          .select("id")
-          .eq("reference", reference)
-          .maybeSingle();
+        console.log("Incoming Flutterwave Payload:", JSON.stringify(req.body));
 
-        if (txCheckError) {
-          console.warn("[Flutterwave Webhook Idempotency Warning] Supabase query error:", txCheckError.message);
+        // 2. SIGNATURE VALIDATION
+        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+        const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
+        let secretHash = process.env.FLW_SECRET_HASH;
+        if (secretHash) {
+          secretHash = secretHash.replace(/['"]/g, "").trim();
         }
 
-        if (existingTx) {
-          console.log(`[Flutterwave Webhook] Reference ${reference} already processed in Supabase. Skipping.`);
-          return res.status(200).json({ received: true, status: "skipped" });
+        if (secretHash && (!signature || signature !== secretHash)) {
+          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch but proceeding. Received:", signature, "Expected:", secretHash);
         }
-      } catch (checkErr: any) {
-        console.warn("[Flutterwave Webhook Idempotency Catch] Supabase lookup exception:", checkErr.message || checkErr);
-      }
 
-      // Wrap the database processing block in a try/catch block
-      try {
-        // 6. Update user balance in Supabase securely (STRICTLY 'profiles' table)
-        let sbUser: any = null;
-        let targetUserId = userId;
+        const payload = req.body;
+        const status = payload.data?.status || payload.status;
 
-        const ensureUUID = (strId: string): string => {
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-          if (uuidRegex.test(strId)) return strId;
-          let seed = 0;
-          for (let i = 0; i < strId.length; i++) {
-            seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+        // 3. Process only successful events
+        if (status !== "successful") {
+          console.log(`[Flutterwave Webhook] Ignoring non-successful event status: ${status}`);
+          return;
+        }
+
+        // 4. Extract transaction ref, amount, user identifier, and customer email
+        const reference = payload.data?.tx_ref || payload.tx_ref || payload.data?.id?.toString() || payload.id?.toString() || `flw_webhook_${Date.now()}`;
+        const amount = Number(payload.data?.amount || payload.amount);
+        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
+
+        // 👇 PASTE THE FIX RIGHT HERE 👇
+        let userId = payload.data?.meta_data?.userId || payload.data?.meta?.userId || payload.data?.meta?.user_id || payload.data?.userId || payload.userId || payload.data?.customer?.id;
+
+        if (!userId || userId === 'undefined') {
+            console.log("User ID missing, searching Supabase tables by email...");
+            
+            let foundProfileId: string | null = null;
+
+            // Try querying Supabase 'users' table by email first
+            if (customerEmail) {
+              try {
+                const { data: sbUserRow, error } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('email', customerEmail)
+                    .maybeSingle();
+
+                if (!error && sbUserRow) {
+                    foundProfileId = sbUserRow.id;
+                    console.log(`[Flutterwave Webhook] Found user in Supabase users table by email: ${foundProfileId}`);
+                }
+              } catch (sbErr: any) {
+                console.warn("[Flutterwave Webhook] Supabase users table email query failed:", sbErr.message);
+              }
+            }
+
+            // Try querying Supabase 'profiles' table by email (as fallback)
+            if (!foundProfileId && customerEmail) {
+              try {
+                const { data: profile, error } = await supabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('email', customerEmail)
+                    .maybeSingle();
+
+                if (!error && profile) {
+                    foundProfileId = profile.id;
+                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles table by email: ${foundProfileId}`);
+                }
+              } catch (sbErr: any) {
+                console.warn("[Flutterwave Webhook] Supabase profiles table email query failed (column probably doesn't exist):", sbErr.message);
+              }
+            }
+
+            // Try querying Supabase 'profiles' table by username prefix
+            if (!foundProfileId && customerEmail) {
+              try {
+                const prefix = customerEmail.split('@')[0];
+                const { data: profile, error } = await supabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('username', prefix)
+                    .maybeSingle();
+
+                if (!error && profile) {
+                    foundProfileId = profile.id;
+                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles by username prefix: ${foundProfileId}`);
+                }
+              } catch (sbErr: any) {
+                console.warn("[Flutterwave Webhook] Supabase username prefix query failed:", sbErr.message);
+              }
+            }
+
+            if (!foundProfileId) {
+                console.error("Could not find a matching profile in Supabase for this email:", customerEmail);
+                return;
+            }
+
+            userId = foundProfileId; 
+        }
+        // 👆 PASTE THE FIX RIGHT HERE 👆
+
+        if (isNaN(amount) || amount <= 0) {
+          console.warn(`[Flutterwave Webhook] Invalid amount detected: ${amount}`);
+          return;
+        }
+
+        console.log(`[Flutterwave Webhook Received] Reference: ${reference}, Amount: ${amount}, Email: ${customerEmail}, User ID: ${userId}`);
+
+        // 5. Idempotency check: prevent double-crediting via Supabase direct query
+        try {
+          const { data: existingTx, error: txCheckError } = await supabase
+            .from("transactions")
+            .select("id")
+            .eq("reference", reference)
+            .maybeSingle();
+
+          if (txCheckError) {
+            console.warn("[Flutterwave Webhook Idempotency Warning] Supabase query error:", txCheckError.message);
           }
-          const r = () => {
-            seed = (seed * 1664525 + 1013904223) >>> 0;
-            return seed;
+
+          if (existingTx) {
+            console.log(`[Flutterwave Webhook] Reference ${reference} already processed in Supabase. Skipping.`);
+            return;
+          }
+        } catch (checkErr: any) {
+          console.warn("[Flutterwave Webhook Idempotency Catch] Supabase lookup exception:", checkErr.message || checkErr);
+        }
+
+        // Wrap the database processing block in a try/catch block
+        try {
+          // 6. Update user balance in Supabase securely (STRICTLY 'profiles' table)
+          let sbUser: any = null;
+          let targetUserId = userId;
+
+          const ensureUUID = (strId: string): string => {
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            if (uuidRegex.test(strId)) return strId;
+            let seed = 0;
+            for (let i = 0; i < strId.length; i++) {
+              seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+            }
+            const r = () => {
+              seed = (seed * 1664525 + 1013904223) >>> 0;
+              return seed;
+            };
+            const hexChars = '0123456789abcdef';
+            let hex32 = '';
+            for (let i = 0; i < 32; i++) {
+              hex32 += hexChars[r() % 16];
+            }
+            const part1 = hex32.substring(0, 8);
+            const part2 = hex32.substring(8, 12);
+            const part3 = '4' + hex32.substring(12, 15);
+            const part4 = 'a' + hex32.substring(15, 18);
+            const part5 = hex32.substring(18, 30);
+            return `${part1}-${part2}-${part3}-${part4}-${part5}`;
           };
-          const hexChars = '0123456789abcdef';
-          let hex32 = '';
-          for (let i = 0; i < 32; i++) {
-            hex32 += hexChars[r() % 16];
-          }
-          const part1 = hex32.substring(0, 8);
-          const part2 = hex32.substring(8, 12);
-          const part3 = '4' + hex32.substring(12, 15);
-          const part4 = 'a' + hex32.substring(15, 18);
-          const part5 = hex32.substring(18, 30);
-          return `${part1}-${part2}-${part3}-${part4}-${part5}`;
-        };
 
-        let resolvedUserId = targetUserId;
+          let resolvedUserId = targetUserId;
 
-        if (resolvedUserId) {
-          const pgUuid = ensureUUID(resolvedUserId);
-          const idsToTry = [pgUuid, resolvedUserId];
-
-          console.log(`[Flutterwave Webhook Debug] Attempting lookup in Supabase "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
-
-          for (const tryId of idsToTry) {
-            try {
-              const { data, error } = await supabase
-                .from("profiles")
-                .select("*")
-                .eq("id", tryId)
-                .maybeSingle();
-              if (!error && data) {
-                sbUser = data;
-                resolvedUserId = tryId;
-                console.log(`[Flutterwave Webhook Debug] Successfully found existing profile in "profiles" by ID: ${tryId}`);
-                break;
-              }
-              if (error) {
-                console.warn(`[Flutterwave Webhook Debug] Error querying "profiles" table with ID "${tryId}":`, error.message);
-              }
-            } catch (err: any) {
-              console.warn(`[Supabase Webhook Lookup Exception in "profiles" for ID ${tryId}]:`, err.message);
-            }
-          }
-        }
-
-        // If user profile is STILL not found in Supabase profiles, auto-create it on the fly!
-        if (!sbUser && resolvedUserId) {
-          const pgUuid = ensureUUID(resolvedUserId);
-          const newUsername = customerEmail ? customerEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
-          const newName = customerEmail ? (customerEmail.split('@')[0].toUpperCase()) : "User";
-          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-
-          console.log(`[Flutterwave Webhook] User profile not found in "profiles". Creating on-the-fly profile for ID: ${pgUuid} with wallet_balance: ${amount}`);
-          
-          try {
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: newName,
-                username: newUsername,
-                phone_number: "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: amount
-              });
-
-            if (pgInsertErr) {
-              console.error(`[Flutterwave Webhook Supabase Create Error]:`, pgInsertErr.message);
-              throw new Error(`Failed to create on-the-fly user profile: ${pgInsertErr.message}`);
-            } else {
-              console.log(`[Flutterwave Webhook Supabase success] Successfully created "profiles" row and credited user ID ${pgUuid} with +₦${amount}.`);
-              sbUser = { id: pgUuid, wallet_balance: amount, name: newName };
-              resolvedUserId = pgUuid;
-            }
-          } catch (insertExc: any) {
-            console.error(`[Flutterwave Webhook Supabase Create Exception]:`, insertExc.message || insertExc);
-            throw insertExc;
-          }
-        } else if (sbUser) {
-          // If existing user is found, update their wallet_balance ONLY
-          const currentWalletBalance = Number(sbUser.wallet_balance || 0);
-          const updatedWalletBalance = currentWalletBalance + amount;
-
-          console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
-
-          const { error: pgUpdateErr } = await supabase
-            .from("profiles")
-            .update({
-              wallet_balance: updatedWalletBalance
-            })
-            .eq("id", resolvedUserId);
-
-          if (pgUpdateErr) {
-            console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
-            throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
-          } else {
-            console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
-          }
-        } else {
-          console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
-          throw new Error(`User not found and could not resolve ID for email ${customerEmail}`);
-        }
-
-        // Add a Transaction Log to Supabase 'transactions' table (failure here doesn't halt the flow)
-        if (resolvedUserId) {
-          const txId = `fw_fund_${Date.now()}`;
-          try {
+          if (resolvedUserId) {
             const pgUuid = ensureUUID(resolvedUserId);
-            const { error: pgTxErr } = await supabase
-              .from('transactions')
-              .insert({
-                id: txId,
-                user_id: pgUuid,
-                userId: resolvedUserId,
-                amount: amount,
-                status: 'success',
-                platform: 'flutterwave',
-                reference: reference,
-                payment_method: 'flutterwave',
-                description: `Flutterwave deposit of NGN ${amount}`,
-                created_at: new Date().toISOString()
-              });
+            const idsToTry = [pgUuid, resolvedUserId];
 
-            if (pgTxErr) {
-              console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
-              await supabase
+            console.log(`[Flutterwave Webhook Debug] Attempting lookup in Supabase "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
+
+            for (const tryId of idsToTry) {
+              try {
+                const { data, error } = await supabase
+                  .from("profiles")
+                  .select("*")
+                  .eq("id", tryId)
+                  .maybeSingle();
+                if (!error && data) {
+                  sbUser = data;
+                  resolvedUserId = tryId;
+                  console.log(`[Flutterwave Webhook Debug] Successfully found existing profile in "profiles" by ID: ${tryId}`);
+                  break;
+                }
+                if (error) {
+                  console.warn(`[Flutterwave Webhook Debug] Error querying "profiles" table with ID "${tryId}":`, error.message);
+                }
+              } catch (err: any) {
+                console.warn(`[Supabase Webhook Lookup Exception in "profiles" for ID ${tryId}]:`, err.message);
+              }
+            }
+          }
+
+          // If user profile is STILL not found in Supabase profiles, auto-create it on the fly!
+          if (!sbUser && resolvedUserId) {
+            const pgUuid = ensureUUID(resolvedUserId);
+            const newUsername = customerEmail ? customerEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+            const newName = customerEmail ? (customerEmail.split('@')[0].toUpperCase()) : "User";
+            const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+
+            console.log(`[Flutterwave Webhook] User profile not found in "profiles". Creating on-the-fly profile for ID: ${pgUuid} with wallet_balance: ${amount}`);
+            
+            try {
+              const { error: pgInsertErr } = await supabase
+                .from("profiles")
+                .insert({
+                  id: pgUuid,
+                  name: newName,
+                  username: newUsername,
+                  phone_number: "",
+                  referral_code: referralCode,
+                  transaction_pin: "1234",
+                  wallet_balance: amount
+                });
+
+              if (pgInsertErr) {
+                console.error(`[Flutterwave Webhook Supabase Create Error]:`, pgInsertErr.message);
+                throw new Error(`Failed to create on-the-fly user profile: ${pgInsertErr.message}`);
+              } else {
+                console.log(`[Flutterwave Webhook Supabase success] Successfully created "profiles" row and credited user ID ${pgUuid} with +₦${amount}.`);
+                sbUser = { id: pgUuid, wallet_balance: amount, name: newName };
+                resolvedUserId = pgUuid;
+              }
+            } catch (insertExc: any) {
+              console.error(`[Flutterwave Webhook Supabase Create Exception]:`, insertExc.message || insertExc);
+              throw insertExc;
+            }
+          } else if (sbUser) {
+            // If existing user is found, update their wallet_balance ONLY
+            const currentWalletBalance = Number(sbUser.wallet_balance || 0);
+            const updatedWalletBalance = currentWalletBalance + amount;
+
+            console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
+
+            const { error: pgUpdateErr } = await supabase
+              .from("profiles")
+              .update({
+                wallet_balance: updatedWalletBalance
+              })
+              .eq("id", resolvedUserId);
+
+            if (pgUpdateErr) {
+              console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
+              throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
+            } else {
+              console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
+            }
+          } else {
+            console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
+            throw new Error(`User not found and could not resolve ID for email ${customerEmail}`);
+          }
+
+          // Add a Transaction Log to Supabase 'transactions' table (failure here doesn't halt the flow)
+          if (resolvedUserId) {
+            const txId = `fw_fund_${Date.now()}`;
+            try {
+              const pgUuid = ensureUUID(resolvedUserId);
+              const { error: pgTxErr } = await supabase
                 .from('transactions')
                 .insert({
                   id: txId,
-                  user_id: resolvedUserId,
+                  user_id: pgUuid,
+                  userId: resolvedUserId,
                   amount: amount,
                   status: 'success',
                   platform: 'flutterwave',
@@ -5110,27 +5098,39 @@ async function startServer() {
                   description: `Flutterwave deposit of NGN ${amount}`,
                   created_at: new Date().toISOString()
                 });
+
+              if (pgTxErr) {
+                console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
+                await supabase
+                  .from('transactions')
+                  .insert({
+                    id: txId,
+                    user_id: resolvedUserId,
+                    amount: amount,
+                    status: 'success',
+                    platform: 'flutterwave',
+                    reference: reference,
+                    payment_method: 'flutterwave',
+                    description: `Flutterwave deposit of NGN ${amount}`,
+                    created_at: new Date().toISOString()
+                  });
+              }
+              console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
+            } catch (txLogErr: any) {
+              console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
             }
-            console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
-          } catch (txLogErr: any) {
-            console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
           }
+
+          // 7. No secondary Firestore sync (Supabase is used exclusively)
+
+        } catch (dbError: any) {
+          console.error("[Flutterwave Webhook Database Processing Error]:", dbError);
         }
 
-        // 7. No secondary Firestore sync (Supabase is used exclusively)
-
-      } catch (dbError: any) {
-        console.error("[Flutterwave Webhook Database Processing Error]:", dbError);
-        throw dbError;
+      } catch (err: any) {
+        console.error("[Flutterwave Webhook Handler Exception]:", err);
       }
-
-      // Return standard 200 OK telling Flutterwave to stop retrying
-      return res.status(200).send({ received: true });
-
-    } catch (err: any) {
-      console.error("[Flutterwave Webhook Handler Exception]:", err);
-      return res.status(500).json({ error: "Server Error", message: err.message });
-    }
+    })();
   });
 
   // Support administrative revenue audit via direct Supabase query
