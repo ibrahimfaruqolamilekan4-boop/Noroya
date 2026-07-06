@@ -199,6 +199,26 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     // Always ensure Supabase profiles is synchronized too
     try {
       const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
+      
+      // Fetch existing profile to prevent accidental balance overrides/resets to 0
+      let existingBalance = 0;
+      try {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('wallet_balance, balance')
+          .eq('id', uid)
+          .maybeSingle();
+        if (existingProfile) {
+          existingBalance = Number(existingProfile.wallet_balance !== undefined ? existingProfile.wallet_balance : (existingProfile.balance || 0));
+        }
+      } catch (e) {
+        console.warn("Could not fetch existing profile balance from Supabase profiles:", e);
+      }
+
+      const targetBalance = userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0;
+      // THE FIX: If the new state balance is 0/empty, but we have an existing balance in DB, block overwriting it!
+      const finalBalance = (targetBalance === 0 && existingBalance > 0) ? existingBalance : targetBalance;
+
       const sbPayloadProfiles = {
         id: uid,
         name: name || userSnap.data()?.fullName || 'User',
@@ -206,7 +226,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         phone_number: userPhone || userSnap.data()?.phoneNumber || '',
         referral_code: sbCode,
         transaction_pin: transactionPin || userSnap.data()?.transactionPin || '',
-        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0
+        wallet_balance: finalBalance
       };
 
       await supabase.from('profiles').upsert(sbPayloadProfiles, { onConflict: 'id' });
@@ -216,15 +236,35 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
 
     try {
       const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
+      
+      // Fetch existing user row to prevent accidental balance overrides/resets to 0
+      let existingBalanceUsers = 0;
+      try {
+        const { data: existingUserRow } = await supabase
+          .from('users')
+          .select('wallet_balance, balance, available_balance')
+          .eq('id', uid)
+          .maybeSingle();
+        if (existingUserRow) {
+          existingBalanceUsers = Number(existingUserRow.wallet_balance !== undefined ? existingUserRow.wallet_balance : (existingUserRow.balance !== undefined ? existingUserRow.balance : (existingUserRow.available_balance || 0)));
+        }
+      } catch (e) {
+        console.warn("Could not fetch existing user balance from Supabase users:", e);
+      }
+
+      const targetBalance = userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0;
+      // THE FIX: If the new state balance is 0/empty, but we have an existing balance in DB, block overwriting it!
+      const finalBalanceUsers = (targetBalance === 0 && existingBalanceUsers > 0) ? existingBalanceUsers : targetBalance;
+
       const sbPayload = {
         id: uid,
         email: email.toLowerCase().trim(),
         fullName: name,
         full_name: name,
         username: userUsername || userSnap.data()?.username || '',
-        balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
-        wallet_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
-        available_balance: userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0,
+        balance: finalBalanceUsers,
+        wallet_balance: finalBalanceUsers,
+        available_balance: finalBalanceUsers,
         role: isAdminEmail ? 'admin' : 'user',
         user_role: isAdminEmail ? 'admin' : 'user',
         referralCode: sbCode,
