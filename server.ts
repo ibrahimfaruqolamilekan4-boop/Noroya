@@ -593,7 +593,7 @@ async function startServer() {
         return {
           userId: rawUserId,
           pgUuid,
-          balance: Number(syncedProfile.wallet_balance || 0),
+          balance: Number(syncedProfile.wallet_balance !== undefined ? syncedProfile.wallet_balance : (syncedProfile.balance || 0)),
           profile: syncedProfile
         };
       }
@@ -604,7 +604,7 @@ async function startServer() {
     return {
       userId: rawUserId,
       pgUuid,
-      balance: Number(activeProfile.wallet_balance || 0),
+      balance: Number(activeProfile.wallet_balance !== undefined ? activeProfile.wallet_balance : (activeProfile.balance || 0)),
       profile: activeProfile
     };
   }
