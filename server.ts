@@ -536,7 +536,25 @@ async function startServer() {
       throw new Error(`Database error retrieving profile: ${profileErr.message}`);
     }
 
-    if (!profile) {
+    let activeProfile = profile;
+
+    if (!activeProfile && userEmail) {
+      try {
+        const { data: emailProfile, error: emailProfileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', userEmail)
+          .maybeSingle();
+        if (!emailProfileErr && emailProfile) {
+          activeProfile = emailProfile;
+          console.log(`[getAuthenticatedUserBalance] Found profile matching email: ${userEmail}`);
+        }
+      } catch (err: any) {
+        console.warn("[getAuthenticatedUserBalance] Failed to lookup by email fallback:", err.message);
+      }
+    }
+
+    if (!activeProfile) {
       // Sync on-the-fly from Firestore backup if it exists
       let syncedProfile = null;
       try {
@@ -586,8 +604,8 @@ async function startServer() {
     return {
       userId: rawUserId,
       pgUuid,
-      balance: Number(profile.wallet_balance || 0),
-      profile
+      balance: Number(activeProfile.wallet_balance || 0),
+      profile: activeProfile
     };
   }
 
