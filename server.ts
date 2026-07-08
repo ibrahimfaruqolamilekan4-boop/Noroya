@@ -1048,7 +1048,10 @@ async function startServer() {
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
-          .update({ wallet_balance: deductedBalance })
+          .update({ 
+            wallet_balance: deductedBalance,
+            balance: deductedBalance
+          })
           .eq('id', pgUuid);
 
         if (updateErr) {
@@ -1702,7 +1705,10 @@ async function startServer() {
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
-          .update({ wallet_balance: deductedBalance })
+          .update({ 
+            wallet_balance: deductedBalance,
+            balance: deductedBalance
+          })
           .eq('id', pgUuid);
 
         if (updateErr) {
@@ -1968,14 +1974,12 @@ async function startServer() {
         const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
 
         // Atomically update balance in Supabase profiles (safely updating both wallet_balance and balance if present)
-        const updatePayload: any = { wallet_balance: deductedBalance };
-        if (profile && ('balance' in profile || profile.balance !== undefined)) {
-          updatePayload.balance = deductedBalance;
-        }
-
         const { error: updateErr } = await supabase
           .from('profiles')
-          .update(updatePayload)
+          .update({ 
+            wallet_balance: deductedBalance,
+            balance: deductedBalance
+          })
           .eq('id', pgUuid);
 
         if (updateErr) {
@@ -3061,7 +3065,10 @@ async function startServer() {
         // Atomically update balance in Supabase profiles
         const { error: updateErr } = await supabase
           .from('profiles')
-          .update({ wallet_balance: deductedBalance })
+          .update({ 
+            wallet_balance: deductedBalance,
+            balance: deductedBalance
+          })
           .eq('id', pgUuid);
 
         if (updateErr) {
@@ -4001,7 +4008,10 @@ async function startServer() {
         if (pgUuid) {
           await supabase
             .from('profiles')
-            .update({ wallet_balance: debitedBalance })
+            .update({ 
+              wallet_balance: debitedBalance,
+              balance: debitedBalance
+            })
             .eq('id', pgUuid);
         }
       } catch (e) {}
@@ -4162,7 +4172,10 @@ async function startServer() {
           const pgUuid = userId ? ensureUUID(userId) : null;
           await supabase
             .from('profiles')
-            .update({ wallet_balance: refundedBalance })
+            .update({ 
+              wallet_balance: refundedBalance,
+              balance: refundedBalance
+            })
             .eq('id', pgUuid);
         } catch (e) {}
 
