@@ -1156,6 +1156,122 @@ async function startServer() {
   // POST /buy-data and POST /api/vtu/buy-data / POST /api/buy-data (Unified Bigisub purchase flow)
   app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], handleVtuPurchase);
 
+  /**
+   * 🚀 ENDPOINT: BUY DATA & AIRTIME (VENDOR API)
+   * Handles user balances, updates admin logs, and sends request to Bigisub
+   */
+  app.post('/api/vendor/recharge', async (req, res) => {
+    const { email, type, networkId, planId, phoneNumber, amount } = req.body;
+
+    try {
+      // Step A: Find the user profile in Supabase by email
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('email', email)
+        .maybeSingle();
+
+      if (profileError || !profile) {
+        return res.status(404).json({ success: false, message: "User profile not found in database." });
+      }
+
+      // Step B: Choose right balance column dynamically
+      const currentBalance = profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : Number(profile.balance || 0);
+      const deductAmount = parseFloat(amount || 0);
+
+      if (currentBalance < deductAmount) {
+        return res.status(400).json({ success: false, message: "Insufficient balance for transaction." });
+      }
+
+      // Step C: Fire the network payload to Bigisub API
+      // Bigisub expects authorization headers and data payload structures matching their documentation
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      
+      let bigisubResponseData: any = null;
+      let apiSuccess = false;
+
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        // Simulation mode
+        console.log("[Bigisub Simulation Vendor] Processing simulated purchase...");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        apiSuccess = true;
+        bigisubResponseData = {
+          status: 'success',
+          id: `BIGI-SIM-${Date.now()}`
+        };
+      } else {
+        const bigisubPayload: any = {
+          network: networkId,       // e.g., 1 for MTN, 2 for Airtel
+          mobile_number: phoneNumber,
+          Ported_number: true
+        };
+
+        if (type === 'airtime') {
+          bigisubPayload.amount = deductAmount;
+        } else {
+          bigisubPayload.plan = planId;
+        }
+
+        const bigisubUrl = type === 'airtime' 
+          ? 'https://bigisub.ng/api/v1/airtime' 
+          : 'https://bigisub.ng/api/v1/data';
+
+        const response = await axios.post(bigisubUrl, bigisubPayload, {
+          headers: {
+            'Authorization': `Token ${BIGISUB_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        });
+
+        bigisubResponseData = response.data;
+        if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful') {
+          apiSuccess = true;
+        }
+      }
+
+      // Step D: If Bigisub passes, deduct wallet funds securely
+      if (apiSuccess) {
+        const newBalance = currentBalance - deductAmount;
+        
+        await supabase
+          .from('profiles')
+          .update({ 
+            wallet_balance: newBalance,
+            balance: newBalance 
+          })
+          .eq('email', email);
+
+        // Step E: Create activity log entry for your Admin Control Panel
+        try {
+          await supabase
+            .from('transactions')
+            .insert([{
+              user_email: email,
+              type: type,
+              amount: deductAmount,
+              recipient: phoneNumber,
+              status: 'success',
+              reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX'
+            }]);
+        } catch (dbErr) {
+          console.warn("[Vendor Recharge] Failed to insert transaction record:", dbErr);
+        }
+
+        return res.json({ success: true, balance: newBalance, message: "Transaction completed successfully!" });
+      } else {
+        throw new Error(bigisubResponseData?.error || 'Provider rejected request');
+      }
+
+    } catch (error: any) {
+      console.error("Transaction processing error:", error?.message || error);
+      return res.status(500).json({ 
+        success: false, 
+        message: "Transaction rejected by operator network center or local limits. Verify your Bigisub KYC state." 
+      });
+    }
+  });
+
   // ============================================================================
   // Unified Bigisub Service Configuration & Purchase Routes (Migration)
   // ============================================================================
