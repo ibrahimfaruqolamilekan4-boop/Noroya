@@ -584,9 +584,54 @@ async function startServer() {
               .maybeSingle();
             syncedProfile = data;
           }
+        } else {
+          // Firestore document doesn't exist either. Create a brand new profile in Supabase profiles!
+          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+          const newUsername = userEmail ? userEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+          const newName = userEmail ? (userEmail.split('@')[0].toUpperCase()) : "User";
+
+          // Try inserting with email, balance, and wallet_balance
+          const payload1: any = {
+            id: pgUuid,
+            name: newName,
+            username: newUsername,
+            phone_number: "",
+            referral_code: referralCode,
+            transaction_pin: "1234",
+            wallet_balance: 0,
+            balance: 0,
+            email: userEmail || ""
+          };
+
+          let { error: insertErr } = await supabase.from('profiles').insert(payload1);
+
+          if (insertErr) {
+            console.warn("[getAuthenticatedUserBalance] Standard insert failed, retrying without email/balance columns:", insertErr.message);
+            // Fallback to inserting with minimum required columns
+            const payload2: any = {
+              id: pgUuid,
+              name: newName,
+              username: newUsername,
+              phone_number: "",
+              referral_code: referralCode,
+              transaction_pin: "1234",
+              wallet_balance: 0
+            };
+            const { error: insertErr2 } = await supabase.from('profiles').insert(payload2);
+            insertErr = insertErr2;
+          }
+
+          if (!insertErr) {
+            const { data } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', pgUuid)
+              .maybeSingle();
+            syncedProfile = data;
+          }
         }
       } catch (err) {
-        console.warn("[getAuthenticatedUserBalance] On-the-fly sync warning:", err);
+        console.warn("[getAuthenticatedUserBalance] On-the-fly sync/create warning:", err);
       }
 
       if (syncedProfile) {
@@ -598,7 +643,7 @@ async function startServer() {
         };
       }
 
-      throw new Error("User profile not found in database.");
+      throw new Error("User profile not found in database and could not be auto-created.");
     }
 
     return {
