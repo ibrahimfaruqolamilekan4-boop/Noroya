@@ -1212,15 +1212,18 @@ async function startServer() {
         };
       } else {
         const bigisubPayload: any = {
-          network: bigisubNetworkId,       // e.g., 1 for MTN, 2 for Airtel
+          network: bigisubNetworkId,
           mobile_number: phoneNumber,
-          Ported_number: true
+          bypass_validator: true // Prevents duplicate request blocks if clicked rapidly
         };
 
+        // Add type-specific parameters
         if (type === 'airtime') {
-          bigisubPayload.amount = deductAmount;
+          bigisubPayload.airtime_type = "VTU";
+          bigisubPayload.amount = parseFloat(amount);
         } else {
-          bigisubPayload.plan = planId;
+          // For data plans, ensure planId is the numerical ID provided by Bigisub's plan codes
+          bigisubPayload.plan = parseInt(planId); 
         }
 
         const bigisubUrl = type === 'airtime' 
