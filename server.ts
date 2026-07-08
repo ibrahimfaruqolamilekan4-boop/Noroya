@@ -1187,6 +1187,17 @@ async function startServer() {
       // Bigisub expects authorization headers and data payload structures matching their documentation
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
       
+      // Map network strings or IDs from frontend safely into Bigisub's expected IDs
+      let bigisubNetworkId = networkId;
+
+      if (typeof networkId === 'string') {
+        const cleanNetwork = networkId.toLowerCase().trim();
+        if (cleanNetwork.includes('mtn')) bigisubNetworkId = 1;
+        else if (cleanNetwork.includes('glo')) bigisubNetworkId = 2;
+        else if (cleanNetwork.includes('airtel')) bigisubNetworkId = 3;
+        else if (cleanNetwork.includes('9mobile')) bigisubNetworkId = 4;
+      }
+
       let bigisubResponseData: any = null;
       let apiSuccess = false;
 
@@ -1201,7 +1212,7 @@ async function startServer() {
         };
       } else {
         const bigisubPayload: any = {
-          network: networkId,       // e.g., 1 for MTN, 2 for Airtel
+          network: bigisubNetworkId,       // e.g., 1 for MTN, 2 for Airtel
           mobile_number: phoneNumber,
           Ported_number: true
         };
