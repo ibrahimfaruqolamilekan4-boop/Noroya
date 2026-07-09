@@ -3258,19 +3258,35 @@ async function startServer() {
           const endpoint = finalType === "airtime" ? "airtime" : "data";
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
 
-          // Construct standard Bigisub payload
+          // Map network strings or IDs from frontend safely into Bigisub's expected IDs
+          let bigiNetworkId = finalNetwork;
+          if (typeof finalNetwork === 'string') {
+            const cleanNetwork = finalNetwork.toLowerCase().trim();
+            if (cleanNetwork.includes('mtn') || cleanNetwork === '1') bigiNetworkId = 1;
+            else if (cleanNetwork.includes('glo') || cleanNetwork === '2') bigiNetworkId = 2;
+            else if (cleanNetwork.includes('airtel') || cleanNetwork === '3') bigiNetworkId = 3;
+            else if (cleanNetwork.includes('9mobile') || cleanNetwork.includes('9mob') || cleanNetwork === '4') bigiNetworkId = 4;
+          } else if (typeof finalNetwork === 'number') {
+            if (finalNetwork === 1) bigiNetworkId = 1;
+            else if (finalNetwork === 2) bigiNetworkId = 2;
+            else if (finalNetwork === 3) bigiNetworkId = 3;
+            else if (finalNetwork === 4) bigiNetworkId = 4;
+          }
+
+          // Construct the exact object payload structure for Bigisub
           const payload: any = {
-            network: finalNetwork,
+            network: bigiNetworkId,
             mobile_number: finalPhone,
-            phone: finalPhone,
-            amount: finalAmount,
-            Ported_number: true
+            bypass_validator: true // Prevents duplicate request blocks if clicked rapidly
           };
 
-          if (finalType === "data") {
-            payload.plan = finalPlan;
-            payload.plan_id = finalPlan;
-            payload.data_plan = finalPlan;
+          // Add type-specific parameters
+          if (finalType === 'airtime') {
+            payload.airtime_type = "VTU";
+            payload.amount = parseFloat(String(finalAmount));
+          } else {
+            // For data plans, ensure plan is the numerical ID provided by Bigisub's plan codes
+            payload.plan = parseInt(String(finalPlan)); 
           }
 
           console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
