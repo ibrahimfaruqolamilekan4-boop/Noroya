@@ -90,6 +90,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        if (!sbProfile) {
+          console.warn("Profile record missing! Auto-creating row to prevent client crash...");
+          try {
+            const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+            const recoveryPayload = {
+              id: sbUser.id,
+              name: sbUser.user_metadata?.fullName || sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'User',
+              username: sbUser.email?.split('@')[0] || `user_${Date.now()}`,
+              phone_number: '',
+              referral_code: generatedCode,
+              transaction_pin: '',
+              wallet_balance: 0.00
+            };
+            
+            await supabase.from('profiles').insert([recoveryPayload]);
+            sbProfile = recoveryPayload;
+
+            // Also synchronize with backup users table
+            try {
+              await supabase.from('users').insert([{
+                id: sbUser.id,
+                email: sbUser.email?.toLowerCase().trim() || '',
+                name: recoveryPayload.name,
+                username: recoveryPayload.username,
+                wallet_balance: 0.00,
+                role: sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user',
+                referral_code: generatedCode
+              }]);
+            } catch (userInsErr) {
+              console.warn("Could not insert backup users row during recovery:", userInsErr);
+            }
+          } catch (recoveryErr) {
+            console.error("Critical: Failed to auto-create missing user profile:", recoveryErr);
+          }
+        }
+
         // Standard User Profile payload
         const initialBalance = sbProfile?.wallet_balance !== undefined ? sbProfile.wallet_balance : (sbProfile?.balance ?? 0);
         const defaultProfile: UserProfile = {
