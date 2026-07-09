@@ -5215,14 +5215,36 @@ async function startServer() {
         
         // 2. SIGNATURE VALIDATION
         const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
-        let secretHash = process.env.FLW_SECRET_HASH;
-        if (secretHash) {
-          secretHash = secretHash.replace(/['"]/g, "").trim();
+        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
+        
+        let secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
+        let flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+
+        let isAuthorized = false;
+
+        // Verify with direct hash comparison (common dashboard configuration)
+        if (signature && secretHash && signature === secretHash) {
+          isAuthorized = true;
         }
 
-        if (secretHash && (!signature || signature !== secretHash)) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch but proceeding. Received:", signature, "Expected:", secretHash);
+        // Verify with HMAC signature check (provided in user instructions)
+        if (!isAuthorized && signature && flwSecretKey) {
+          try {
+            const expectedSignature = crypto
+              .createHmac('sha256', flwSecretKey)
+              .update(JSON.stringify(req.body))
+              .digest('hex');
+            if (signature === expectedSignature) {
+              isAuthorized = true;
+            }
+          } catch (cryptoErr) {
+            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
+          }
+        }
+
+        const hasKeys = secretHash || flwSecretKey;
+        if (hasKeys && !isAuthorized) {
+          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
         }
 
         const payload = req.body;
@@ -5283,24 +5305,41 @@ async function startServer() {
           return;
         }
 
-        const currentBalance = Number(profile.balance || profile.wallet_balance || 0);
-        const newBalance = currentBalance + amount;
-
-        // Perform atomic update on user's row
-        const { error: updateErr } = await supabase
-          .from("profiles")
-          .update({
-            balance: newBalance,
-            wallet_balance: newBalance // also update wallet_balance for compatibility
-          })
-          .eq("email", customerEmail);
-
-        if (updateErr) {
-          console.error(`[Flutterwave Webhook Background] Failed to update user balance in Supabase profiles:`, updateErr.message);
-          return;
+        let rpcCompleted = false;
+        try {
+          const { error: rpcErr } = await supabase.rpc('increment_balance', {
+            user_uuid: profile.id,
+            amount: amount
+          });
+          if (!rpcErr) {
+            rpcCompleted = true;
+            console.log(`[Flutterwave Webhook Background] Balance incremented via RPC for user ID: ${profile.id}`);
+          } else {
+            console.warn(`[Flutterwave Webhook Background RPC Error]:`, rpcErr.message);
+          }
+        } catch (rpcExc: any) {
+          console.warn(`[Flutterwave Webhook Background RPC Exception]:`, rpcExc.message || rpcExc);
         }
 
-        console.log(`[Flutterwave Webhook Background] Successfully credited user ${customerEmail}. Balance updated from ₦${currentBalance} to ₦${newBalance}`);
+        if (!rpcCompleted) {
+          const currentBalance = Number(profile.balance || profile.wallet_balance || 0);
+          const newBalance = currentBalance + amount;
+
+          // Perform atomic update on user's row
+          const { error: updateErr } = await supabase
+            .from("profiles")
+            .update({
+              balance: newBalance,
+              wallet_balance: newBalance // also update wallet_balance for compatibility
+            })
+            .eq("id", profile.id);
+
+          if (updateErr) {
+            console.error(`[Flutterwave Webhook Background] Failed to update user balance in Supabase profiles:`, updateErr.message);
+            return;
+          }
+          console.log(`[Flutterwave Webhook Background] Successfully credited user ${customerEmail}. Balance updated from ₦${currentBalance} to ₦${newBalance}`);
+        }
 
         // 5. LOG TRANSACTION: Insert audit log into 'transactions' history table
         const { error: insertErr } = await supabase
@@ -5380,14 +5419,36 @@ async function startServer() {
 
         // 2. SIGNATURE VALIDATION
         const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : rawSignature;
-        let secretHash = process.env.FLW_SECRET_HASH;
-        if (secretHash) {
-          secretHash = secretHash.replace(/['"]/g, "").trim();
+        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
+        
+        let secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
+        let flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+
+        let isAuthorized = false;
+
+        // Verify with direct hash comparison (common dashboard configuration)
+        if (signature && secretHash && signature === secretHash) {
+          isAuthorized = true;
         }
 
-        if (secretHash && (!signature || signature !== secretHash)) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification hash mismatch but proceeding. Received:", signature, "Expected:", secretHash);
+        // Verify with HMAC signature check (provided in user instructions)
+        if (!isAuthorized && signature && flwSecretKey) {
+          try {
+            const expectedSignature = crypto
+              .createHmac('sha256', flwSecretKey)
+              .update(JSON.stringify(req.body))
+              .digest('hex');
+            if (signature === expectedSignature) {
+              isAuthorized = true;
+            }
+          } catch (cryptoErr) {
+            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
+          }
+        }
+
+        const hasKeys = secretHash || flwSecretKey;
+        if (hasKeys && !isAuthorized) {
+          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
         }
 
         const payload = req.body;
@@ -5598,24 +5659,42 @@ async function startServer() {
               throw insertExc;
             }
           } else if (sbUser) {
-            // If existing user is found, update their wallet_balance ONLY
-            const currentWalletBalance = Number(sbUser.wallet_balance || 0);
-            const updatedWalletBalance = currentWalletBalance + amount;
+            // If existing user is found, update their wallet_balance with increment_balance RPC call or fall back to direct update
+            let rpcCompleted = false;
+            try {
+              const { error: rpcErr } = await supabase.rpc('increment_balance', {
+                user_uuid: resolvedUserId,
+                amount: amount
+              });
+              if (!rpcErr) {
+                rpcCompleted = true;
+                console.log(`[Flutterwave Webhook Background] Balance incremented via RPC for user ID: ${resolvedUserId}`);
+              } else {
+                console.warn(`[Flutterwave Webhook Background RPC Error]:`, rpcErr.message);
+              }
+            } catch (rpcExc: any) {
+              console.warn(`[Flutterwave Webhook Background RPC Exception]:`, rpcExc.message || rpcExc);
+            }
 
-            console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
+            if (!rpcCompleted) {
+              const currentWalletBalance = Number(sbUser.wallet_balance || 0);
+              const updatedWalletBalance = currentWalletBalance + amount;
 
-            const { error: pgUpdateErr } = await supabase
-              .from("profiles")
-              .update({
-                wallet_balance: updatedWalletBalance
-              })
-              .eq("id", resolvedUserId);
+              console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
 
-            if (pgUpdateErr) {
-              console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
-              throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
-            } else {
-              console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
+              const { error: pgUpdateErr } = await supabase
+                .from("profiles")
+                .update({
+                  wallet_balance: updatedWalletBalance
+                })
+                .eq("id", resolvedUserId);
+
+              if (pgUpdateErr) {
+                console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
+                throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
+              } else {
+                console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
+              }
             }
           } else {
             console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
