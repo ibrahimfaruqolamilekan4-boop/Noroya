@@ -385,8 +385,57 @@ export default function AdminPanelSection() {
   };
 
   // API config state
-  const [providerUrl, setProviderUrl] = React.useState('https://vtu-provider-a.com/api/v1');
-  const [providerKey, setProviderKey] = React.useState('******************_vtu_p_a');
+  const [providerUrl, setProviderUrl] = React.useState('https://www.bigisub.ng/api/v1');
+  const [providerKey, setProviderKey] = React.useState('');
+  const [isSavingKey, setIsSavingKey] = React.useState(false);
+
+  React.useEffect(() => {
+    const fetchBigisubKey = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('services_config')
+          .select('item_name')
+          .eq('bigisub_identifier_id', 'bigisub_api_key')
+          .maybeSingle();
+        if (!error && data?.item_name) {
+          setProviderKey(data.item_name);
+        }
+      } catch (err) {
+        console.warn("Could not fetch Bigisub API key from Supabase services_config on load:", err);
+      }
+    };
+    fetchBigisubKey();
+  }, []);
+
+  const handleSaveBigisubKey = async () => {
+    if (!providerKey.trim()) {
+      toast.error("Please enter a valid API key.");
+      return;
+    }
+    setIsSavingKey(true);
+    try {
+      const payload = {
+        service_type: 'airtime',
+        network_or_provider: 'SYSTEM_CONFIG',
+        item_name: providerKey.trim(),
+        bigisub_identifier_id: 'bigisub_api_key',
+        cost_price: 0,
+        selling_price: 0,
+        is_active: true,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase
+        .from('services_config')
+        .upsert(payload, { onConflict: 'bigisub_identifier_id' });
+      if (error) throw error;
+      toast.success("Bigisub API token linked and saved to Supabase successfully!");
+    } catch (err: any) {
+      console.error("Error saving Bigisub API token:", err);
+      toast.error(`Failed to link Bigisub API token: ${err.message || err}`);
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
 
   React.useEffect(() => {
     let unsubUsers = () => {};
@@ -1151,12 +1200,23 @@ export default function AdminPanelSection() {
                   </div>
                   <div className="space-y-1">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block ml-1 font-sans">Provider authentication key</span>
-                    <input 
-                      type="text" 
-                      value={providerKey} 
-                      onChange={(e) => setProviderKey(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
-                    />
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="Paste your Bigisub API Token here..."
+                        value={providerKey} 
+                        onChange={(e) => setProviderKey(e.target.value)}
+                        className="flex-1 bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
+                      />
+                      <button 
+                        type="button"
+                        onClick={handleSaveBigisubKey}
+                        disabled={isSavingKey}
+                        className="bg-slate-900 hover:bg-black text-white text-[11px] font-extrabold py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm whitespace-nowrap"
+                      >
+                        {isSavingKey ? "Linking..." : "Link API Token"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-green-50/50 border border-green-100 text-[10px] leading-relaxed text-slate-600 font-medium font-sans">

@@ -38,6 +38,23 @@ const ensureUUID = (strId: string): string => {
   return `${part1}-${part2}-${part3}-${part4}-${part5}`;
 };
 
+const resolveBigisubApiKey = async (): Promise<string> => {
+  try {
+    const { data, error } = await supabase
+      .from('services_config')
+      .select('item_name')
+      .eq('bigisub_identifier_id', 'bigisub_api_key')
+      .maybeSingle();
+    
+    if (!error && data?.item_name) {
+      return data.item_name;
+    }
+  } catch (err) {
+    console.warn("[resolveBigisubApiKey] Error querying Supabase, using env fallback:", err);
+  }
+  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+};
+
 dotenv.config();
 
 import fs from 'fs';
@@ -403,12 +420,20 @@ const db = {
 };
 
 const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<any> => {
+  const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+  
+  const queryIds = [pgUuid];
+  if (finalUserId && isUuid(finalUserId)) {
+    queryIds.push(finalUserId);
+  }
+  const filterString = queryIds.map(id => `id.eq.${id}`).join(',');
+
   try {
-    // 1. Try to fetch from profiles table using both UUID and raw ID formats
+    // 1. Try to fetch from profiles table using both UUID formats
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('*')
-      .or(`id.eq.${pgUuid},id.eq.${finalUserId}`)
+      .or(filterString)
       .maybeSingle();
     if (!error && profile) {
       return profile;
@@ -422,13 +447,14 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
     const { data: userRow, error: userRowErr } = await supabase
       .from('users')
       .select('*')
-      .or(`id.eq.${pgUuid},id.eq.${finalUserId}`)
+      .or(filterString)
       .maybeSingle();
     if (!userRowErr && userRow) {
       const referralCode = userRow.referral_code || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
       const walletBal = Number(userRow.wallet_balance !== undefined ? userRow.wallet_balance : (userRow.balance || 0));
+      const insertId = (userRow.id && isUuid(userRow.id)) ? userRow.id : pgUuid;
       const payload: any = {
-        id: userRow.id || finalUserId,
+        id: insertId,
         name: userRow.name || userRow.fullName || "User",
         username: userRow.username || (userRow.email ? userRow.email.toLowerCase().split('@')[0] : `user_${Date.now()}`),
         phone_number: userRow.phone_number || userRow.phoneNumber || "",
@@ -447,6 +473,8 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
           .eq('id', payload.id)
           .maybeSingle();
         if (newProfile) return newProfile;
+      } else {
+        console.warn("[getOrCreateProfile] users table insert failed:", insertErr);
       }
     }
   } catch (e) {
@@ -461,7 +489,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
       const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
       const payload: any = {
-        id: finalUserId,
+        id: pgUuid,
         name: fsUser?.fullName || "User",
         username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
         phone_number: fsUser?.phoneNumber || "",
@@ -477,9 +505,11 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', finalUserId)
+          .eq('id', pgUuid)
           .maybeSingle();
         if (newProfile) return newProfile;
+      } else {
+        console.warn("[getOrCreateProfile] Firestore user insert failed:", insertErr);
       }
     }
   } catch (e) {
@@ -496,7 +526,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const name = authUser.user_metadata?.full_name || authUser.user_metadata?.name || username.toUpperCase();
       
       const payload: any = {
-        id: finalUserId,
+        id: pgUuid,
         name: name,
         username: username,
         phone_number: authUser.phone || "",
@@ -512,9 +542,11 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', finalUserId)
+          .eq('id', pgUuid)
           .maybeSingle();
         if (newProfile) return newProfile;
+      } else {
+        console.warn("[getOrCreateProfile] Supabase Auth user insert failed:", insertErr);
       }
     }
   } catch (e) {
@@ -525,7 +557,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
   try {
     const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
     const payload: any = {
-      id: finalUserId,
+      id: pgUuid,
       name: "User",
       username: `user_${Date.now()}`,
       phone_number: "",
@@ -540,9 +572,11 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const { data: newProfile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', finalUserId)
+        .eq('id', pgUuid)
         .maybeSingle();
       if (newProfile) return newProfile;
+    } else {
+      console.warn("[getOrCreateProfile] Absolute fallback insert failed:", insertErr);
     }
   } catch (e) {
     console.warn("[getOrCreateProfile] absolute fallback warning:", e);
@@ -736,11 +770,14 @@ async function startServer() {
     // 5. SECURE SANITIZATION: Cast the ID string (e.g. 'admin_ibrahim_vtu_uid') into a valid Postgres UUID format
     const pgUuid = ensureUUID(rawUserId);
 
-    // 6. Fetch user profile from Supabase checking both UUID and raw ID formats
+    // 6. Fetch user profile from Supabase checking both UUID and raw ID formats safely
+    const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+    const filterString = (rawUserId && isUuid(rawUserId)) ? `id.eq.${pgUuid},id.eq.${rawUserId}` : `id.eq.${pgUuid}`;
+
     const { data: profile, error: profileErr } = await supabase
       .from('profiles')
       .select('*')
-      .or(`id.eq.${pgUuid},id.eq.${rawUserId}`)
+      .or(filterString)
       .maybeSingle();
 
     if (profileErr) {
@@ -1121,7 +1158,7 @@ async function startServer() {
       }
 
       // 3. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let apiSuccess = false;
@@ -1351,7 +1388,7 @@ async function startServer() {
 
       // Step C: Fire the network payload to Bigisub API
       // Bigisub expects authorization headers and data payload structures matching their documentation
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
       
       // Map network strings or IDs from frontend safely into Bigisub's expected IDs
       let bigisubNetworkId = networkId;
@@ -1878,7 +1915,7 @@ async function startServer() {
         }
       } catch (e) {}
 
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let bigiNetworkId = 1;
@@ -2201,7 +2238,7 @@ async function startServer() {
         }
       } catch (e) {}
 
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let bigiNetworkId = 1;
@@ -3229,7 +3266,7 @@ async function startServer() {
       }
 
       // 2. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let apiSuccess = false;
