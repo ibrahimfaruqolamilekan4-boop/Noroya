@@ -402,6 +402,217 @@ const db = {
   }
 };
 
+const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<any> => {
+  try {
+    // 1. Try to fetch from profiles table
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', pgUuid)
+      .maybeSingle();
+    if (!error && profile) {
+      return profile;
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfile] profiles select warning:", e);
+  }
+
+  // 2. Try to fetch from users table
+  try {
+    const { data: userRow, error: userRowErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', pgUuid)
+      .maybeSingle();
+    if (!userRowErr && userRow) {
+      const referralCode = userRow.referral_code || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+      const walletBal = Number(userRow.wallet_balance !== undefined ? userRow.wallet_balance : (userRow.balance || 0));
+      const payload: any = {
+        id: pgUuid,
+        name: userRow.name || userRow.fullName || "User",
+        username: userRow.username || (userRow.email ? userRow.email.toLowerCase().split('@')[0] : `user_${Date.now()}`),
+        phone_number: userRow.phone_number || userRow.phoneNumber || "",
+        referral_code: referralCode,
+        transaction_pin: "1234",
+        wallet_balance: walletBal,
+        balance: walletBal,
+        email: userRow.email || ""
+      };
+      
+      const { error: insertErr } = await supabase.from('profiles').insert(payload);
+      if (!insertErr) {
+        const { data: newProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        if (newProfile) return newProfile;
+      }
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfile] users select warning:", e);
+  }
+
+  // 3. Try to fetch from Firestore users collection
+  try {
+    const fsUserSnap = await db.collection('users').doc(finalUserId).get();
+    if (fsUserSnap.exists) {
+      const fsUser = fsUserSnap.data();
+      const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+      const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
+      const payload: any = {
+        id: pgUuid,
+        name: fsUser?.fullName || "User",
+        username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
+        phone_number: fsUser?.phoneNumber || "",
+        referral_code: referralCode,
+        transaction_pin: "1234",
+        wallet_balance: walletBal,
+        balance: walletBal,
+        email: fsUser?.email || ""
+      };
+
+      const { error: insertErr } = await supabase.from('profiles').insert(payload);
+      if (!insertErr) {
+        const { data: newProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        if (newProfile) return newProfile;
+      }
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfile] firestore sync warning:", e);
+  }
+
+  // 4. Try to fetch from Supabase Auth admin API (Service Role)
+  try {
+    const { data: authData, error: authError } = await supabase.auth.admin.getUserById(pgUuid);
+    if (!authError && authData?.user) {
+      const authUser = authData.user;
+      const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+      const username = authUser.email ? authUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+      const name = authUser.user_metadata?.full_name || authUser.user_metadata?.name || username.toUpperCase();
+      
+      const payload: any = {
+        id: pgUuid,
+        name: name,
+        username: username,
+        phone_number: authUser.phone || "",
+        referral_code: referralCode,
+        transaction_pin: "1234",
+        wallet_balance: 10000,
+        balance: 10000,
+        email: authUser.email || ""
+      };
+
+      const { error: insertErr } = await supabase.from('profiles').insert(payload);
+      if (!insertErr) {
+        const { data: newProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', pgUuid)
+          .maybeSingle();
+        if (newProfile) return newProfile;
+      }
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfile] Supabase Auth fetch warning:", e);
+  }
+
+  // 5. Absolute fallback: Create a default row if user has a valid UUID
+  try {
+    const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+    const payload: any = {
+      id: pgUuid,
+      name: "User",
+      username: `user_${Date.now()}`,
+      phone_number: "",
+      referral_code: referralCode,
+      transaction_pin: "1234",
+      wallet_balance: 0,
+      balance: 0,
+      email: ""
+    };
+    const { error: insertErr } = await supabase.from('profiles').insert(payload);
+    if (!insertErr) {
+      const { data: newProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', pgUuid)
+        .maybeSingle();
+      if (newProfile) return newProfile;
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfile] absolute fallback warning:", e);
+  }
+
+  return null;
+};
+
+const getOrCreateProfileByEmail = async (email: string): Promise<any> => {
+  if (!email) return null;
+  const cleanEmail = email.toLowerCase().trim();
+
+  try {
+    // 1. Try to fetch from profiles table by email
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+    if (!error && profile) {
+      return profile;
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfileByEmail] profiles warning:", e);
+  }
+
+  // 2. Try to fetch from users table by email
+  try {
+    const { data: userRow, error: userRowErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', cleanEmail)
+      .maybeSingle();
+    if (!userRowErr && userRow) {
+      const pgUuid = ensureUUID(userRow.id);
+      return await getOrCreateProfile(pgUuid, userRow.id);
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfileByEmail] users table warning:", e);
+  }
+
+  // 3. Try Firestore by email
+  try {
+    const fsUsersSnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
+    if (!fsUsersSnap.empty) {
+      const doc = fsUsersSnap.docs[0];
+      const pgUuid = ensureUUID(doc.id);
+      return await getOrCreateProfile(pgUuid, doc.id);
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfileByEmail] firestore query warning:", e);
+  }
+
+  // 4. Try Supabase Auth admin API by email
+  try {
+    const { data: listData, error: listError } = await supabase.auth.admin.listUsers();
+    if (!listError && listData?.users) {
+      const authUser = listData.users.find((u: any) => u.email?.toLowerCase().trim() === cleanEmail);
+      if (authUser) {
+        const pgUuid = ensureUUID(authUser.id);
+        return await getOrCreateProfile(pgUuid, authUser.id);
+      }
+    }
+  } catch (e) {
+    console.warn("[getOrCreateProfileByEmail] Auth listUsers warning:", e);
+  }
+
+  return null;
+};
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "",
   httpOptions: {
@@ -858,58 +1069,11 @@ async function startServer() {
     try {
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
-      let profile: any = null;
-      let profileErr: any = null;
-
-      if (pgUuid) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        profile = data;
-        profileErr = error;
+      if (!pgUuid) {
+        return res.status(400).json({ error: "Invalid user ID format." });
       }
 
-      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
-      if (!profile && pgUuid) {
-        try {
-          const fsUserSnap = await db.collection('users').doc(finalUserId).get();
-          if (fsUserSnap.exists) {
-            const fsUser = fsUserSnap.data();
-            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-            
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: fsUser?.fullName || "User",
-                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-                phone_number: fsUser?.phoneNumber || "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: walletBal
-              });
-
-            if (!pgInsertErr) {
-              const { data } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', pgUuid)
-                .maybeSingle();
-              profile = data;
-            }
-          }
-        } catch (syncExc) {
-          console.warn("[On-The-Fly Supabase Sync in handleVtuPurchase Warning]:", syncExc);
-        }
-      }
-
-      if (profileErr) {
-        console.error("[Supabase Profile Query Error]:", profileErr);
-        return res.status(500).json({ error: `Database error querying user profile: ${profileErr.message}` });
-      }
+      const profile = await getOrCreateProfile(pgUuid, finalUserId);
 
       if (!profile) {
         return res.status(404).json({ error: "User profile not found in Supabase database." });
@@ -1164,15 +1328,15 @@ async function startServer() {
     const { email, type, networkId, planId, phoneNumber, amount } = req.body;
 
     try {
-      // Step A: Find the user profile in Supabase by email
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('email', email)
-        .maybeSingle();
+      if (!email) {
+        return res.status(400).json({ success: false, message: "Missing email parameter." });
+      }
 
-      if (profileError || !profile) {
-        return res.status(404).json({ success: false, message: "User profile not found in database." });
+      // Step A: Find or dynamically on-the-fly create the user profile in Supabase by email
+      const profile = await getOrCreateProfileByEmail(email);
+
+      if (!profile) {
+        return res.status(404).json({ success: false, message: "User profile not found or could not be created in database." });
       }
 
       // Step B: Choose right balance column dynamically
@@ -1180,7 +1344,7 @@ async function startServer() {
       const deductAmount = parseFloat(amount || 0);
 
       if (currentBalance < deductAmount) {
-        return res.status(400).json({ success: false, message: "Insufficient balance for transaction." });
+        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
       }
 
       // Step C: Fire the network payload to Bigisub API
@@ -1239,7 +1403,7 @@ async function startServer() {
         });
 
         bigisubResponseData = response.data;
-        if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful') {
+        if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
           apiSuccess = true;
         }
       }
@@ -1254,19 +1418,22 @@ async function startServer() {
             wallet_balance: newBalance,
             balance: newBalance 
           })
-          .eq('email', email);
+          .eq('id', profile.id);
 
         // Step E: Create activity log entry for your Admin Control Panel
         try {
           await supabase
             .from('transactions')
             .insert([{
+              user_id: profile.id,
+              userId: profile.id,
               user_email: email,
               type: type,
               amount: deductAmount,
               recipient: phoneNumber,
               status: 'success',
-              reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX'
+              reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX',
+              createdAt: new Date().toISOString()
             }]);
         } catch (dbErr) {
           console.warn("[Vendor Recharge] Failed to insert transaction record:", dbErr);
@@ -1274,14 +1441,15 @@ async function startServer() {
 
         return res.json({ success: true, balance: newBalance, message: "Transaction completed successfully!" });
       } else {
-        throw new Error(bigisubResponseData?.error || 'Provider rejected request');
+        throw new Error(bigisubResponseData?.error || bigisubResponseData?.message || 'Provider rejected request');
       }
 
     } catch (error: any) {
-      console.error("Transaction processing error:", error?.message || error);
+      console.error("Transaction processing error:", error?.response?.data || error?.message || error);
+      const apiErr = error?.response?.data?.error || error?.response?.data?.message || error?.message || "Transaction rejected by operator network center or local limits.";
       return res.status(500).json({ 
         success: false, 
-        message: "Transaction rejected by operator network center or local limits. Verify your Bigisub KYC state." 
+        message: `Transaction Failed: ${apiErr}. Verify your Bigisub KYC state & API Balance.` 
       });
     }
   });
@@ -3042,58 +3210,11 @@ async function startServer() {
     try {
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
-      let profile: any = null;
-      let profileErr: any = null;
-
-      if (pgUuid) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        profile = data;
-        profileErr = error;
+      if (!pgUuid) {
+        return res.status(400).json({ error: "Invalid user ID format." });
       }
 
-      // If user profile is still not found in Supabase profiles, but exists in Firestore, auto-create in Supabase!
-      if (!profile && pgUuid) {
-        try {
-          const fsUserSnap = await db.collection('users').doc(finalUserId).get();
-          if (fsUserSnap.exists) {
-            const fsUser = fsUserSnap.data();
-            const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-            const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-            
-            const { error: pgInsertErr } = await supabase
-              .from("profiles")
-              .insert({
-                id: pgUuid,
-                name: fsUser?.fullName || "User",
-                username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-                phone_number: fsUser?.phoneNumber || "",
-                referral_code: referralCode,
-                transaction_pin: "1234",
-                wallet_balance: walletBal
-              });
-
-            if (!pgInsertErr) {
-              const { data } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', pgUuid)
-                .maybeSingle();
-              profile = data;
-            }
-          }
-        } catch (syncExc) {
-          console.warn("[On-The-Fly Supabase Sync in purchase Warning]:", syncExc);
-        }
-      }
-
-      if (profileErr) {
-        console.error("[Supabase Profile Query Error]:", profileErr);
-        return res.status(500).json({ error: `Database error querying user profile: ${profileErr.message}` });
-      }
+      const profile = await getOrCreateProfile(pgUuid, finalUserId);
 
       if (!profile) {
         return res.status(404).json({ error: "User profile not found in Supabase database." });
