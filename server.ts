@@ -1360,6 +1360,122 @@ async function startServer() {
   app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], handleVtuPurchase);
 
   /**
+   * 🚀 ENDPOINT: BUY DATA (VENDOR API - DIRECT UUID LINKAGE)
+   * Securely handles user balances and dispatches data purchase requests to Bigisub
+   */
+  app.post('/api/vendor/buy-data', async (req, res) => {
+    const { userUUID, email, networkId, planId, phoneNumber, costAmount } = req.body;
+
+    try {
+      if (!userUUID) {
+        return res.status(400).json({ success: false, message: "Missing userUUID parameter." });
+      }
+
+      // 1. Fetch user profile from Supabase securely using their UUID
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, wallet_balance, balance')
+        .eq('id', userUUID)
+        .maybeSingle();
+
+      if (profileError || !profile) {
+        return res.status(404).json({ success: false, message: "Profile linkage error. User not found." });
+      }
+
+      const currentBalance = parseFloat(profile.wallet_balance !== undefined ? profile.wallet_balance : (profile.balance ?? 0));
+      const chargeAmount = parseFloat(costAmount || 0);
+
+      if (currentBalance < chargeAmount) {
+        return res.status(400).json({ success: false, message: "Insufficient wallet funds." });
+      }
+
+      // 2. Map Network string inputs into Bigisub's explicit numeric IDs
+      let verifiedNetworkId = networkId;
+      if (typeof networkId === 'string') {
+        const netStr = networkId.toLowerCase().trim();
+        if (netStr.includes('mtn')) verifiedNetworkId = 1;
+        else if (netStr.includes('glo')) verifiedNetworkId = 2;
+        else if (netStr.includes('airtel')) verifiedNetworkId = 3;
+        else if (netStr.includes('9mobile')) verifiedNetworkId = 4;
+      }
+
+      const BIGISUB_API_KEY = await resolveBigisubApiKey();
+      let bigisubResponseData: any = null;
+      let apiSuccess = false;
+
+      // 3. Check for simulation mode or execute live request
+      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+        console.log("[Bigisub Simulation Vendor Buy-Data] Processing simulated purchase...");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        apiSuccess = true;
+        bigisubResponseData = {
+          status: 'success',
+          id: `BIGI-SIM-${Date.now()}`
+        };
+      } else {
+        const bigisubPayload = {
+          network: parseInt(verifiedNetworkId),
+          plan: parseInt(planId),
+          mobile_number: phoneNumber,
+          bypass_validator: true
+        };
+
+        const response = await axios.post('https://bigisub.ng/api/v1/data', bigisubPayload, {
+          headers: {
+            'Authorization': `Bearer ${BIGISUB_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        });
+
+        bigisubResponseData = response.data;
+        if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
+          apiSuccess = true;
+        }
+      }
+
+      // 4. If successful, settle accounts
+      if (apiSuccess) {
+        const remainingFunds = currentBalance - chargeAmount;
+
+        // Update both balance columns securely
+        await supabase
+          .from('profiles')
+          .update({ wallet_balance: remainingFunds, balance: remainingFunds })
+          .eq('id', userUUID);
+
+        // Log to your admin system transactions table
+        try {
+          await supabase.from('transactions').insert([{
+            user_id: userUUID,
+            userId: userUUID,
+            user_email: email || '',
+            type: 'Data Purchase',
+            amount: chargeAmount,
+            status: 'success',
+            recipient: phoneNumber,
+            reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX',
+            createdAt: new Date().toISOString()
+          }]);
+        } catch (dbErr) {
+          console.warn("[Vendor Buy-Data] Failed to insert transaction record:", dbErr);
+        }
+
+        return res.json({ success: true, newBalance: remainingFunds });
+      } else {
+        throw new Error(bigisubResponseData?.error || bigisubResponseData?.message || 'Provider execution failure');
+      }
+
+    } catch (error: any) {
+      console.error("Critical API Error Handler:", error.response?.data || error.message);
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message || "Transaction rejected. Please ensure your Bigisub account KYC is verified and your portal developer wallet is funded." 
+      });
+    }
+  });
+
+  /**
    * 🚀 ENDPOINT: BUY DATA & AIRTIME (VENDOR API)
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
