@@ -1480,15 +1480,17 @@ async function startServer() {
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
   app.post('/api/vendor/recharge', async (req, res) => {
-    const { email, type, networkId, planId, phoneNumber, amount } = req.body;
+    const { email, type, networkId, planId, phoneNumber, amount, userUUID, uuid, costAmount } = req.body;
 
     try {
-      if (!email) {
-        return res.status(400).json({ success: false, message: "Missing email parameter." });
-      }
+      const targetId = userUUID || uuid;
+      let profile: any = null;
 
-      // Step A: Find or dynamically on-the-fly create the user profile in Supabase by email
-      const profile = await getOrCreateProfileByEmail(email);
+      if (targetId) {
+        profile = await getOrCreateProfile(targetId, targetId);
+      } else if (email) {
+        profile = await getOrCreateProfileByEmail(email);
+      }
 
       if (!profile) {
         return res.status(404).json({ success: false, message: "User profile not found or could not be created in database." });
@@ -1496,7 +1498,7 @@ async function startServer() {
 
       // Step B: Choose right balance column dynamically
       const currentBalance = profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : Number(profile.balance || 0);
-      const deductAmount = parseFloat(amount || 0);
+      const deductAmount = parseFloat(amount || costAmount || 0);
 
       if (currentBalance < deductAmount) {
         return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
@@ -1539,7 +1541,7 @@ async function startServer() {
         // Add type-specific parameters
         if (type === 'airtime') {
           bigisubPayload.airtime_type = "VTU";
-          bigisubPayload.amount = parseFloat(amount);
+          bigisubPayload.amount = parseFloat(amount || costAmount);
         } else {
           // For data plans, ensure planId is the numerical ID provided by Bigisub's plan codes
           bigisubPayload.plan = parseInt(planId); 
