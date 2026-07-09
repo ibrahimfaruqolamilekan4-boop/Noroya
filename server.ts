@@ -1553,7 +1553,7 @@ async function startServer() {
 
         const response = await axios.post(bigisubUrl, bigisubPayload, {
           headers: {
-            'Authorization': `Token ${BIGISUB_API_KEY}`,
+            'Authorization': `Bearer ${BIGISUB_API_KEY}`,
             'Content-Type': 'application/json'
           },
           timeout: 10000
