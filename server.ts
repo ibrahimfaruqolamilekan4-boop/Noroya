@@ -404,11 +404,11 @@ const db = {
 
 const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<any> => {
   try {
-    // 1. Try to fetch from profiles table
+    // 1. Try to fetch from profiles table using both UUID and raw ID formats
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', pgUuid)
+      .or(`id.eq.${pgUuid},id.eq.${finalUserId}`)
       .maybeSingle();
     if (!error && profile) {
       return profile;
@@ -422,13 +422,13 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
     const { data: userRow, error: userRowErr } = await supabase
       .from('users')
       .select('*')
-      .eq('id', pgUuid)
+      .or(`id.eq.${pgUuid},id.eq.${finalUserId}`)
       .maybeSingle();
     if (!userRowErr && userRow) {
       const referralCode = userRow.referral_code || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
       const walletBal = Number(userRow.wallet_balance !== undefined ? userRow.wallet_balance : (userRow.balance || 0));
       const payload: any = {
-        id: pgUuid,
+        id: userRow.id || finalUserId,
         name: userRow.name || userRow.fullName || "User",
         username: userRow.username || (userRow.email ? userRow.email.toLowerCase().split('@')[0] : `user_${Date.now()}`),
         phone_number: userRow.phone_number || userRow.phoneNumber || "",
@@ -444,7 +444,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', pgUuid)
+          .eq('id', payload.id)
           .maybeSingle();
         if (newProfile) return newProfile;
       }
@@ -461,7 +461,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
       const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
       const payload: any = {
-        id: pgUuid,
+        id: finalUserId,
         name: fsUser?.fullName || "User",
         username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
         phone_number: fsUser?.phoneNumber || "",
@@ -477,7 +477,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', pgUuid)
+          .eq('id', finalUserId)
           .maybeSingle();
         if (newProfile) return newProfile;
       }
@@ -496,7 +496,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const name = authUser.user_metadata?.full_name || authUser.user_metadata?.name || username.toUpperCase();
       
       const payload: any = {
-        id: pgUuid,
+        id: finalUserId,
         name: name,
         username: username,
         phone_number: authUser.phone || "",
@@ -512,7 +512,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', pgUuid)
+          .eq('id', finalUserId)
           .maybeSingle();
         if (newProfile) return newProfile;
       }
@@ -521,11 +521,11 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
     console.warn("[getOrCreateProfile] Supabase Auth fetch warning:", e);
   }
 
-  // 5. Absolute fallback: Create a default row if user has a valid UUID
+  // 5. Absolute fallback: Create a default row
   try {
     const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
     const payload: any = {
-      id: pgUuid,
+      id: finalUserId,
       name: "User",
       username: `user_${Date.now()}`,
       phone_number: "",
@@ -540,7 +540,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       const { data: newProfile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', pgUuid)
+        .eq('id', finalUserId)
         .maybeSingle();
       if (newProfile) return newProfile;
     }
@@ -736,11 +736,11 @@ async function startServer() {
     // 5. SECURE SANITIZATION: Cast the ID string (e.g. 'admin_ibrahim_vtu_uid') into a valid Postgres UUID format
     const pgUuid = ensureUUID(rawUserId);
 
-    // 6. Fetch user profile from Supabase
+    // 6. Fetch user profile from Supabase checking both UUID and raw ID formats
     const { data: profile, error: profileErr } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', pgUuid)
+      .or(`id.eq.${pgUuid},id.eq.${rawUserId}`)
       .maybeSingle();
 
     if (profileErr) {
@@ -1105,17 +1105,19 @@ async function startServer() {
         }
       }
 
-      // Map network string names (e.g. "MTN", "Airtel") to Bigisub.ng's required numeric network codes
-      let bigiNetworkId: any = finalNetwork;
-      const netStr = String(finalNetwork).toUpperCase().trim();
-      if (netStr === "MTN" || netStr === "1") {
-        bigiNetworkId = 1;
-      } else if (netStr === "GLO" || netStr === "2") {
-        bigiNetworkId = 2;
-      } else if (netStr === "9MOBILE" || netStr === "9MOB" || netStr === "3") {
-        bigiNetworkId = 3;
-      } else if (netStr === "AIRTEL" || netStr === "4") {
-        bigiNetworkId = 4;
+      // Map network strings from frontend safely into Bigisub's expected IDs
+      let bigiNetworkId = finalNetwork;
+      if (typeof finalNetwork === 'string') {
+        const cleanNetwork = finalNetwork.toLowerCase().trim();
+        if (cleanNetwork.includes('mtn') || cleanNetwork === '1') bigiNetworkId = 1;
+        else if (cleanNetwork.includes('glo') || cleanNetwork === '2') bigiNetworkId = 2;
+        else if (cleanNetwork.includes('airtel') || cleanNetwork === '3') bigiNetworkId = 3;
+        else if (cleanNetwork.includes('9mobile') || cleanNetwork.includes('9mob') || cleanNetwork === '4') bigiNetworkId = 4;
+      } else if (typeof finalNetwork === 'number') {
+        if (finalNetwork === 1) bigiNetworkId = 1;
+        else if (finalNetwork === 2) bigiNetworkId = 2;
+        else if (finalNetwork === 3) bigiNetworkId = 3;
+        else if (finalNetwork === 4) bigiNetworkId = 4;
       }
 
       // 3. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
@@ -1880,11 +1882,12 @@ async function startServer() {
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let bigiNetworkId = 1;
+      const netLower = String(service.provider_or_network).toLowerCase().trim();
       const netUpper = String(service.provider_or_network).toUpperCase().trim();
-      if (netUpper.includes("MTN")) bigiNetworkId = 1;
-      else if (netUpper.includes("GLO")) bigiNetworkId = 2;
-      else if (netUpper.includes("9MOBILE")) bigiNetworkId = 3;
-      else if (netUpper.includes("AIRTEL")) bigiNetworkId = 4;
+      if (netLower.includes("mtn")) bigiNetworkId = 1;
+      else if (netLower.includes("glo")) bigiNetworkId = 2;
+      else if (netLower.includes("airtel")) bigiNetworkId = 3;
+      else if (netLower.includes("9mobile") || netLower.includes("9mob")) bigiNetworkId = 4;
 
       let endpoint = "data";
       let payload: any = {};
@@ -2202,11 +2205,11 @@ async function startServer() {
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let bigiNetworkId = 1;
-      const netUpper = String(service.provider_or_network || network).toUpperCase().trim();
-      if (netUpper.includes("MTN")) bigiNetworkId = 1;
-      else if (netUpper.includes("GLO")) bigiNetworkId = 2;
-      else if (netUpper.includes("9MOBILE")) bigiNetworkId = 3;
-      else if (netUpper.includes("AIRTEL")) bigiNetworkId = 4;
+      const netLower = String(service.provider_or_network || network).toLowerCase().trim();
+      if (netLower.includes("mtn")) bigiNetworkId = 1;
+      else if (netLower.includes("glo")) bigiNetworkId = 2;
+      else if (netLower.includes("airtel")) bigiNetworkId = 3;
+      else if (netLower.includes("9mobile") || netLower.includes("9mob")) bigiNetworkId = 4;
 
       const payload = {
         network: bigiNetworkId,
