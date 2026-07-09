@@ -1487,7 +1487,49 @@ async function startServer() {
       let profile: any = null;
 
       if (targetId) {
-        profile = await getOrCreateProfile(targetId, targetId);
+        // 1. Look up profile using the bulletproof unique ID (UUID)
+        const { data, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', targetId)
+          .maybeSingle();
+
+        profile = data;
+
+        // 🚨 AUTO-HEAL: If the profile is missing for ANY reason, create it instantly!
+        if (profileError || !profile) {
+          console.log(`Profile missing for UUID ${targetId}. Auto-creating profile row now...`);
+          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+          const username = email ? email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+          const recoveryPayload = {
+            id: targetId,
+            name: 'User',
+            username: username,
+            email: email || '',
+            phone_number: phoneNumber || '',
+            referral_code: referralCode,
+            transaction_pin: '1234',
+            wallet_balance: 200.00,
+            balance: 200.00
+          };
+
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert([recoveryPayload]);
+
+          if (insertError) {
+            throw new Error("Critical database profile creation failure: " + insertError.message);
+          }
+
+          // Fetch back the new profile seamlessly
+          const { data: newProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', targetId)
+            .maybeSingle();
+
+          profile = newProfile || recoveryPayload;
+        }
       } else if (email) {
         profile = await getOrCreateProfileByEmail(email);
       }
