@@ -2,6 +2,42 @@ import { supabase } from "./supabase.js";
 import { useState, useEffect } from "react";
 
 /**
+ * 🔗 CUSTOM HOOK: useUserProfile
+ * Automatically fetches the current user's Supabase profile and provides user state with balance data.
+ */
+export function useUserProfile() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      try {
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (!authUser) return;
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('wallet_balance, balance, name')
+          .eq('id', authUser.id)
+          .single();
+
+        if (profile) {
+          setUser((prev: any) => ({ ...prev, ...profile, wallet_balance: profile.wallet_balance }));
+        }
+      } catch (err) {
+        console.error("Error fetching user profile:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserProfile();
+  }, []);
+
+  return { user, setUser, loading };
+}
+
+/**
  * 🔗 CUSTOM HOOK: useProfileBalance
  * React Hook that implements the fetchProfile routine to get the current user's profile balance.
  */
