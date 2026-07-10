@@ -958,6 +958,10 @@ function DashboardOverview({
     }
   };
 
+  React.useEffect(() => {
+    refreshBalance();
+  }, []);
+
   // Optimistic purchase
   const handleBuyData = async (phone: string, amount: number, network: string | number) => {
     setIsUpdating(true);
