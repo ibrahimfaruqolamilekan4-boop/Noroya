@@ -52,6 +52,7 @@ import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import { purchaseAirtime } from '../lib/recharge';
 
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
@@ -934,8 +935,50 @@ function DashboardOverview({
   const [isBuyingAirtime, setIsBuyingAirtime] = React.useState(false);
   const [showAirtimeConfirmModal, setShowAirtimeConfirmModal] = React.useState(false);
 
-  const currentBalance = user?.wallet_balance || user?.balance || 0;
-  const isUpdating = isSubmitting || isBuyingAirtime;
+  const [currentBalance, setCurrentBalance] = React.useState(user?.wallet_balance || user?.balance || 0);
+  const [isUpdating, setIsUpdating] = React.useState(false);
+
+  React.useEffect(() => {
+    setCurrentBalance(user?.wallet_balance || user?.balance || 0);
+  }, [user?.wallet_balance, user?.balance]);
+
+  // Refresh balance from server
+  const refreshBalance = async () => {
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) return;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('wallet_balance')
+      .eq('id', authUser.id)
+      .single();
+
+    if (profile) {
+      setCurrentBalance(profile.wallet_balance || 0);
+    }
+  };
+
+  // Optimistic purchase
+  const handleBuyData = async (phone: string, amount: number, network: string | number) => {
+    setIsUpdating(true);
+    const oldBalance = currentBalance;
+
+    // Optimistic update
+    setCurrentBalance(prev => Math.max(0, prev - amount));
+
+    try {
+      const result = await purchaseAirtime(user.uid, phone, amount, network);
+      toast.success("Recharge successful!");
+      return result;
+    } catch (error: any) {
+      setCurrentBalance(oldBalance); // rollback
+      toast.error(error.message || "Transaction failed");
+      throw error;
+    } finally {
+      setIsUpdating(false);
+      setTimeout(refreshBalance, 1200); // final sync
+    }
+  };
 
   // Secure Flutterwave State declarations
   const [showFundModal, setShowFundModal] = React.useState(false);
