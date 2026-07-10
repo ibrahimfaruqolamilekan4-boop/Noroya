@@ -934,6 +934,9 @@ function DashboardOverview({
   const [isBuyingAirtime, setIsBuyingAirtime] = React.useState(false);
   const [showAirtimeConfirmModal, setShowAirtimeConfirmModal] = React.useState(false);
 
+  const currentBalance = user?.wallet_balance || user?.balance || 0;
+  const isUpdating = isSubmitting || isBuyingAirtime;
+
   // Secure Flutterwave State declarations
   const [showFundModal, setShowFundModal] = React.useState(false);
   const [fundingTab, setFundingTab] = React.useState<'paystack' | 'flutterwave'>('flutterwave');
@@ -1737,7 +1740,8 @@ function DashboardOverview({
             </span>
             <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Available Balance</p>
             <h3 className="text-4xl font-extrabold tracking-tight mb-6 text-white">
-              {formatCurrency(user?.wallet_balance || user?.balance || 0)}
+              {formatCurrency(currentBalance)}
+              {isUpdating && <span className="text-sm ml-2 animate-pulse"> → Updating</span>}
             </h3>
           </div>
           
