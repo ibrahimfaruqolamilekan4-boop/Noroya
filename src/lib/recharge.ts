@@ -1,4 +1,48 @@
 import { supabase } from "./supabase.js";
+import { useState, useEffect } from "react";
+
+/**
+ * 🔗 CUSTOM HOOK: useProfileBalance
+ * React Hook that implements the fetchProfile routine to get the current user's profile balance.
+ */
+export function useProfileBalance() {
+  const [balance, setBalance] = useState<{ wallet_balance: number; balance: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data, error: fetchErr } = await supabase
+            .from('profiles')
+            .select('wallet_balance, balance')
+            .eq('id', user.id)
+            .single();
+          
+          if (fetchErr) {
+            throw fetchErr;
+          }
+          if (data) {
+            setBalance({
+              wallet_balance: Number(data.wallet_balance || 0),
+              balance: Number(data.balance || 0)
+            });
+          }
+        }
+      } catch (err: any) {
+        console.error("Error fetching profile balance:", err);
+        setError(err.message || "Failed to fetch profile");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProfile();
+  }, []);
+
+  return { balance, loading, error };
+}
 
 /**
  * 💸 ATOMIC PURCHASE AIRTIME (RPC BACKEND/CLIENT HELPER)
