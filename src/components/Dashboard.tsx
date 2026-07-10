@@ -960,7 +960,7 @@ function DashboardOverview({
 
   React.useEffect(() => {
     refreshBalance();
-  }, []);
+  }, [user?.uid, (user as any)?.id]);
 
   // Optimistic purchase handler
   const handleBuyData = async (phone: string, amount: number, network: string) => {
