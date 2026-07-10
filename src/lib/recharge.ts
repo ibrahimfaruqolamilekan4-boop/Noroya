@@ -45,6 +45,42 @@ export function useProfileBalance() {
 }
 
 /**
+ * 🔗 CUSTOM HOOK: useLoadBalance
+ * Stateful React hook matching loadBalance effect to fetch and set wallet balance state automatically.
+ */
+export function useLoadBalance() {
+  const [balance, setBalance] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadBalance = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('wallet_balance, balance')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          setBalance(profile.wallet_balance || profile.balance || 0);
+        }
+      } catch (err) {
+        console.error("Error loading balance:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadBalance();
+  }, []);
+
+  return { balance, setBalance, loading };
+}
+
+/**
  * 💸 ATOMIC PURCHASE AIRTIME (RPC BACKEND/CLIENT HELPER)
  * Handles double-entry ledger security with atomic balance operations.
  */
