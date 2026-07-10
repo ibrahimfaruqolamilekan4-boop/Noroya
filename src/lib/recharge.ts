@@ -203,3 +203,75 @@ export async function handleBuyData(phone: string, amount: number, network: stri
   }
 }
 
+/**
+ * ⚡ CUSTOM HOOK: useOptimisticPurchase
+ * Implements optimistic balance updates with rollbacks, loading indicators, and toast messages.
+ */
+export function useOptimisticPurchase(initialBalance: number, toast: any) {
+  const [balance, setBalance] = useState<number>(initialBalance);
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+
+  const optimisticDeduct = (amount: number) => {
+    setBalance(prev => Math.max(0, prev - amount));
+  };
+
+  const refreshBalance = async () => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('wallet_balance')
+        .eq('id', authUser.id)
+        .single();
+
+      if (profile) {
+        setBalance(profile.wallet_balance || 0);
+      }
+    } catch (err) {
+      console.error("Failed to sync balance:", err);
+    }
+  };
+
+  const handleBuyDataOptimistic = async (userId: string, phone: string, amount: number, network: string | number) => {
+    setIsUpdating(true);
+    
+    // Save old balance for rollback
+    const oldBalance = balance;
+    optimisticDeduct(amount);
+
+    try {
+      const result = await purchaseAirtime(userId, phone, amount, network);
+      if (toast && toast.success) {
+        toast.success("Purchase successful!");
+      } else {
+        alert("Purchase successful!");
+      }
+      return result;
+    } catch (error: any) {
+      // Rollback on error
+      setBalance(oldBalance);
+      if (toast && toast.error) {
+        toast.error(error.message || "Purchase failed");
+      } else {
+        alert(error.message || "Purchase failed");
+      }
+      throw error;
+    } finally {
+      setIsUpdating(false);
+      // Sync with server
+      setTimeout(refreshBalance, 1500);
+    }
+  };
+
+  return {
+    balance,
+    setBalance,
+    isUpdating,
+    optimisticDeduct,
+    refreshBalance,
+    handleBuyDataOptimistic
+  };
+}
+
