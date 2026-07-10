@@ -935,14 +935,14 @@ function DashboardOverview({
   const [isBuyingAirtime, setIsBuyingAirtime] = React.useState(false);
   const [showAirtimeConfirmModal, setShowAirtimeConfirmModal] = React.useState(false);
 
-  const [currentBalance, setCurrentBalance] = React.useState(user?.wallet_balance || user?.balance || 0);
+  const [currentBalance, setCurrentBalance] = React.useState(0);
   const [isUpdating, setIsUpdating] = React.useState(false);
 
   React.useEffect(() => {
     setCurrentBalance(user?.wallet_balance || user?.balance || 0);
   }, [user?.wallet_balance, user?.balance]);
 
-  // Refresh balance from server
+  // Refresh balance from Supabase
   const refreshBalance = async () => {
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
@@ -962,25 +962,26 @@ function DashboardOverview({
     refreshBalance();
   }, []);
 
-  // Optimistic purchase
-  const handleBuyData = async (phone: string, amount: number, network: string | number) => {
+  // Optimistic purchase handler
+  const handleBuyData = async (phone: string, amount: number, network: string) => {
+    const userId = (user as any)?.id || user?.uid;
+    if (!userId) return toast.error("Please log in");
+
     setIsUpdating(true);
     const oldBalance = currentBalance;
 
-    // Optimistic update
+    // Optimistic UI update
     setCurrentBalance(prev => Math.max(0, prev - amount));
 
     try {
-      const result = await purchaseAirtime(user.uid, phone, amount, network);
-      toast.success("Recharge successful!");
-      return result;
+      const result = await purchaseAirtime(userId, phone, amount, network);
+      toast.success("Recharge successful! 🎉");
     } catch (error: any) {
       setCurrentBalance(oldBalance); // rollback
       toast.error(error.message || "Transaction failed");
-      throw error;
     } finally {
       setIsUpdating(false);
-      setTimeout(refreshBalance, 1200); // final sync
+      setTimeout(refreshBalance, 1500); // final server sync
     }
   };
 
