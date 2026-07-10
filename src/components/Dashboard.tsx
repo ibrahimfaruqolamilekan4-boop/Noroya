@@ -1736,8 +1736,11 @@ function DashboardOverview({
               💰 Account Liquid Assets
             </span>
             <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Available Balance</p>
-            <h3 className="text-4xl font-extrabold tracking-tight mb-6 text-white">{formatCurrency(user.balance)}</h3>
+            <h3 className="text-4xl font-extrabold tracking-tight mb-6 text-white">
+              {formatCurrency(user?.wallet_balance || user?.balance || 0)}
+            </h3>
           </div>
+          
           <div className="relative z-10 flex gap-3 flex-wrap">
             <button 
               onClick={() => handleOpenFundModal()} 
@@ -1751,16 +1754,8 @@ function DashboardOverview({
             >
               Transfer
             </button>
-            {user.balance > 0 && (
-              <button 
-                onClick={handleDeductWallet} 
-                className="bg-red-500/25 hover:bg-red-500/35 text-red-200 hover:text-white border border-red-500/30 px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
-              >
-                Reset to ₦0
-              </button>
-            )}
           </div>
-          {/* Abstract deep premium background vector decoration */}
+          
           <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-blue-600/10 rounded-full border border-white/5 pointer-events-none" />
         </div>
 
