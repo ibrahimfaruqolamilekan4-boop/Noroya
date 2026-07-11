@@ -40,19 +40,28 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
     }
     setError(null);
 
+    const userId = user?.uid || (user as any)?.id;
+
     try {
       // Query past transactions from the 'transactions' Supabase table
       const { data, error: fetchErr } = await supabase
         .from('transactions')
         .select('*')
-        .eq('userId', user.uid)
-        .order('createdAt', { ascending: false });
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
 
       if (fetchErr) {
         throw fetchErr;
       }
 
-      setTransactions(data || []);
+      // Map snake_case database rows to TypeScript camelCase structure for maximum compatibility
+      const normalized = (data || []).map((row: any) => ({
+        ...row,
+        userId: row.user_id || row.userId,
+        createdAt: row.created_at || row.createdAt
+      }));
+
+      setTransactions(normalized);
       
       if (showToast) {
         toast.success("Transaction ledger refreshed from live database! ⚡", { icon: "🔥" });
@@ -68,18 +77,21 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
   };
 
   useEffect(() => {
+    const userId = user?.uid || (user as any)?.id;
     fetchTransactions();
+
+    if (!userId) return;
 
     // Subscribe to live Postgres changes on the transactions table for this user
     const channel = supabase
-      .channel(`live-transactions-${user.uid}`)
+      .channel(`live-transactions-${userId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'transactions',
-          filter: `userId=eq.${user.uid}`
+          filter: `user_id=eq.${userId}`
         },
         () => {
           // Re-fetch transactions silently to keep user dashboard up to date
@@ -91,7 +103,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user.uid]);
+  }, [user?.uid, (user as any)?.id]);
 
   const handleSync = () => {
     fetchTransactions(true);
