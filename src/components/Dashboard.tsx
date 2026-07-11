@@ -959,7 +959,33 @@ function DashboardOverview({
   };
 
   React.useEffect(() => {
-    refreshBalance();
+    const userId = (user as any)?.id || user?.uid;
+    refreshBalance(); // initial load
+
+    if (!userId) return;
+
+    // Real-time subscription
+    const channel = supabase
+      .channel('profile-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${userId}`
+        },
+        (payload: any) => {
+          if (payload.new && payload.new.wallet_balance !== undefined) {
+            setCurrentBalance(payload.new.wallet_balance);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user?.uid, (user as any)?.id]);
 
   // Optimistic purchase handler
