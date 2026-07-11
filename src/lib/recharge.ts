@@ -128,13 +128,16 @@ export async function purchaseAirtime(
 ) {
   if (!userId) throw new Error("User not authenticated");
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('wallet_balance')
     .eq('id', userId)
     .single();
 
-  if (!profile) throw new Error("User profile not found in Supabase database.");
+  if (profileError || !profile) {
+    console.error("Profile fetch error:", profileError);
+    throw new Error("User profile not found in Supabase database. Please contact support.");
+  }
 
   if (!phone || !amount || !network) {
     throw new Error("Missing required fields");
