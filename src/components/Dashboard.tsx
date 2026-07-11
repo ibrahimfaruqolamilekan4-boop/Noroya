@@ -995,11 +995,17 @@ function DashboardOverview({
     networkParam?: string,
     planCodeParam?: string | number
   ) => {
-    const userId = (user as any)?.id || user?.uid;
-    console.log("User ID:", (user as any)?.id);
-    console.log("Profile check before purchase");
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    console.log("Logged in user ID:", authUser?.id);
+    console.log("User object:", authUser);
 
-    if (!userId) return toast.error("Please log in");
+    if (!authUser) {
+      toast.error("Please log in again");
+      return;
+    }
+
+    const userId = authUser.id;
+    console.log("Profile check before purchase");
 
     const phone = phoneParam || phoneNumber;
     const amount = amountParam || (selectedPlan ? Number(selectedPlan.price || selectedPlan.amount) : 0);
