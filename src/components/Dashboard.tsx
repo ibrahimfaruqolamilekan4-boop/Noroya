@@ -996,6 +996,9 @@ function DashboardOverview({
     planCodeParam?: string | number
   ) => {
     const userId = (user as any)?.id || user?.uid;
+    console.log("User ID:", (user as any)?.id);
+    console.log("Profile check before purchase");
+
     if (!userId) return toast.error("Please log in");
 
     const phone = phoneParam || phoneNumber;
