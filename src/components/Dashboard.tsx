@@ -52,7 +52,7 @@ import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
-import { purchaseAirtime } from '../lib/recharge';
+import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
@@ -988,10 +988,24 @@ function DashboardOverview({
     };
   }, [user?.uid, (user as any)?.id]);
 
-  // Optimistic purchase handler
-  const handleBuyData = async (phone: string, amount: number, network: string) => {
+  // Optimistic purchase handler for data bundle
+  const handleBuyData = async (
+    phoneParam?: string,
+    amountParam?: number,
+    networkParam?: string,
+    planCodeParam?: string | number
+  ) => {
     const userId = (user as any)?.id || user?.uid;
     if (!userId) return toast.error("Please log in");
+
+    const phone = phoneParam || phoneNumber;
+    const amount = amountParam || (selectedPlan ? Number(selectedPlan.price || selectedPlan.amount) : 0);
+    const network = networkParam || (selectedPlan ? String(selectedPlan.network || selectedPlan.network_type) : '');
+    const planCode = planCodeParam || (selectedPlan ? (selectedPlan.peyflex_variation_id || selectedPlan.peyflex_id || selectedPlan.apiPlanId || selectedPlan.id) : '');
+
+    if (!phone || !amount || !network || !planCode) {
+      return toast.error("Missing required fields for data purchase");
+    }
 
     setIsUpdating(true);
     const oldBalance = currentBalance;
@@ -1000,14 +1014,16 @@ function DashboardOverview({
     setCurrentBalance(prev => Math.max(0, prev - amount));
 
     try {
-      const result = await purchaseAirtime(userId, phone, amount, network);
-      toast.success("Recharge successful! 🎉");
+      const result = await purchaseDataBundle(userId, phone, amount, network, planCode);
+      toast.success("Data bundle purchased successfully! 🎉");
+      return result;
     } catch (error: any) {
       setCurrentBalance(oldBalance); // rollback
       toast.error(error.message || "Transaction failed");
+      throw error;
     } finally {
       setIsUpdating(false);
-      setTimeout(refreshBalance, 1500); // final server sync
+      setTimeout(refreshBalance, 1200); // final server sync
     }
   };
 
