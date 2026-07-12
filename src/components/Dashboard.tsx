@@ -64,7 +64,7 @@ import ResellerPortal from './ResellerPortal';
 import TransactionHistory from './TransactionHistory';
 
 export default function Dashboard({ user, onLogout }: { user: UserProfile, onLogout: () => void }) {
-  const { signOut, setSimulatedUser } = useAuth();
+  const { signOut, updateLocalProfile } = useAuth();
   const [activeTab, setActiveTab] = React.useState('dashboard');
   const [defaultBillService, setDefaultBillService] = React.useState<'cable' | 'electricity' | 'exam' | 'betting' | null>(null);
 
@@ -919,7 +919,7 @@ function DashboardOverview({
   transactions: Transaction[], 
   onSelectTx?: (tx: Transaction) => void
 }) {
-  const { setSimulatedUser } = useAuth();
+  const { updateLocalProfile } = useAuth();
   const [plans, setPlans] = React.useState<ServicePlan[]>([]);
   const [selectedNetwork, setSelectedNetwork] = React.useState<'All' | NetworkType>('All');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('ALL');
@@ -1139,70 +1139,23 @@ function DashboardOverview({
 
           console.log(`[Frontend Wallet Credit] Direct credit of ₦${topUpAmount} requested for user ${currentUserId}. New balance: ${updatedBalance}`);
 
-          // 1. Hardcode a Direct Supabase Update for Testing / Live
-          const { data: updateData, error: updateError } = await supabase
+          // Single source of truth: update wallet_balance on public.profiles only.
+          // (Previously this also wrote to a 'users' table, an 'accounts' table, and Firestore --
+          // four redundant, unsynchronized copies of the same number. That's gone; 'profiles' is it.)
+          const { error: updateError } = await supabase
             .from('profiles')
-            .update({ 
-              wallet_balance: updatedBalance,
-            })
+            .update({ wallet_balance: updatedBalance })
             .eq('id', currentUserId);
 
           if (updateError) {
-            console.error("Database failed to update profiles table:", updateError.message);
+            console.error("Database failed to update wallet balance:", updateError.message);
+            toast.error("Payment received, but updating your balance failed -- contact support with your transaction reference.");
           } else {
             console.log("Wallet successfully updated in Supabase profiles!");
           }
 
-          // 2. Direct Supabase Update for users table as backup
-          try {
-            await supabase
-              .from('users')
-              .update({ 
-                balance: updatedBalance,
-                wallet_balance: updatedBalance,
-                available_balance: updatedBalance
-              })
-              .eq('id', currentUserId);
-          } catch (err) {
-            console.warn("Failed to update users table:", err);
-          }
-
-          // 3. Direct Supabase Update for accounts table as backup
-          try {
-            await supabase
-              .from('accounts')
-              .update({ 
-                balance: updatedBalance,
-                wallet_balance: updatedBalance,
-                available_balance: updatedBalance
-              })
-              .eq('id', currentUserId);
-          } catch (err) {
-            console.warn("Failed to update accounts table:", err);
-          }
-
-          // 4. Force Firestore user document synchronization
-          try {
-            const { doc: fsDoc, updateDoc: fsUpdateDoc } = await import('firebase/firestore');
-            const { db: fsDb } = await import('../lib/firebase');
-            await fsUpdateDoc(fsDoc(fsDb, 'users', currentUserId), {
-              balance: updatedBalance,
-              wallet_balance: updatedBalance,
-              available_balance: updatedBalance
-            });
-            console.log("Firestore user database updated direct from client callback!");
-          } catch (fsErr) {
-            console.warn("Firestore update skipped/failed:", fsErr);
-          }
-
-          // 5. Force State Refresh directly to sync visually
-          const updatedProfile = {
-            ...user,
-            balance: updatedBalance,
-            wallet_balance: updatedBalance,
-            available_balance: updatedBalance
-          };
-          setSimulatedUser(updatedProfile);
+          // Optimistic local UI update for the real signed-in user (Realtime/poll sync will confirm shortly after).
+          updateLocalProfile({ balance: updatedBalance, wallet_balance: updatedBalance });
 
           toast.dismiss("fw-verify-loader");
           toast.success(`Successfully topped-up ₦${topUpAmount.toLocaleString()} via Flutterwave!`, {
@@ -1385,16 +1338,11 @@ function DashboardOverview({
               icon: '🎉'
             });
 
-            // Trigger instant dashboard UI refresh for simulated users
-            if (localStorage.getItem('vtu_simulated_user')) {
-              const updatedProfile = {
-                ...user,
-                balance: user.balance + amt,
-                wallet_balance: (user.wallet_balance || 0) + amt,
-                available_balance: (user.available_balance || 0) + amt
-              };
-              setSimulatedUser(updatedProfile);
-            }
+            // Optimistic local UI refresh for the real signed-in user (Realtime/poll sync confirms shortly after).
+            updateLocalProfile({
+              balance: user.balance + amt,
+              wallet_balance: (user.wallet_balance || 0) + amt,
+            });
 
             setShowFundModal(false);
             setOpayAmount('2000');
@@ -1466,36 +1414,25 @@ function DashboardOverview({
   };
 
   const handleDeductWallet = async () => {
-    const isSimulated = localStorage.getItem('vtu_simulated_user') !== null;
     toast.loading("Adjusting balance to ₦0...", { id: 'deduct-wallet-loader' });
-    
+
     try {
-      if (isSimulated) {
-        const stored = localStorage.getItem('vtu_simulated_user');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          parsed.balance = 0;
-          setSimulatedUser(parsed);
-        }
-        toast.dismiss('deduct-wallet-loader');
-        toast.success("Simulated balance successfully set to ₦0!", { icon: '💸' });
+      const response = await fetch('/api/wallet/reset-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.uid,
+          targetBalance: 0
+        })
+      });
+
+      const res = await response.json();
+      toast.dismiss('deduct-wallet-loader');
+      if (response.ok && res.success) {
+        toast.success("Deduction successful! Wallet balance is now ₦0.", { icon: '💸' });
+        updateLocalProfile({ balance: 0, wallet_balance: 0 });
       } else {
-        const response = await fetch('/api/wallet/reset-balance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            targetBalance: 0
-          })
-        });
-        
-        const res = await response.json();
-        toast.dismiss('deduct-wallet-loader');
-        if (response.ok && res.success) {
-          toast.success("Deduction successful! Wallet balance is now ₦0.", { icon: '💸' });
-        } else {
-          toast.error("Failed to adjust wallet balance: " + (res.error || "Internal Error"));
-        }
+        toast.error("Failed to adjust wallet balance: " + (res.error || "Internal Error"));
       }
     } catch (err: any) {
       toast.dismiss('deduct-wallet-loader');
