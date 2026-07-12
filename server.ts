@@ -4779,6 +4779,14 @@ async function startServer() {
   });
 
   // Bulk Capital Funding with Reseller/Agent Incentive Bonuses
+  // DISABLED (2026-07-13): this endpoint let a user mint real spendable wallet balance out of
+  // thin air (a client-supplied amount + bonus %, with no real payment behind it at all --
+  // "simulated" bulk deposit). Kept here commented out, not deleted, pending a decision on
+  // whether to wire it to a real payment charge before re-enabling.
+  app.post("/api/agent/bulk-fund", async (req, res) => {
+    return res.status(410).json({ success: false, error: "Bulk funding is temporarily disabled." });
+  });
+  /*
   app.post("/api/agent/bulk-fund", async (req, res) => {
     const { userId, amount } = req.body;
     const numAmount = Number(amount);
@@ -4850,6 +4858,8 @@ async function startServer() {
       res.status(400).json({ error: error.message });
     }
   });
+
+  */
 
   // Set User Wallet Balance directly (self-service reset/adjustment to 0 or any amount)
   app.post("/api/wallet/reset-balance", async (req, res) => {
