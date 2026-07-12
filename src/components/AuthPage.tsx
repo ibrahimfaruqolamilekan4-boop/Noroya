@@ -329,40 +329,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       }
 
       if (mode === 'login') {
-        // Admin passwordless login bypass starting check
-        if (email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com') {
-          try {
-            const res = await fetch('/api/auth/admin-login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email })
-            });
-            const data = await res.json();
-            if (data.success) {
-              setSimulatedUser(data.userData);
-              toast.success("Admin Session loaded successfully!");
-              onBack();
-              return;
-            } else {
-              throw new Error(data.error || "Bypass login authentication rejected");
-            }
-          } catch (bypassErr: any) {
-            console.error("Admin Login Bypass failed, applying offline fallback:", bypassErr);
-            setSimulatedUser({
-              uid: 'admin_ibrahim_vtu_uid',
-              email: 'ibrahimfaruqolamilekan4@gmail.com',
-              fullName: 'Faruq Ibrahim (Admin)',
-              balance: 0,
-              role: 'admin',
-              referralCode: 'NOROYA-ADMIN-99',
-              createdAt: new Date().toISOString()
-            });
-            toast.success("Loaded local Admin offline workspace context");
-            onBack();
-            return;
-          }
-        }
-
         const { data, error: loginError } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password
@@ -671,10 +637,10 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                     email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? "text-emerald-600 animate-pulse" : "text-slate-500"
                   )}>
                     {email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' 
-                      ? "⚡ Dev Account - Passwordless Bypass Enabled" 
+                      ? "👑 Platform Admin Account Detected" 
                       : "Account Secret Password"}
                   </label>
-                  {mode === 'login' && email.toLowerCase() !== 'ibrahimfaruqolamilekan4@gmail.com' && (
+                  {mode === 'login' && (
                     <button 
                       type="button" 
                       onClick={() => setMode('reset')} 
@@ -687,28 +653,25 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input 
-                    required={email.toLowerCase() !== 'ibrahimfaruqolamilekan4@gmail.com'}
-                    disabled={email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com'}
+                    required
                     type={showPassword ? "text" : "password"} 
-                    value={email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? "****************" : password}
+                    value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••" 
                     className={cn(
                       "w-full border-2 rounded-xl py-3 pl-11 pr-11 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-black/15 transition-all text-black",
                       email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com'
-                        ? "bg-emerald-50 border-emerald-300 text-emerald-800 font-mono font-bold"
+                        ? "bg-emerald-50/50 border-emerald-300 focus:border-emerald-500"
                         : "bg-slate-50 border-slate-200 focus:border-black"
                     )}
                   />
-                  {email.toLowerCase() !== 'ibrahimfaruqolamilekan4@gmail.com' && (
-                    <button 
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
-                    >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  )}
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
 
                 {/* Password Strength Progress indicator during Registration */}
