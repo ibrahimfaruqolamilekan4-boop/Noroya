@@ -174,11 +174,11 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
         <div className="p-6 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
             <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 20V8L12 15L20 8V20" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           <span className={cn("text-xl font-black tracking-tight font-display", isDarkMode ? "text-white" : "text-slate-900")}>
-            Mozosubz
+            Noroyasub
           </span>
         </div>
         
@@ -239,10 +239,10 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                     <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M4 20V8L12 15L20 8V20" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   </div>
-                  <span className={cn("text-lg font-black tracking-tight font-display", isDarkMode ? "text-white" : "text-slate-900")}>Mozosubz</span>
+                  <span className={cn("text-lg font-black tracking-tight font-display", isDarkMode ? "text-white" : "text-slate-900")}>Noroyasub</span>
                 </div>
                 <button onClick={() => setIsMobileMenuOpen(false)} className="p-1 px-1.5 bg-slate-50 rounded-lg">
                   <X size={18} />

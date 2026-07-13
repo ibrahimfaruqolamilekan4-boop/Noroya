@@ -151,12 +151,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             {/* Logo */}
             <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
               <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/20">
-                {/* Modern "M" Custom SVG inside blue box */}
+                {/* Modern "N" Custom SVG inside blue box */}
                 <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M4 20V8L12 15L20 8V20" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <span className="text-2xl font-black tracking-tight text-slate-900 font-display">Mozosubz</span>
+              <span className="text-2xl font-black tracking-tight text-slate-900 font-display">Noroyasub</span>
             </div>
             
             {/* Desktop Navigation Links */}
@@ -251,7 +251,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
 
             {/* Description */}
             <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl font-medium">
-              Fund your Mozosubz wallet once, then buy airtime and data on all four networks, renew DStv, GOtv and Startimes, pay electricity for every DISCO, and print recharge pins — all in seconds.
+              Fund your Noroyasub wallet once, then buy airtime and data on all four networks, renew DStv, GOtv and Startimes, pay electricity for every DISCO, and print recharge pins — all in seconds.
             </p>
 
             {/* Primary Action Buttons */}
@@ -844,12 +844,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         </div>
       </section>
 
-      {/* CORE HIGHLIGHTS GRID: "WHY MOZOSUBZ" */}
+      {/* CORE HIGHLIGHTS GRID: "WHY NOROYASUB" */}
       <section id="features" className="py-24 px-4 bg-white">
         <div className="max-w-7xl mx-auto space-y-16">
           
           <div className="text-left space-y-4 max-w-2xl">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Why Mozosubz</span>
+            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Why Noroyasub</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">Built for speed, honesty and reliability.</h2>
           </div>
 
@@ -950,14 +950,14 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         </div>
       </section>
 
-      {/* FAQS SEGMENT: "ANSWERS, STRAIGHT FROM HOW MOZOSUBZ ACTUALLY WORKS." */}
+      {/* FAQS SEGMENT: "ANSWERS, STRAIGHT FROM HOW NOROYASUB ACTUALLY WORKS." */}
       <section id="faq" className="py-24 px-4 bg-white relative">
         <div className="max-w-4xl mx-auto space-y-16">
           
           <div className="text-center space-y-4">
             <span className="text-xs font-black tracking-widest uppercase text-blue-600">Frequently Asked</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">
-              Answers, straight from how Mozosubz actually works.
+              Answers, straight from how Noroyasub actually works.
             </h2>
           </div>
 
@@ -1008,7 +1008,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             Your next top-up takes less than a minute.
           </h2>
           <p className="text-slate-500 text-base md:text-lg max-w-2xl mx-auto font-medium">
-            Create your free Mozosubz account today and pay for airtime, data, cable, electricity and pins from one wallet.
+            Create your free Noroyasub account today and pay for airtime, data, cable, electricity and pins from one wallet.
           </p>
           <div className="flex flex-col items-center gap-4">
             <button 
@@ -1038,10 +1038,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center">
                   <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4 20V8L12 15L20 8V20" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
-                <span className="text-2xl font-black tracking-tight text-white font-display">Mozosubz</span>
+                <span className="text-2xl font-black tracking-tight text-white font-display">Noroyasub</span>
               </div>
               <p className="text-slate-400 text-sm leading-relaxed max-w-sm font-medium">
                 One wallet for airtime, data, cable, electricity and recharge pins across Nigeria. Beautifully automated, safe, and reliable.
@@ -1087,7 +1087,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           {/* Bottom Copyright segment */}
           <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="space-y-1 text-center md:text-left">
-              <p className="text-slate-500 text-xs font-bold">© 2026 Mozosubz. All rights reserved.</p>
+              <p className="text-slate-500 text-xs font-bold">© 2026 Noroyasub. All rights reserved.</p>
               <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Payments securely powered by Monnify</p>
             </div>
             <div className="flex gap-6 text-xs text-slate-500 font-semibold">
@@ -1174,9 +1174,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-400 font-bold">Account Name</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-slate-800">Mozosubz / Ibrahim Yusuf</span>
+                    <span className="font-extrabold text-slate-800">Noroyasub / Ibrahim Yusuf</span>
                     <button 
-                      onClick={() => handleCopy("Mozosubz / Ibrahim Yusuf", "name")}
+                      onClick={() => handleCopy("Noroyasub / Ibrahim Yusuf", "name")}
                       className="text-slate-400 hover:text-blue-600 transition-colors"
                     >
                       {copiedText === "name" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}

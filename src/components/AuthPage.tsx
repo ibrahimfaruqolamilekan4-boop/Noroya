@@ -419,11 +419,11 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
           <button onClick={onBack} className="inline-flex items-center gap-2 group cursor-pointer">
             <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-xl shadow-blue-500/10">
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 20V8L12 15L20 8V20" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
             <span className="text-2xl font-black tracking-tight self-center text-slate-900 font-display">
-              Mozosubz
+              Noroyasub
             </span>
           </button>
           <div className="flex justify-center items-center gap-2 mt-2">
