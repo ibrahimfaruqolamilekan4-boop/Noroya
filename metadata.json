@@ -1,6 +1,6 @@
 {
   "name": "Noroyasub",
-  "description": "One wallet. Every Nigerian bill. Buy airtime, data bundles, pay electricity bills, and print recharge pins instantly.",
+  "description": "Noroyasub is a secure, automated Virtual Top-Up (VTU) platform in Nigeria. Buy data, top up airtime instantly, pay electricity bills, and generate bulk recharge pins easily.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

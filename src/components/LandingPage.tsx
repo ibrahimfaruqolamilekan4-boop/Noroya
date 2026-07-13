@@ -103,40 +103,40 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
 
   const faqs = [
     {
-      q: "How do I fund my wallet?",
-      a: "Every deposit generates a secure, single-use bank account (Wema, Moniepoint, or Sterling Bank) powered securely by Monnify. Once you transfer money to it, your wallet credits automatically in seconds without manual approval."
+      q: "How does wallet funding work on Noroyasub?",
+      a: "When you wish to fund your wallet, we assign you a personalized, automated transfer account. Simple bank transfers to this account credit your Noroyasub wallet balance automatically in under 10 seconds, with zero human intervention."
     },
     {
-      q: "Are there deposit fees?",
-      a: "A standard flat ₦50 gateway charge is applied to deposits under Monnify's terms. We show all transactions transparently before payment is made. There are absolutely no hidden deductions."
+      q: "Are there any hidden costs or fees?",
+      a: "None at all. We believe in complete transparency. Wallet funding incurs only the standard nominal gateway charge of ₦50. We display all discount rates and pricing structures upfront so you know exactly what you are paying."
     },
     {
-      q: "Which networks do you support for airtime?",
-      a: "We support instant dispatch across MTN, Glo, Airtel, and 9mobile networks. All recharges are backed by auto-refund guarantees, so you get credited or refunded instantly on any provider downtime."
+      q: "Which networks can I recharge?",
+      a: "We support instant, automated airtime top-ups for MTN, Airtel, Glo, and 9mobile networks. Each transaction is monitored by our active confirmation engine to ensure immediate dispatch."
     },
     {
-      q: "What data plan types can I buy?",
-      a: "We offer complete access to SME, Corporate Gifting (CG), Gifting, and AWOOF data bundles across all networks at highly discounted rates, straight from provider pipelines."
+      q: "What kinds of internet data bundles are available?",
+      a: "We offer heavily discounted data packages across all networks, including SME data, Corporate Gifting (CG), Gifting, and special promo bundles. Validity ranges from 1 to 30 days depending on your selection."
     },
     {
-      q: "Which cable TV providers work?",
-      a: "We support active renewals for DStv, GOtv, and StarTimes. Subscriptions are reactivated instantly within seconds after verifying your IUC/Smartcard details."
+      q: "Can I easily renew my television package?",
+      a: "Yes! Simply input your smartcard or IUC number, let our system auto-verify the customer name to ensure it's correct, and select your preferred plan for GOtv, DStv, or StarTimes. Activation completes in seconds."
     },
     {
-      q: "Which electricity distribution companies are supported?",
-      a: "All major Nigerian DISCOs are supported including Ikeja Electric, Eko Electric, Abuja Electric, Kano Electric, Port Harcourt Electric, Jos Electric, Benin Electric, and others."
+      q: "Which regional electricity companies are integrated?",
+      a: "We are directly integrated with all primary Nigerian electricity boards (IKEDC, EKEDC, AEDC, KEDCO, PHED, JED, EEDC, KAEDCO, BEDC, YEDC). Prepaid tokens are generated and shown on your screen instantly."
     },
     {
-      q: "Where do I get my prepaid meter token?",
-      a: "The token is generated instantly on screen upon successful payment. We also send a copy of the token via email and preserve it permanently inside your transaction history."
+      q: "Where do I find my prepaid electricity token?",
+      a: "As soon as your payment is processed, the prepaid token is rendered directly on your screen. We also deliver it to your registered email and archive it permanently in your transaction history for quick lookup."
     },
     {
-      q: "Can I print recharge pins for my shop or kiosk?",
-      a: "Absolutely! Our bulk printing service allows you to generate and print recharge pins of any network in denominations of ₦100 to ₦500. Perfect for retail kiosks and resellers looking to package physical scratch cards."
+      q: "Is there a bulk recharge pin generator?",
+      a: "Indeed! Resellers and physical retail vendors can utilize our bulk pin generator to print high-quality recharge cards of any major network. Select denominations from ₦100 to ₦500 and print in custom batches."
     },
     {
-      q: "What happens if a transaction fails?",
-      a: "Our smart auto-refund engine monitors the status in real time. If a provider's gateway declines a transaction, our database automatically reverses the full amount back to your wallet instantly."
+      q: "What happens if my transaction is unsuccessful?",
+      a: "Our system operates on a 100% automated failsafe. If a telecom network partner fails to deliver your airtime or data, our smart contract engine automatically reverses the full purchase amount back to your wallet balance."
     }
   ];
 
@@ -245,13 +245,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
 
             {/* Display Header */}
             <h1 className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight leading-[1.08] text-slate-900 font-display">
-              One wallet.<br />
-              Every Nigerian <span className="text-blue-600 underline underline-offset-8 decoration-3 decoration-blue-500/30">bill.</span>
+              Smart payments.<br />
+              Delivered <span className="text-blue-600 underline underline-offset-8 decoration-3 decoration-blue-500/30">instantly.</span>
             </h1>
 
             {/* Description */}
             <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl font-medium">
-              Fund your Noroyasub wallet once, then buy airtime and data on all four networks, renew DStv, GOtv and Startimes, pay electricity for every DISCO, and print recharge pins — all in seconds.
+              Fund your Noroyasub wallet securely to recharge airtime, buy cheap data bundles, pay power bills, and renew TV subscriptions across Nigeria in under 5 seconds.
             </p>
 
             {/* Primary Action Buttons */}
@@ -260,13 +260,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 onClick={onAuth}
                 className="bg-blue-600 text-white font-bold text-lg px-8 py-5 rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/15 hover:-translate-y-0.5 transform flex items-center justify-center gap-2"
               >
-                Create free account <ArrowRight size={18} />
+                Get Started Now <ArrowRight size={18} />
               </button>
               <a 
                 href="#prices"
                 className="bg-slate-100 hover:bg-slate-200/80 text-slate-800 font-bold text-lg px-8 py-5 rounded-2xl border border-slate-200/40 transition-all text-center flex items-center justify-center"
               >
-                See data prices
+                Check discounted rates
               </a>
             </div>
 
@@ -276,19 +276,19 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <svg className="w-5 h-5 text-[#00c569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
                 </svg>
-                One-time transfer account
+                Direct wallet funding
               </div>
               <div className="flex items-center gap-2.5 text-sm font-semibold text-slate-600">
                 <svg className="w-5 h-5 text-[#00c569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
                 </svg>
-                Wallet credited instantly
+                Automated API delivery
               </div>
               <div className="flex items-center gap-2.5 text-sm font-semibold text-slate-600">
                 <svg className="w-5 h-5 text-[#00c569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
                 </svg>
-                Auto-refund on failure
+                Failsafe auto-refunds
               </div>
             </div>
           </div>
@@ -449,10 +449,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           
           {/* Main Title Block */}
           <div className="text-left space-y-4 max-w-3xl">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">What you can pay for</span>
-            <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">Every bill you actually pay — in one place.</h2>
+            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Our Services</span>
+            <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">All your daily subscriptions in one place.</h2>
             <p className="text-slate-500 text-base md:text-lg font-medium leading-relaxed">
-              Airtime, data, cable and electricity are all powered by verified providers. Nothing is a redirect.
+              Experience seamless, instant fulfillment on all networks and utility portals through direct telecom API handshakes.
             </p>
           </div>
 
@@ -466,14 +466,14 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                   <Smartphone size={24} />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="text-2xl font-extrabold text-slate-900 font-display">Airtime</h3>
+                  <h3 className="text-2xl font-extrabold text-slate-900 font-display">Instant Airtime</h3>
                   <p className="text-slate-500 text-sm md:text-base font-medium leading-relaxed">
-                    MTN, Glo, Airtel and 9mobile. From ₦100 up to ₦50,000 per transaction. Perfect for individual top-ups or reseller dispatches.
+                    Top up MTN, Airtel, Glo, or 9mobile instantly. Send values from ₦50 to ₦100,000. Excellent for personal recharges or wholesale dispatches.
                   </p>
                 </div>
               </div>
               <button onClick={onAuth} className="mt-8 text-blue-600 hover:text-blue-700 font-extrabold text-sm flex items-center gap-1">
-                Top up airtime now <ChevronRight size={16} />
+                Recharge airtime <ChevronRight size={16} />
               </button>
             </div>
 
@@ -485,9 +485,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 </div>
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <h3 className="text-2xl font-extrabold text-slate-900 font-display">Renew cable TV in two taps</h3>
+                    <h3 className="text-2xl font-extrabold text-slate-900 font-display">Smooth Cable TV Renewals</h3>
                     <p className="text-slate-500 text-sm font-medium leading-relaxed">
-                      Enter your IUC or smartcard number, pick your package, confirm. Works for every DStv, GOtv and Startimes plan, no matter your subscription history.
+                      Enter your IUC or smartcard number, verify your customer details, and choose your favorite package. Active reactivations for GOtv, DStv, and StarTimes.
                     </p>
                   </div>
                   
@@ -535,13 +535,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                     <Zap size={24} />
                   </div>
                   <div className="space-y-3">
-                    <h3 className="text-2xl lg:text-3xl font-extrabold text-slate-900 font-display">Pay electricity for every DISCO</h3>
+                    <h3 className="text-2xl lg:text-3xl font-extrabold text-slate-900 font-display">Instant Electricity Subscriptions</h3>
                     <p className="text-slate-500 text-sm md:text-base font-medium leading-relaxed">
-                      Prepaid and postpaid meters. Minimum ₦1,000. Your token shows on screen instantly and stays in your transaction history — copy it any time or check later.
+                      Buy prepaid tokens or pay postpaid bills across all electricity distribution companies (DISCOs). Your generated token displays on screen instantly and remains saved in your personal history log.
                     </p>
                   </div>
                   <button onClick={onAuth} className="text-blue-600 hover:text-blue-700 font-extrabold text-sm flex items-center gap-1">
-                    Purchase power tokens <ChevronRight size={16} />
+                    Buy power token <ChevronRight size={16} />
                   </button>
                 </div>
 
@@ -957,7 +957,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="text-center space-y-4">
             <span className="text-xs font-black tracking-widest uppercase text-blue-600">Frequently Asked</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">
-              Answers, straight from how Noroyasub actually works.
+              Clear answers about how our platform works.
             </h2>
           </div>
 
@@ -1005,10 +1005,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
       <section className="py-24 px-4 bg-white border-t border-slate-100">
         <div className="max-w-4xl mx-auto text-center space-y-8">
           <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-slate-900 font-display">
-            Your next top-up takes less than a minute.
+            Start paying bills instantly in under a minute.
           </h2>
           <p className="text-slate-500 text-base md:text-lg max-w-2xl mx-auto font-medium">
-            Create your free Noroyasub account today and pay for airtime, data, cable, electricity and pins from one wallet.
+            Create your free account today and experience lightning-fast automated data dispatches, instant airtime, and seamless bill payments.
           </p>
           <div className="flex flex-col items-center gap-4">
             <button 
@@ -1044,7 +1044,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <span className="text-2xl font-black tracking-tight text-white font-display">Noroyasub</span>
               </div>
               <p className="text-slate-400 text-sm leading-relaxed max-w-sm font-medium">
-                One wallet for airtime, data, cable, electricity and recharge pins across Nigeria. Beautifully automated, safe, and reliable.
+                Simplify how you recharge, subscribe, and pay utilities in Nigeria. Fast, automated, secure, and reliable.
               </p>
             </div>
 
@@ -1146,9 +1146,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="flex justify-between items-center text-xs pb-3 border-b border-slate-200/40">
                   <span className="text-slate-400 font-bold">Bank Name</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-slate-800">Wema Bank</span>
+                    <span className="font-extrabold text-slate-800">Sterling Bank</span>
                     <button 
-                      onClick={() => handleCopy("Wema Bank", "bank")}
+                      onClick={() => handleCopy("Sterling Bank", "bank")}
                       className="text-slate-400 hover:text-blue-600 transition-colors"
                     >
                       {copiedText === "bank" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
@@ -1160,9 +1160,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="flex justify-between items-center text-xs pb-3 border-b border-slate-200/40">
                   <span className="text-slate-400 font-bold">Account Number</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-sm text-slate-900 tracking-wider">9583192038</span>
+                    <span className="font-mono font-black text-sm text-slate-900 tracking-wider">8234850192</span>
                     <button 
-                      onClick={() => handleCopy("9583192038", "account")}
+                      onClick={() => handleCopy("8234850192", "account")}
                       className="text-slate-400 hover:text-blue-600 transition-colors"
                     >
                       {copiedText === "account" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
@@ -1174,9 +1174,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-400 font-bold">Account Name</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-slate-800">Noroyasub / Ibrahim Yusuf</span>
+                    <span className="font-extrabold text-slate-800">Noroyasub / Ibrahim Faruq</span>
                     <button 
-                      onClick={() => handleCopy("Noroyasub / Ibrahim Yusuf", "name")}
+                      onClick={() => handleCopy("Noroyasub / Ibrahim Faruq", "name")}
                       className="text-slate-400 hover:text-blue-600 transition-colors"
                     >
                       {copiedText === "name" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
