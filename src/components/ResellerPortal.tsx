@@ -32,7 +32,7 @@ interface ProductPlan {
 }
 
 export default function ResellerPortal() {
-  const { user, updateLocalProfile } = useAuth();
+  const { user, setSimulatedUser } = useAuth();
   const [activeSubTab, setActiveSubTab] = React.useState<'upgrade' | 'terminal' | 'bulk-fund' | 'ledger'>('upgrade');
 
   // Upgrade States
@@ -99,10 +99,10 @@ export default function ResellerPortal() {
       if (response.ok) {
         toast.success(resData.message);
         // Update user state locally
-        updateLocalProfile({
+        setSimulatedUser({
+          ...user,
           role: role,
-          balance: resData.balance,
-          wallet_balance: resData.balance,
+          balance: resData.balance
         });
         setActiveSubTab('terminal');
       } else {
@@ -175,9 +175,9 @@ export default function ResellerPortal() {
 
         // Update balance locally
         if (user) {
-          updateLocalProfile({
-            balance: user.balance - costNum + cashback,
-            wallet_balance: (user.wallet_balance || user.balance) - costNum + cashback,
+          setSimulatedUser({
+            ...user,
+            balance: user.balance - costNum + cashback
           });
         }
 
@@ -215,9 +215,9 @@ export default function ResellerPortal() {
         toast.success(`Merchant Capital Deposited! Bonus awarded: ₦${resData.bonusEarned.toFixed(2)}`);
         
         if (user) {
-          updateLocalProfile({
-            balance: resData.balance,
-            wallet_balance: resData.balance,
+          setSimulatedUser({
+            ...user,
+            balance: resData.balance
           });
         }
         setBulkAmount('');

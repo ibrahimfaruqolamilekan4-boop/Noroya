@@ -1,6 +1,6 @@
 {
-  "name": "Noroya Data",
-  "description": "A modern digital platform for Virtual Top-Up (VTU) and digital services including data bundles, airtime, and utility payments.",
+  "name": "Mozosubz",
+  "description": "One wallet. Every Nigerian bill. Buy airtime, data bundles, pay electricity bills, and print recharge pins instantly.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
