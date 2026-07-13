@@ -1069,6 +1069,27 @@ export default function AdminPanelSection() {
 
       {adminSubTab === 'overview' && (
         <>
+          {/* QUICK LAUNCH DATA PLANS PANEL */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-6 rounded-3xl space-y-4 shadow-lg relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1 z-10">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-green-400 animate-ping"></span>
+                <span className="text-[10px] uppercase font-black tracking-widest text-blue-200 font-sans">Active VTU Integration Module</span>
+              </div>
+              <h5 className="font-extrabold text-white text-lg font-sans">Mozosubs Core Database Controller</h5>
+              <p className="text-xs text-blue-100 font-bold max-w-2xl leading-relaxed font-sans">
+                Quickly view, sync, and override prices of live Mozosubs data packages in your PostgreSQL & Firestore catalog.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAdminSubTab('mozosubs-plans')}
+              className="z-10 bg-white text-blue-900 hover:bg-slate-100 font-black uppercase text-[11px] tracking-wider py-3.5 px-6 rounded-xl shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2.5 font-sans whitespace-nowrap self-start md:self-auto"
+            >
+              📱 Manage Data Plans
+            </button>
+          </div>
+
           {/* SUPABASE CONNECTION CREDENTIALS PANEL */}
           <div className="bg-amber-50/40 border-2 border-amber-200 p-6 rounded-3xl space-y-4 shadow-sm relative overflow-hidden">
             <div className="absolute right-0 top-0 translate-x-1/4 -translate-y-1/4 rotate-12 opacity-5 pointer-events-none">
