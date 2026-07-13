@@ -1,7 +1,4 @@
-import { doc, getDoc, updateDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { db, auth } from "../lib/firebase";
-import { handleFirestoreError, OperationType } from "../lib/firestore";
-import type { UserProfile } from "../types";
+import { supabase } from "../lib/supabase";
 
 export interface WalletModel {
   userId: string;
@@ -10,87 +7,63 @@ export interface WalletModel {
 
 export const walletService = {
   /**
-   * Fetch current wallet balance for a user.
+   * Fetch current wallet balance for a user from the single source of truth: public.profiles.
    */
   async getWalletBalance(userId: string): Promise<number> {
-    const userRef = doc(db, "users", userId);
     try {
-      const snap = await getDoc(userRef);
-      if (snap.exists()) {
-        const data = snap.data() as UserProfile;
-        return data.balance || 0;
+      const { data, error } = await supabase.from("profiles").select("wallet_balance").eq("id", userId).maybeSingle();
+      if (error) {
+        console.error("Failed to fetch wallet balance:", error.message);
+        return 0;
       }
-      
-      // Checking local storage fallback for simulated users
-      const stored = localStorage.getItem("vtu_simulated_user");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.uid === userId) {
-          return parsed.balance || 0;
-        }
-      }
-      return 0;
+      return data?.wallet_balance ?? 0;
     } catch (error) {
-      handleFirestoreError(error, OperationType.GET, `users/${userId}`);
+      console.error("Failed to fetch wallet balance:", error);
       return 0;
     }
   },
 
   /**
-   * Helper that subscribes to wallet balance updates or profile updates.
+   * Subscribes to live wallet balance updates via Supabase Realtime (Postgres changes).
    */
   subscribeToBalance(userId: string, onUpdate: (balance: number) => void): () => void {
-    const userRef = doc(db, "users", userId);
-    
-    // Check if we are running in simulated environment
-    const isSimulated = localStorage.getItem("vtu_simulated_user") !== null;
-    if (isSimulated) {
-      // Set up simple interval to sync with simulated user profile state in localStorage
-      const interval = setInterval(() => {
-        const stored = localStorage.getItem("vtu_simulated_user");
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored);
-            if (parsed.uid === userId) {
-              onUpdate(parsed.balance || 0);
-            }
-          } catch (e) {}
+    const channel = supabase
+      .channel(`wallet-balance-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${userId}` },
+        (payload) => {
+          const updated = payload.new as any;
+          if (updated?.wallet_balance !== undefined) onUpdate(updated.wallet_balance);
         }
-      }, 1000);
-      return () => clearInterval(interval);
-    }
+      )
+      .subscribe();
 
-    return onSnapshot(
-      userRef,
-      (snap) => {
-        if (snap.exists()) {
-          const uProfile = snap.data() as UserProfile;
-          onUpdate(uProfile.balance || 0);
-        }
-      },
-      (error) => {
-        console.error("Balance subscription error:", error);
-      }
-    );
+    return () => {
+      channel.unsubscribe();
+    };
   },
 
   /**
-   * Modifies a user's wallet balance on the secure backend server.
+   * Modifies a user's wallet balance on the secure backend server. Requires a valid Supabase
+   * session; the backend must verify the Supabase JWT (see server.ts / backend/controllers) --
+   * this replaces the old Firebase ID token auth header.
    */
   async upgradeWalletBalanceOnServer(userId: string, amount: number, actionType: "credit" | "debit"): Promise<boolean> {
     try {
-      const idToken = await auth.currentUser?.getIdToken();
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
       const response = await fetch("/api/agent/bulk-fund", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": idToken ? `Bearer ${idToken}` : ""
+          "Authorization": accessToken ? `Bearer ${accessToken}` : "",
         },
         body: JSON.stringify({
           userIds: [userId],
           amount: actionType === "credit" ? amount : -amount,
-          description: `Self-Service Remote Balance Adjustment`
-        })
+          description: `Self-Service Remote Balance Adjustment`,
+        }),
       });
 
       const result = await response.json();
@@ -99,5 +72,5 @@ export const walletService = {
       console.error("[Wallet Service adjustment failed]:", err);
       return false;
     }
-  }
+  },
 };

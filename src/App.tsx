@@ -10,10 +10,27 @@ import Dashboard from './components/Dashboard';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AIChatSupport from './components/AIChatSupport';
+import ResetPasswordPage from './components/ResetPasswordPage';
 
 function AppContent() {
   const { user, loading } = useAuth();
   const [showAuth, setShowAuth] = React.useState(false);
+
+  // Supabase password-reset links redirect to `${origin}/recovery` (see AuthPage.tsx
+  // handleForgotPassword). This app has no client router, so we detect that path (or the
+  // `type=recovery` hash Supabase also sometimes uses) directly and render the reset form
+  // instead of the normal landing/auth/dashboard flow.
+  const isRecoveryRoute =
+    window.location.pathname === '/recovery' || window.location.hash.includes('type=recovery');
+
+  if (isRecoveryRoute) {
+    return (
+      <>
+        <Toaster position="top-center" />
+        <ResetPasswordPage />
+      </>
+    );
+  }
 
   if (loading) {
     return (
