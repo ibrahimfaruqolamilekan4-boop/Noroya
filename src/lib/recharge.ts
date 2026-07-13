@@ -118,7 +118,7 @@ export function useLoadBalance() {
 
 /**
  * 💸 ATOMIC PURCHASE AIRTIME (RPC BACKEND/CLIENT HELPER)
- * Handles double-entry ledger security with atomic balance operations.
+ * Handles double-entry ledger security with atomic balance operations using Mozosubs API.
  */
 export async function purchaseAirtime(
   userId: string,
@@ -161,26 +161,63 @@ export async function purchaseAirtime(
   }
 
   try {
-    // 2. Call Bigisub API proxy to execute direct telecom dispatching
-    const res = await fetch('/api/vendor/recharge', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        userUUID: userId,
-        type: 'airtime',
-        networkId: network,
-        phoneNumber: phone,
-        amount: Number(amount),
-        costAmount: Number(amount)
-      })
-    });
+    // 2. Call Mozosubs API proxy or direct to execute direct telecom dispatching
+    const isServer = typeof process !== "undefined" && process?.env;
+    let result: any;
 
-    const result = await res.json();
+    if (isServer && process.env.MOZOSUBS_API_KEY) {
+      // Direct call if running on server-side
+      const mozoBaseUrl = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
+      const res = await fetch(`${mozoBaseUrl}/airtime/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${process.env.MOZOSUBS_API_KEY}`
+        },
+        body: JSON.stringify({
+          network,
+          amount: Number(amount),
+          mobile_number: phone,
+          Ported_number: true,
+          airtime_type: "VTU"
+        })
+      });
+      const data = await res.json();
+      result = {
+        success: data.status === 'success' || data.success === true || data.Status === 'successful',
+        reference: data.id || data.reference || `TX-MOZO-${Date.now()}`,
+        message: data.message || data.error || "Purchase failed"
+      };
+    } else {
+      // Proxy call if running on client-side
+      const res = await fetch('/api/vendor/recharge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userUUID: userId,
+          type: 'airtime',
+          networkId: network,
+          phoneNumber: phone,
+          amount: Number(amount),
+          costAmount: Number(amount)
+        })
+      });
 
-    if (!res.ok || !result.success) {
-      throw new Error(result.message || "Purchase failed");
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Purchase failed");
+      }
+      result = {
+        success: true,
+        reference: data.reference || data.id || `TX-MOZO-${Date.now()}`
+      };
+    }
+
+    if (!result.success) {
+      throw new Error(result.message || "Airtime purchase failed");
     }
 
     // 3. Log success transaction
@@ -191,7 +228,7 @@ export async function purchaseAirtime(
       phone,
       network: String(network),
       status: 'success',
-      reference: result.reference || result.id || `TX-${Date.now()}`
+      reference: result.reference || `TX-${Date.now()}`
     });
 
     return result;
@@ -207,7 +244,7 @@ export async function purchaseAirtime(
 
 /**
  * ⚡ ATOMIC PURCHASE DATA BUNDLE
- * Validates, debits balance atomically, executes transaction via Bigisub API, and logs transaction.
+ * Validates, debits balance atomically, executes transaction via Mozosubs API, and logs transaction.
  */
 export async function purchaseDataBundle(
   userId: string,
@@ -237,26 +274,32 @@ export async function purchaseDataBundle(
   }
 
   try {
-    // 2. Call Bigisub API or Proxy
+    // 2. Call Mozosubs API or Proxy
     const isServer = typeof process !== "undefined" && process?.env;
     let result: any;
 
-    if (isServer && process.env.BIGISUB_API_KEY) {
+    if (isServer && process.env.MOZOSUBS_API_KEY) {
       // Direct call if running on server-side
-      const res = await fetch('https://api.bigisub.ng/v2/data', {
+      const mozoBaseUrl = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
+      const res = await fetch(`${mozoBaseUrl}/data/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.BIGISUB_API_KEY}`
+          'Authorization': `Token ${process.env.MOZOSUBS_API_KEY}`
         },
         body: JSON.stringify({
           network,
-          phone,
-          amount: Number(amount),
-          plan_code: planCode
+          mobile_number: phone,
+          plan: planCode,
+          Ported_number: true
         })
       });
-      result = await res.json();
+      const data = await res.json();
+      result = {
+        success: data.status === 'success' || data.success === true || data.Status === 'successful',
+        reference: data.id || data.reference || `DATA-MOZO-${Date.now()}`,
+        message: data.message || data.error || "Data bundle purchase failed"
+      };
     } else {
       // Proxy call if running on client-side
       const res = await fetch('/api/vendor/recharge', {
@@ -280,7 +323,7 @@ export async function purchaseDataBundle(
       }
       result = {
         success: true,
-        reference: data.reference || data.id || `DATA-${Date.now()}`
+        reference: data.reference || data.id || `DATA-MOZO-${Date.now()}`
       };
     }
 

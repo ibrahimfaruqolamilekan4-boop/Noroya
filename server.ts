@@ -55,6 +55,23 @@ const resolveBigisubApiKey = async (): Promise<string> => {
   return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
 };
 
+const resolveMozosubsApiKey = async (): Promise<string> => {
+  try {
+    const { data, error } = await supabase
+      .from('services_config')
+      .select('item_name')
+      .eq('bigisub_identifier_id', 'mozosubs_api_key')
+      .maybeSingle();
+    
+    if (!error && data?.item_name) {
+      return data.item_name;
+    }
+  } catch (err) {
+    console.warn("[resolveMozosubsApiKey] Error querying Supabase, using env fallback:", err);
+  }
+  return process.env.MOZOSUBS_API_KEY || "dummy_mozosubs_key";
+};
+
 dotenv.config();
 
 import fs from 'fs';
@@ -979,6 +996,119 @@ async function startServer() {
     }
   });
 
+  // GET /api/sync-mozosubs-plans and GET /api/data/plans/sync: Sync data plans from Mozosubs API into Postgres & Firestore
+  app.get(["/api/sync-mozosubs-plans", "/api/sync/mozosubs-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], async (req, res) => {
+    try {
+      const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
+      const MOZOSUBS_BASE_URL = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
+
+      let mozosubsPlans: any[] = [];
+
+      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
+        // Simulation mode
+        console.log("[Mozosubs Simulation] Fetching simulated data plans...");
+        mozosubsPlans = [
+          { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
+          { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
+          { id: 103, network: 1, name: "MTN SME 5GB", price: 1150, validity: "30 Days" },
+          { id: 201, network: 2, name: "GLO 1.35GB", price: 450, validity: "30 Days" },
+          { id: 301, network: 3, name: "Airtel CG 1.5GB", price: 500, validity: "30 Days" },
+          { id: 401, network: 4, name: "9mobile 1.5GB", price: 600, validity: "30 Days" }
+        ];
+      } else {
+        const mozoPlansUrl = `${MOZOSUBS_BASE_URL}/data/plans/`;
+        console.log(`[Mozosubs API] Fetching plans from: ${mozoPlansUrl}`);
+        
+        try {
+          const response = await axios.get(mozoPlansUrl, {
+            headers: {
+              'Authorization': `Token ${MOZOSUBS_API_KEY}`
+            },
+            timeout: 10000
+          });
+          mozosubsPlans = response.data;
+        } catch (apiErr: any) {
+          console.error("[Mozosubs API plans error]:", apiErr.response?.data || apiErr.message);
+          // If trailing slash failed or returned 404, try without trailing slash
+          if (apiErr.response?.status === 404 || apiErr.message?.includes("404")) {
+            const fallbackUrl = `${MOZOSUBS_BASE_URL}/data/plans`;
+            console.log(`[Mozosubs API] Retrying fallback URL: ${fallbackUrl}`);
+            const response = await axios.get(fallbackUrl, {
+              headers: {
+                'Authorization': `Token ${MOZOSUBS_API_KEY}`
+              },
+              timeout: 10000
+            });
+            mozosubsPlans = response.data;
+          } else {
+            throw apiErr;
+          }
+        }
+      }
+
+      if (!Array.isArray(mozosubsPlans)) {
+        console.warn("[Mozosubs Plans Sync] Response is not an array:", mozosubsPlans);
+        if (mozosubsPlans && typeof mozosubsPlans === 'object' && Array.isArray((mozosubsPlans as any).results)) {
+          mozosubsPlans = (mozosubsPlans as any).results;
+        } else {
+          throw new Error("Invalid response format from provider API - expected array.");
+        }
+      }
+
+      console.log(`[Mozosubs Plans Sync] Syncing ${mozosubsPlans.length} plans to database...`);
+
+      const syncedPlans = [];
+      for (const plan of mozosubsPlans) {
+        const pId = plan.id || plan.plan_id;
+        if (!pId) continue;
+
+        const record = {
+          mozosubs_plan_id: String(pId),
+          network: String(plan.network || ''),
+          plan_name: String(plan.name || plan.plan_name || ''),
+          original_price: Number(plan.price || plan.original_price || 0),
+          custom_price: Number(plan.price || plan.custom_price || plan.original_price || 0),
+          validity: String(plan.validity || '30 Days'),
+          is_active: plan.is_active !== undefined ? plan.is_active : true,
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: upsertErr } = await supabase
+          .from('data_plans')
+          .upsert(record, { onConflict: 'mozosubs_plan_id' });
+
+        if (upsertErr) {
+          console.error(`[Mozosubs Sync] Supabase upsert error for plan ${pId}:`, upsertErr.message);
+        } else {
+          syncedPlans.push(record);
+        }
+
+        try {
+          if (db) {
+            await db.collection('data_plans').doc(String(pId)).set({
+              id: String(pId),
+              mozosubs_plan_id: String(pId),
+              network: String(plan.network || ''),
+              plan_name: String(plan.name || plan.plan_name || ''),
+              price: Number(plan.price || 0),
+              retail_price: Number(plan.price || 0),
+              validity: String(plan.validity || '30 Days'),
+              is_active: plan.is_active !== undefined ? plan.is_active : true,
+              updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+          }
+        } catch (fsErr: any) {
+          console.warn(`[Mozosubs Sync] Firestore sync warning for plan ${pId}:`, fsErr.message);
+        }
+      }
+
+      return res.json({ success: true, count: syncedPlans.length, plans: syncedPlans });
+    } catch (e: any) {
+      console.error("[Mozosubs Plans Sync Endpoint Error]:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   // GET /api/v1/payment/config: Load Live Paystack/Flutterwave credentials securely without client-side exposures
   app.get("/api/v1/payment/config", (req, res) => {
     const paystackKeys = [
@@ -1546,68 +1676,68 @@ async function startServer() {
         return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
       }
 
-      // Step C: Fire the network payload to Bigisub API
-      // Bigisub expects authorization headers and data payload structures matching their documentation
-      const BIGISUB_API_KEY = await resolveBigisubApiKey();
+      // Step C: Fire the network payload to Mozosubs API
+      // Mozosubs expects authorization headers and data payload structures matching their documentation
+      const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
       
-      // Map network strings or IDs from frontend safely into Bigisub's expected IDs
-      let bigisubNetworkId = networkId;
+      // Map network strings or IDs from frontend safely into Mozosubs's expected IDs
+      let mozoNetworkId = networkId;
 
       if (typeof networkId === 'string') {
         const cleanNetwork = networkId.toLowerCase().trim();
-        if (cleanNetwork.includes('mtn')) bigisubNetworkId = 1;
-        else if (cleanNetwork.includes('glo')) bigisubNetworkId = 2;
-        else if (cleanNetwork.includes('airtel')) bigisubNetworkId = 3;
-        else if (cleanNetwork.includes('9mobile')) bigisubNetworkId = 4;
+        if (cleanNetwork.includes('mtn')) mozoNetworkId = 1;
+        else if (cleanNetwork.includes('glo')) mozoNetworkId = 2;
+        else if (cleanNetwork.includes('airtel')) mozoNetworkId = 3;
+        else if (cleanNetwork.includes('9mobile')) mozoNetworkId = 4;
       }
 
-      let bigisubResponseData: any = null;
+      let mozoResponseData: any = null;
       let apiSuccess = false;
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
         // Simulation mode
-        console.log("[Bigisub Simulation Vendor] Processing simulated purchase...");
+        console.log("[Mozosubs Simulation Vendor] Processing simulated purchase...");
         await new Promise(resolve => setTimeout(resolve, 1000));
         apiSuccess = true;
-        bigisubResponseData = {
+        mozoResponseData = {
           status: 'success',
-          id: `BIGI-SIM-${Date.now()}`
+          id: `MOZO-SIM-${Date.now()}`
         };
       } else {
-        const bigisubPayload: any = {
-          network: bigisubNetworkId,
+        const mozoPayload: any = {
+          network: mozoNetworkId,
           mobile_number: phoneNumber,
-          bypass_validator: true // Prevents duplicate request blocks if clicked rapidly
+          Ported_number: true
         };
 
         // Add type-specific parameters
         if (type === 'airtime') {
-          bigisubPayload.airtime_type = "VTU";
-          bigisubPayload.amount = parseFloat(amount || costAmount);
+          mozoPayload.airtime_type = "VTU";
+          mozoPayload.amount = parseFloat(amount || costAmount);
         } else {
-          // For data plans, ensure planId is the numerical ID provided by Bigisub's plan codes
-          bigisubPayload.plan = parseInt(planId); 
+          // For data plans, ensure planId is the numerical ID provided by Mozosubs's plan codes
+          mozoPayload.plan = parseInt(planId); 
         }
 
-        const bigisubUrl = type === 'airtime' 
-          ? 'https://bigisub.ng/api/v1/airtime' 
-          : 'https://bigisub.ng/api/v1/data';
+        const mozoBaseUrl = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
+        const endpoint = type === 'airtime' ? 'airtime' : 'data';
+        const mozoUrl = `${mozoBaseUrl}/${endpoint}/`;
 
-        const response = await axios.post(bigisubUrl, bigisubPayload, {
+        const response = await axios.post(mozoUrl, mozoPayload, {
           headers: {
-            'Authorization': `Bearer ${BIGISUB_API_KEY}`,
+            'Authorization': `Token ${MOZOSUBS_API_KEY}`,
             'Content-Type': 'application/json'
           },
           timeout: 10000
         });
 
-        bigisubResponseData = response.data;
-        if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
+        mozoResponseData = response.data;
+        if (mozoResponseData.status === 'success' || mozoResponseData.Status === 'successful' || mozoResponseData.success === true || mozoResponseData.status === 'successful') {
           apiSuccess = true;
         }
       }
 
-      // Step D: If Bigisub passes, deduct wallet funds securely
+      // Step D: If Mozosubs passes, deduct wallet funds securely
       if (apiSuccess) {
         const newBalance = currentBalance - deductAmount;
         
@@ -1631,7 +1761,7 @@ async function startServer() {
               amount: deductAmount,
               recipient: phoneNumber,
               status: 'success',
-              reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX',
+              reference: mozoResponseData.id || mozoResponseData.reference || 'MOZOSUBS_TX',
               createdAt: new Date().toISOString()
             }]);
         } catch (dbErr) {
@@ -1640,7 +1770,7 @@ async function startServer() {
 
         return res.json({ success: true, balance: newBalance, message: "Transaction completed successfully!" });
       } else {
-        throw new Error(bigisubResponseData?.error || bigisubResponseData?.message || 'Provider rejected request');
+        throw new Error(mozoResponseData?.error || mozoResponseData?.message || 'Provider rejected request');
       }
 
     } catch (error: any) {
@@ -3425,17 +3555,17 @@ async function startServer() {
         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
       }
 
-      // 2. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
-      const BIGISUB_API_KEY = await resolveBigisubApiKey();
-      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+      // 2. Dispatch the secure request to Mozosubs using Axios with an 8-second timeout
+      const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
+      const MOZOSUBS_BASE_URL = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
 
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
+      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
         // Simulation mode
-        console.log("[Bigisub Simulation] Processing simulated purchase...");
+        console.log("[Mozosubs Simulation] Processing simulated purchase...");
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
@@ -3446,35 +3576,35 @@ async function startServer() {
           apiResponseData = {
             status: "success",
             success: true,
-            reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+            reference: `MOZO-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
             message: "Simulated purchase successful"
           };
         }
       } else {
         try {
           const endpoint = finalType === "airtime" ? "airtime" : "data";
-          const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
+          const mozoUrl = `${MOZOSUBS_BASE_URL}/${endpoint}/`;
 
-          // Map network strings or IDs from frontend safely into Bigisub's expected IDs
-          let bigiNetworkId = finalNetwork;
+          // Map network strings or IDs from frontend safely into Mozosubs's expected IDs
+          let mozoNetworkId = finalNetwork;
           if (typeof finalNetwork === 'string') {
             const cleanNetwork = finalNetwork.toLowerCase().trim();
-            if (cleanNetwork.includes('mtn') || cleanNetwork === '1') bigiNetworkId = 1;
-            else if (cleanNetwork.includes('glo') || cleanNetwork === '2') bigiNetworkId = 2;
-            else if (cleanNetwork.includes('airtel') || cleanNetwork === '3') bigiNetworkId = 3;
-            else if (cleanNetwork.includes('9mobile') || cleanNetwork.includes('9mob') || cleanNetwork === '4') bigiNetworkId = 4;
+            if (cleanNetwork.includes('mtn') || cleanNetwork === '1') mozoNetworkId = 1;
+            else if (cleanNetwork.includes('glo') || cleanNetwork === '2') mozoNetworkId = 2;
+            else if (cleanNetwork.includes('airtel') || cleanNetwork === '3') mozoNetworkId = 3;
+            else if (cleanNetwork.includes('9mobile') || cleanNetwork.includes('9mob') || cleanNetwork === '4') mozoNetworkId = 4;
           } else if (typeof finalNetwork === 'number') {
-            if (finalNetwork === 1) bigiNetworkId = 1;
-            else if (finalNetwork === 2) bigiNetworkId = 2;
-            else if (finalNetwork === 3) bigiNetworkId = 3;
-            else if (finalNetwork === 4) bigiNetworkId = 4;
+            if (finalNetwork === 1) mozoNetworkId = 1;
+            else if (finalNetwork === 2) mozoNetworkId = 2;
+            else if (finalNetwork === 3) mozoNetworkId = 3;
+            else if (finalNetwork === 4) mozoNetworkId = 4;
           }
 
-          // Construct the exact object payload structure for Bigisub
+          // Construct the exact object payload structure for Mozosubs
           const payload: any = {
-            network: bigiNetworkId,
+            network: mozoNetworkId,
             mobile_number: finalPhone,
-            bypass_validator: true // Prevents duplicate request blocks if clicked rapidly
+            Ported_number: true
           };
 
           // Add type-specific parameters
@@ -3482,38 +3612,39 @@ async function startServer() {
             payload.airtime_type = "VTU";
             payload.amount = parseFloat(String(finalAmount));
           } else {
-            // For data plans, ensure plan is the numerical ID provided by Bigisub's plan codes
+            // For data plans, ensure plan is the numerical ID provided by Mozosubs's plan codes
             payload.plan = parseInt(String(finalPlan)); 
           }
 
-          console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
+          console.log(`[Mozosubs API Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
 
-          const response = await axios.post(bigisubUrl, payload, {
+          const response = await axios.post(mozoUrl, payload, {
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${BIGISUB_API_KEY}`
+              "Authorization": `Token ${MOZOSUBS_API_KEY}`
             },
             timeout: 8000 // 8-second timeout limit as requested
           });
 
           apiResponseData = response.data;
-          console.log("[Bigisub API Response]:", apiResponseData);
+          console.log("[Mozosubs API Response]:", apiResponseData);
 
           if (response.status === 200 || response.status === 201) {
             const isSuccessStatus = apiResponseData.status === "success" || 
                                     apiResponseData.status === "SUCCESSFUL" || 
                                     apiResponseData.success === true ||
-                                    apiResponseData.status === "completed";
+                                    apiResponseData.status === "completed" ||
+                                    apiResponseData.status === "successful";
             if (isSuccessStatus) {
               apiSuccess = true;
             } else {
-              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Bigisub purchase rejected by gateway.";
+              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Mozosubs purchase rejected by gateway.";
             }
           } else {
             apiErrorMsg = `HTTP Gateway error status code: ${response.status}`;
           }
         } catch (axiosErr: any) {
-          console.error("[Bigisub API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+          console.error("[Mozosubs API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
           
           if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
             apiErrorMsg = "8-second API Timeout limit reached. Gateway was slow or non-responsive.";
@@ -3524,7 +3655,7 @@ async function startServer() {
         }
       }
 
-      // 3. Decrement the user's Supabase balance only if the Bigisub API call succeeds
+      // 3. Decrement the user's Supabase balance only if the Mozosubs API call succeeds
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalAmount;
         const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
@@ -3541,7 +3672,7 @@ async function startServer() {
         if (updateErr) {
           console.error("[Supabase Balance Update Error]:", updateErr);
           return res.status(500).json({ 
-            error: "Bigisub purchase succeeded, but database balance update failed. Please contact admin.",
+            error: "Mozosubs purchase succeeded, but database balance update failed. Please contact admin.",
             reference: apiResponseData?.reference || apiResponseData?.id 
           });
         }
@@ -3571,10 +3702,10 @@ async function startServer() {
         }
 
         // Create a transaction record in Supabase 'transactions' table
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
         try {
           await supabase.from('transactions').insert({
-            id: `bigi_${Date.now()}`,
+            id: `mozo_${Date.now()}`,
             userId: pgUuid,
             user_id: pgUuid,
             type: finalType,
@@ -3591,7 +3722,7 @@ async function startServer() {
         // Create transaction record in Firestore as fallback
         try {
           if (db) {
-            const txId = `bigi_${Date.now()}`;
+            const txId = `mozo_${Date.now()}`;
             await db.collection('transactions').doc(txId).set({
               id: txId,
               userId: finalUserId,
@@ -3620,14 +3751,14 @@ async function startServer() {
         });
       } else {
         // Purchase failed, return error response and do NOT deduct user's balance
-        console.warn(`[Bigisub Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
+        console.warn(`[Mozosubs Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
         return res.status(400).json({ 
           error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
         });
       }
     } catch (err: any) {
-      console.error("[Bigisub Purchase Endpoint Exception]:", err);
-      return res.status(500).json({ error: "Internal processing error during Bigisub purchase flow." });
+      console.error("[Mozosubs Purchase Endpoint Exception]:", err);
+      return res.status(500).json({ error: "Internal processing error during Mozosubs purchase flow." });
     }
   });
 
@@ -5753,6 +5884,153 @@ async function startServer() {
         console.error("[Flutterwave Webhook Handler Exception]:", err);
       }
     })();
+  });
+
+  // Secure Mozosubs Webhook Handler Route
+  app.post(["/api/webhooks/mozosubs", "/api/webhook/mozosubs"], async (req, res) => {
+    try {
+      const body = req.body;
+      const signature = req.get('x-mozosubs-signature') || req.headers['x-mozosubs-signature'];
+
+      console.log("[Mozosubs Webhook Received] Headers:", req.headers);
+      console.log("[Mozosubs Webhook Received] Body:", JSON.stringify(body));
+
+      // Verify signature if Mozosubs provides one and secret is configured
+      if (signature && process.env.MOZOSUBS_WEBHOOK_SECRET) {
+        const expected = crypto
+          .createHmac('sha256', process.env.MOZOSUBS_WEBHOOK_SECRET)
+          .update(JSON.stringify(body))
+          .digest('hex');
+        if (signature !== expected) {
+          console.warn("[Mozosubs Webhook] Signature mismatch. Signature received:", signature, "Expected:", expected);
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+      }
+
+      const { event, data } = body || {};
+
+      if (event === 'transaction.success' || event === 'payment.completed' || event === 'payment.success') {
+        const { user_id, amount, reference, status, type } = data || {};
+
+        if (user_id) {
+          const pgUuid = ensureUUID(user_id);
+          const numericAmount = Number(amount || 0);
+
+          console.log(`[Mozosubs Webhook] Processing success event. User: ${user_id}, Amount: ${numericAmount}, Ref: ${reference}`);
+
+          // Increment balance via RPC
+          let rpcCompleted = false;
+          try {
+            const { error: rpcErr } = await supabase.rpc('increment_balance', {
+              user_uuid: pgUuid,
+              amount: numericAmount
+            });
+            if (!rpcErr) {
+              rpcCompleted = true;
+              console.log(`[Mozosubs Webhook] Balance incremented via RPC for user ID: ${pgUuid}`);
+            } else {
+              console.warn(`[Mozosubs Webhook RPC Error]:`, rpcErr.message);
+            }
+          } catch (rpcExc: any) {
+            console.warn(`[Mozosubs Webhook RPC Exception]:`, rpcExc.message || rpcExc);
+          }
+
+          // Fallback to direct balance update if RPC failed
+          if (!rpcCompleted) {
+            // Fetch current balance
+            const { data: profile, error: selectErr } = await supabase
+              .from('profiles')
+              .select('wallet_balance')
+              .eq('id', pgUuid)
+              .maybeSingle();
+
+            if (selectErr) {
+              console.error(`[Mozosubs Webhook] Error fetching user profile:`, selectErr.message);
+            } else if (profile) {
+              const currentBalance = Number(profile.wallet_balance || 0);
+              const updatedBalance = currentBalance + numericAmount;
+
+              const { error: updateErr } = await supabase
+                .from('profiles')
+                .update({ wallet_balance: updatedBalance, balance: updatedBalance })
+                .eq('id', pgUuid);
+
+              if (updateErr) {
+                console.error(`[Mozosubs Webhook] Failed to update balance directly:`, updateErr.message);
+              } else {
+                console.log(`[Mozosubs Webhook] Successfully updated balance directly. New balance: ${updatedBalance}`);
+              }
+            } else {
+              console.warn(`[Mozosubs Webhook] No profile found matching ID: ${pgUuid}`);
+            }
+          }
+
+          // Insert into Supabase transactions table
+          const txId = `mozo_webhook_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
+          try {
+            await supabase.from('transactions').insert({
+              id: txId,
+              user_id: pgUuid,
+              userId: pgUuid,
+              type: type || 'funding',
+              amount: numericAmount,
+              reference: reference || `MOZO-REF-${Date.now()}`,
+              status: 'success',
+              platform: 'mozosubs',
+              description: `Mozosubs wallet funding of ₦${numericAmount}`,
+              createdAt: new Date().toISOString(),
+              created_at: new Date().toISOString()
+            });
+            console.log(`[Mozosubs Webhook] Transaction logged successfully: ${reference}`);
+          } catch (txErr: any) {
+            console.warn("[Mozosubs Webhook] Failed to log transaction in database:", txErr.message || txErr);
+          }
+
+          // Secondary Firestore sync for secondary database compatibility
+          try {
+            if (db) {
+              // Get current firestore balance
+              const userRef = db.collection('users').doc(user_id);
+              const userSnap = await userRef.get();
+              if (userSnap.exists) {
+                const fsUser = userSnap.data();
+                const currentFsBal = Number(fsUser?.wallet_balance || fsUser?.balance || 0);
+                const newFsBal = currentFsBal + numericAmount;
+                await userRef.update({
+                  wallet_balance: newFsBal,
+                  available_balance: newFsBal,
+                  balance: newFsBal
+                });
+
+                // Also log to Firestore transactions
+                await db.collection('transactions').doc(txId).set({
+                  id: txId,
+                  userId: user_id,
+                  type: type || 'funding',
+                  amount: numericAmount,
+                  status: 'success',
+                  description: `Mozosubs wallet funding of ₦${numericAmount}`,
+                  reference: reference || `MOZO-REF-${Date.now()}`,
+                  createdAt: FieldValue.serverTimestamp()
+                });
+                console.log("[Mozosubs Webhook] Successfully synchronized backup Firestore user database.");
+              }
+            }
+          } catch (fsSyncErr: any) {
+            console.warn("[Firestore sync bypassed in Mozosubs Webhook]:", fsSyncErr.message || fsSyncErr);
+          }
+        } else {
+          console.warn("[Mozosubs Webhook] Missing user_id in data payload.");
+        }
+      } else {
+        console.log(`[Mozosubs Webhook] Event ignored or not success: event="${event}"`);
+      }
+
+      return res.status(200).json({ received: true });
+    } catch (error: any) {
+      console.error('Mozosubs webhook error:', error);
+      return res.status(500).json({ error: 'Webhook failed', message: error.message });
+    }
   });
 
   // Support administrative revenue audit via direct Supabase query

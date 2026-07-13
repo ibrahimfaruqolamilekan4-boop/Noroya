@@ -108,6 +108,89 @@ export default function AdminPanelSection() {
   const [servicesConfig, setServicesConfig] = React.useState<any[]>([]);
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
+  // Plans list filtering state
+  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubs-plans'>('overview');
+
+  // Mozosubs Data Plans States & Functions
+  const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
+  const [mozoLoading, setMozoLoading] = React.useState(false);
+  const [mozoSyncing, setMozoSyncing] = React.useState(false);
+  const [mozoSearch, setMozoSearch] = React.useState('');
+  const [mozoNetworkFilter, setMozoNetworkFilter] = React.useState('All');
+
+  const fetchMozoPlans = async () => {
+    setMozoLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('data_plans')
+        .select('*')
+        .order('network', { ascending: true })
+        .order('id', { ascending: true });
+      if (error) throw error;
+      setMozoPlans(data || []);
+    } catch (err: any) {
+      console.error("Error fetching Mozosubs plans:", err);
+      toast.error(`Failed to load Mozosubs plans: ${err.message}`);
+    } finally {
+      setMozoLoading(false);
+    }
+  };
+
+  const handleSyncMozoPlans = async () => {
+    setMozoSyncing(true);
+    toast.loading("Synchronizing plans from Mozosubs API...", { id: 'mozo-sync' });
+    try {
+      const response = await fetch('/api/admin/data-plans');
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || "Failed to sync plans from Mozosubs.");
+      }
+      toast.success(`Successfully synchronized ${resData.count || 0} plans!`, { id: 'mozo-sync' });
+      await fetchMozoPlans();
+    } catch (err: any) {
+      console.error("Error syncing Mozosubs plans:", err);
+      toast.error(`Sync failed: ${err.message}`, { id: 'mozo-sync' });
+    } finally {
+      setMozoSyncing(false);
+    }
+  };
+
+  const handleUpdateMozoPrice = async (id: any, newPrice: number) => {
+    try {
+      const { error } = await supabase
+        .from('data_plans')
+        .update({ custom_price: newPrice, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      toast.success("Plan price updated successfully!");
+      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, custom_price: newPrice } : p));
+    } catch (err: any) {
+      console.error("Error updating Mozosubs custom price:", err);
+      toast.error(`Failed to save price: ${err.message}`);
+    }
+  };
+
+  const handleToggleMozoActive = async (id: any, currentActive: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('data_plans')
+        .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      toast.success(`Plan ${!currentActive ? 'activated' : 'deactivated'} successfully!`);
+      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, is_active: !currentActive } : p));
+    } catch (err: any) {
+      console.error("Error toggling plan active status:", err);
+      toast.error(`Failed to toggle status: ${err.message}`);
+    }
+  };
+
+  React.useEffect(() => {
+    if (adminSubTab === 'mozosubs-plans') {
+      fetchMozoPlans();
+    }
+  }, [adminSubTab]);
+
   // Add Service Form State
   const [newServiceType, setNewServiceType] = React.useState<'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('data');
   const [newNetworkOrProvider, setNewNetworkOrProvider] = React.useState('MTN');
@@ -118,9 +201,6 @@ export default function AdminPanelSection() {
   const [newValidityDays, setNewValidityDays] = React.useState('30 Days');
   const [newPlanCategory, setNewPlanCategory] = React.useState<'SME' | 'CG' | 'GIFTING'>('SME');
   const [isAddingService, setIsAddingService] = React.useState(false);
-
-  // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts'>('overview');
 
   const [opayRevenueStats, setOpayRevenueStats] = React.useState<any>(null);
   const [loadingOpayStats, setLoadingOpayStats] = React.useState(false);
@@ -935,7 +1015,7 @@ export default function AdminPanelSection() {
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex bg-slate-100 p-1.5 rounded-2xl max-w-2xl select-none font-bold">
+      <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-3xl select-none font-bold">
         <button
           type="button"
           onClick={() => setAdminSubTab('overview')}
@@ -959,6 +1039,18 @@ export default function AdminPanelSection() {
           )}
         >
           Service Plans Manager
+        </button>
+        <button
+          type="button"
+          onClick={() => setAdminSubTab('mozosubs-plans')}
+          className={cn(
+            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+            adminSubTab === 'mozosubs-plans'
+              ? "bg-white text-slate-900 shadow-md font-extrabold"
+              : "text-slate-500 hover:text-slate-850"
+          )}
+        >
+          Mozosubs Plans
         </button>
         <button
           type="button"
@@ -2047,6 +2139,197 @@ export default function AdminPanelSection() {
             </form>
           </div>
 
+        </div>
+      )}
+
+      {adminSubTab === 'mozosubs-plans' && (
+        <div className="space-y-6 pb-12">
+          {/* Header Action Dashboard */}
+          <div className="bg-blue-50 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse"></span>
+                <span className="text-[10px] uppercase font-black tracking-wider text-blue-800 font-sans">Premium Mozosubs Sync Console</span>
+              </div>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Manage Mozosubs Data Plans</h4>
+              <p className="text-xs text-slate-650 font-semibold max-w-2xl font-sans">
+                Sync live data packages from Mozosubs VTU API. Customize user-facing prices and toggle package active/inactive status.
+              </p>
+            </div>
+            <button
+              onClick={handleSyncMozoPlans}
+              disabled={mozoSyncing}
+              className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-xs px-6 py-3.5 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center gap-2"
+            >
+              {mozoSyncing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-white" />
+                  Syncing from Provider...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} className="text-white" />
+                  Sync Plans from Mozosubs
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b-2 border-black text-left">
+              <div>
+                <h5 className="font-extrabold text-lg text-black font-sans uppercase tracking-tight">📶 Sync & Rate Matrix</h5>
+                <p className="text-[11px] text-slate-500 font-bold font-sans">
+                  Instantly publish or update pricing for automated network recharges.
+                </p>
+              </div>
+
+              {/* Network Filter Buttons */}
+              <div className="flex flex-wrap gap-1.5 font-sans">
+                {([
+                  { id: 'All', label: 'All Networks' },
+                  { id: '1', label: 'MTN (1)' },
+                  { id: '2', label: 'Glo (2)' },
+                  { id: '3', label: 'Airtel (3)' },
+                  { id: '4', label: '9mobile (4)' }
+                ] as const).map((net) => (
+                  <button
+                    key={net.id}
+                    type="button"
+                    onClick={() => setMozoNetworkFilter(net.id)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                      mozoNetworkFilter === net.id
+                        ? "bg-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                        : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
+                    )}
+                  >
+                    {net.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative text-left">
+              <input
+                type="text"
+                placeholder="Search Mozosubs plans (e.g. SME 1GB, GLO 1.35GB)..."
+                value={mozoSearch}
+                onChange={(e) => setMozoSearch(e.target.value)}
+                className="w-full bg-slate-50 text-slate-800 border-2 border-black rounded-xl p-3 text-xs font-bold focus:outline-none placeholder-slate-400 font-sans"
+              />
+            </div>
+
+            {/* Table / Grid list of plans */}
+            {mozoLoading ? (
+              <div className="py-24 text-center space-y-4">
+                <Loader2 className="animate-spin mx-auto text-blue-600" size={40} />
+                <p className="text-slate-500 font-extrabold font-sans text-xs">Fetching Sync Records from PostgreSQL...</p>
+              </div>
+            ) : (
+              <div className="grid gap-4 max-h-[600px] overflow-y-auto pr-2">
+                {(() => {
+                  const filtered = mozoPlans.filter(plan => {
+                    const matchesNetwork = mozoNetworkFilter === 'All' || String(plan.network || '') === mozoNetworkFilter;
+                    const matchesSearch = !mozoSearch.trim() ||
+                      String(plan.plan_name || '').toLowerCase().includes(mozoSearch.toLowerCase()) ||
+                      String(plan.mozosubs_plan_id || '').toLowerCase().includes(mozoSearch.toLowerCase());
+                    return matchesNetwork && matchesSearch;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
+                        No Mozosubs data plans found in local cache. Click the Sync button to fetch latest rates.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      {filtered.map((plan) => {
+                        const netLabel = plan.network === '1' ? 'MTN' : plan.network === '2' ? 'GLO' : plan.network === '3' ? 'Airtel' : plan.network === '4' ? '9mobile' : `Net ${plan.network}`;
+                        return (
+                          <div
+                            key={plan.id}
+                            className={cn(
+                              "bg-slate-50 border-2 border-black rounded-2xl p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all space-y-3 text-left relative",
+                              !plan.is_active && "opacity-75 grayscale"
+                            )}
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={cn(
+                                    "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                                    plan.network === '1' ? "bg-yellow-400 text-black" :
+                                    plan.network === '2' ? "bg-green-500 text-white" :
+                                    plan.network === '3' ? "bg-red-500 text-white" :
+                                    plan.network === '4' ? "bg-emerald-600 text-white" :
+                                    "bg-slate-900 text-white"
+                                  )}>
+                                    {netLabel}
+                                  </span>
+                                  <span className="text-[9px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase font-mono">
+                                    ID: {plan.mozosubs_plan_id}
+                                  </span>
+                                </div>
+                                <h6 className="font-extrabold text-slate-950 text-sm tracking-tight pt-1">
+                                  {plan.plan_name}
+                                </h6>
+                              </div>
+
+                              {/* Active Status Checkbox */}
+                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={plan.is_active !== false}
+                                  onChange={() => handleToggleMozoActive(plan.id, plan.is_active !== false)}
+                                  className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
+                                />
+                                <span className="text-[10px] font-black uppercase font-sans">
+                                  {plan.is_active !== false ? "🟢 On" : "🔴 Off"}
+                                </span>
+                              </label>
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-4">
+                              <div className="text-[10px] font-sans">
+                                <span className="block text-slate-400 font-bold">Cost Price</span>
+                                <span className="font-bold text-xs text-slate-700 font-mono">₦{plan.original_price}</span>
+                              </div>
+
+                              <div className="text-[10px] font-sans">
+                                <span className="block text-slate-400 font-bold">Validity</span>
+                                <span className="font-bold text-xs text-slate-700 uppercase font-mono">{plan.validity}</span>
+                              </div>
+
+                              {/* Custom Selling Price Input */}
+                              <div className="flex flex-col items-end w-32 font-sans">
+                                <span className="text-[9px] text-slate-500 font-black uppercase pb-1 leading-none">Your Selling Price (₦)</span>
+                                <input
+                                  type="number"
+                                  defaultValue={plan.custom_price || plan.original_price}
+                                  onBlur={(e) => {
+                                    const val = Number(e.target.value);
+                                    if (val > 0 && val !== plan.custom_price) {
+                                      handleUpdateMozoPrice(plan.id, val);
+                                    }
+                                  }}
+                                  className="w-full bg-white border-2 border-black text-black font-extrabold text-xs rounded-xl py-1.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
