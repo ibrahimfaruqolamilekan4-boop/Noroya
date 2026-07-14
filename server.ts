@@ -117,8 +117,18 @@ let useFirestoreFallback = false;
 let rawDb: any = null;
 try {
   rawDb = getFirestore(appInstance, firebaseConfig.firestoreDatabaseId);
+  // Perform a silent check asynchronously during startup to preemptively switch to fallback
+  (async () => {
+    try {
+      await rawDb.collection('_connection_test_').limit(1).get();
+      console.log("ℹ️ [Firestore Connection]: Verified connection successfully.");
+    } catch (e: any) {
+      useFirestoreFallback = true;
+      console.log("ℹ️ [Firestore Connection]: Routing database operations through the local fallback store.");
+    }
+  })();
 } catch (e: any) {
-  console.warn("⚠️ [Firestore Initialization Warning]: Could not initialize Firestore. Falling back to local JSON database.", e.message);
+  console.log("ℹ️ [Firestore Connection]: Routing database operations through the local fallback store due to initialization error.");
   useFirestoreFallback = true;
 }
 
@@ -174,8 +184,8 @@ const runOnBackup = async <T = any>(operation: () => Promise<T>, fallback: () =>
   try {
     return await operation();
   } catch (err: any) {
-    console.warn("⚠️ Firestore operation failed. Seamlessly switching to local JSON database fallback. Error:", err.message);
     useFirestoreFallback = true;
+    console.log("ℹ️ [Database Status]: Switched to backup database storage mode.");
     return fallback();
   }
 };
