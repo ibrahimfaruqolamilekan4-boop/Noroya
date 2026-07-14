@@ -156,7 +156,7 @@ function loadLocalDb(): LocalStore {
 
 function saveLocalDb(data: LocalStore) {
   try {
-    fs.writeFileSync(LOCAL_DB_PATH, safeJsonStringify(data, 2), "utf-8");
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   } catch (e) {
     console.error("Error saving local DB:", e);
   }

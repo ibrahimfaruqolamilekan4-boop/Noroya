@@ -19,22 +19,9 @@ function loadLocalDb() {
   return { users: {}, referralCodes: {}, processed_payments: {}, transactions: {}, _connection_test_: {} };
 }
 
-function safeJsonStringify(obj, space) {
-  const seen = new WeakSet();
-  return JSON.stringify(obj, (key, value) => {
-    if (typeof value === "object" && value !== null) {
-      if (seen.has(value)) {
-        return "[Circular]";
-      }
-      seen.add(value);
-    }
-    return value;
-  }, space);
-}
-
 function saveLocalDb(data) {
   try {
-    fs.writeFileSync(LOCAL_DB_PATH, safeJsonStringify(data, 2), "utf-8");
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   } catch (e) {
     console.error("Error saving local DB:", e);
   }
