@@ -19,9 +19,22 @@ function loadLocalDb() {
   return { users: {}, referralCodes: {}, processed_payments: {}, transactions: {}, _connection_test_: {} };
 }
 
+function safeJsonStringify(obj, space) {
+  const seen = new WeakSet();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+    }
+    return value;
+  }, space);
+}
+
 function saveLocalDb(data) {
   try {
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    fs.writeFileSync(LOCAL_DB_PATH, safeJsonStringify(data, 2), "utf-8");
   } catch (e) {
     console.error("Error saving local DB:", e);
   }
@@ -482,7 +495,7 @@ export async function v1DataPurchase(req, res) {
       
       console.log(`================ PEYFLEX API CORE RESPONSE ================`);
       console.log(`STATUS CODE: ${apiResponse.status}`);
-      console.log(`RESPONSE BODY: ${JSON.stringify(responseBody)}`);
+      console.log(`RESPONSE BODY: ${safeJsonStringify(responseBody)}`);
       console.log(`============================================================`);
 
       if (apiResponse.ok && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
@@ -490,7 +503,7 @@ export async function v1DataPurchase(req, res) {
       } else {
         networkErr = responseBody.error || responseBody.message || `Provider internal error status ${apiResponse.status}`;
         console.error(`❌ [PEYFLEX DISPATCH REJECTED] Error: ${networkErr}`);
-        if (JSON.stringify(responseBody).toLowerCase().includes("insufficient")) {
+        if (safeJsonStringify(responseBody).toLowerCase().includes("insufficient")) {
           console.error("⚠️ [CRITICAL] Peyflex API returned an INSUFFICIENT BALANCE error. Check wholesale account wallet at Peyflex!");
         }
       }

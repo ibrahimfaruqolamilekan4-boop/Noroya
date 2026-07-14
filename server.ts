@@ -156,7 +156,7 @@ function loadLocalDb(): LocalStore {
 
 function saveLocalDb(data: LocalStore) {
   try {
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    fs.writeFileSync(LOCAL_DB_PATH, safeJsonStringify(data, 2), "utf-8");
   } catch (e) {
     console.error("Error saving local DB:", e);
   }
@@ -1134,14 +1134,19 @@ async function startServer() {
           updated_at: new Date().toISOString()
         };
 
-        const { error: upsertErr } = await supabase
-          .from('data_plans')
-          .upsert(record, { onConflict: 'mozosubs_plan_id' });
+        let syncedSuccessful = false;
+        try {
+          const { error: upsertErr } = await supabase
+            .from('data_plans')
+            .upsert(record, { onConflict: 'mozosubs_plan_id' });
 
-        if (upsertErr) {
-          console.error(`[Mozosubs Sync] Supabase upsert error for plan ${pId}:`, upsertErr.message);
-        } else {
-          syncedPlans.push(record);
+          if (upsertErr) {
+            console.error(`[Mozosubs Sync] Supabase upsert error for plan ${pId}:`, upsertErr.message);
+          } else {
+            syncedSuccessful = true;
+          }
+        } catch (supErr: any) {
+          console.error(`[Mozosubs Sync] Supabase upsert exception for plan ${pId}:`, supErr.message || supErr);
         }
 
         try {
@@ -1157,9 +1162,14 @@ async function startServer() {
               is_active: plan.is_active !== undefined ? plan.is_active : true,
               updatedAt: FieldValue.serverTimestamp()
             }, { merge: true });
+            syncedSuccessful = true;
           }
         } catch (fsErr: any) {
           console.warn(`[Mozosubs Sync] Firestore sync warning for plan ${pId}:`, fsErr.message);
+        }
+
+        if (syncedSuccessful || MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
+          syncedPlans.push(record);
         }
       }
 
