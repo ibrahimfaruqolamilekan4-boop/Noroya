@@ -423,7 +423,7 @@ export default function AdminPanelSection() {
           toast.success("Service created! Note: validity_days column is missing in 'services_config' Supabase table. Validity is defaulted to 30 Days.");
         }
       } else if (!error) {
-        toast.success("New Bigisub Service Configuration created successfully with validity!");
+        toast.success("New Mozosubs Service Configuration created successfully with validity!");
       }
 
       if (error) throw error;
@@ -466,29 +466,29 @@ export default function AdminPanelSection() {
   };
 
   // API config state
-  const [providerUrl, setProviderUrl] = React.useState('https://www.bigisub.ng/api/v1');
+  const [providerUrl, setProviderUrl] = React.useState('https://mozosubs.com/api');
   const [providerKey, setProviderKey] = React.useState('');
   const [isSavingKey, setIsSavingKey] = React.useState(false);
 
   React.useEffect(() => {
-    const fetchBigisubKey = async () => {
+    const fetchMozosubsKey = async () => {
       try {
         const { data, error } = await supabase
           .from('services_config')
           .select('item_name')
-          .eq('bigisub_identifier_id', 'bigisub_api_key')
+          .eq('bigisub_identifier_id', 'mozosubs_api_key')
           .maybeSingle();
         if (!error && data?.item_name) {
           setProviderKey(data.item_name);
         }
       } catch (err) {
-        console.warn("Could not fetch Bigisub API key from Supabase services_config on load:", err);
+        console.warn("Could not fetch Mozosubs API key from Supabase services_config on load:", err);
       }
     };
-    fetchBigisubKey();
+    fetchMozosubsKey();
   }, []);
 
-  const handleSaveBigisubKey = async () => {
+  const handleSaveMozosubsKey = async () => {
     if (!providerKey.trim()) {
       toast.error("Please enter a valid API key.");
       return;
@@ -499,7 +499,7 @@ export default function AdminPanelSection() {
         service_type: 'airtime',
         network_or_provider: 'SYSTEM_CONFIG',
         item_name: providerKey.trim(),
-        bigisub_identifier_id: 'bigisub_api_key',
+        bigisub_identifier_id: 'mozosubs_api_key',
         cost_price: 0,
         selling_price: 0,
         is_active: true,
@@ -509,10 +509,10 @@ export default function AdminPanelSection() {
         .from('services_config')
         .upsert(payload, { onConflict: 'bigisub_identifier_id' });
       if (error) throw error;
-      toast.success("Bigisub API token linked and saved to Supabase successfully!");
+      toast.success("Mozosubs API token linked and saved to Supabase successfully!");
     } catch (err: any) {
-      console.error("Error saving Bigisub API token:", err);
-      toast.error(`Failed to link Bigisub API token: ${err.message || err}`);
+      console.error("Error saving Mozosubs API token:", err);
+      toast.error(`Failed to link Mozosubs API token: ${err.message || err}`);
     } finally {
       setIsSavingKey(false);
     }
@@ -1327,14 +1327,14 @@ export default function AdminPanelSection() {
                     <div className="flex gap-2">
                       <input 
                         type="text" 
-                        placeholder="Paste your Bigisub API Token here..."
+                        placeholder="Paste your Mozosubs API Token here..."
                         value={providerKey} 
                         onChange={(e) => setProviderKey(e.target.value)}
                         className="flex-1 bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
                       />
                       <button 
                         type="button"
-                        onClick={handleSaveBigisubKey}
+                        onClick={handleSaveMozosubsKey}
                         disabled={isSavingKey}
                         className="bg-slate-900 hover:bg-black text-white text-[11px] font-extrabold py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm whitespace-nowrap"
                       >
@@ -1404,7 +1404,7 @@ export default function AdminPanelSection() {
                 <span className="h-2.5 w-2.5 rounded-full bg-black animate-pulse"></span>
                 <span className="text-[10px] uppercase font-black tracking-wider text-black font-sans">Option C Neo-Brutalism Design Panel</span>
               </div>
-              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Bigisub VTU Integration Console</h4>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubs VTU Integration Console</h4>
               <p className="text-xs text-black/80 font-bold max-w-2xl font-sans">
                 Real-time synchronized control. Keep your published digital packages perfectly calibrated. 7-day physical lifespan rules apply automatically on database write transactions.
               </p>
@@ -1502,7 +1502,7 @@ export default function AdminPanelSection() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Bigisub Plan/Identifier ID</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Mozosubs Plan/Identifier ID</label>
                     <input
                       required
                       type="text"
@@ -1761,7 +1761,7 @@ export default function AdminPanelSection() {
 
                             {/* Bigisub Plan ID */}
                             <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
-                              <span className="font-bold w-20">Bigisub ID:</span>
+                              <span className="font-bold w-20">Mozosubs ID:</span>
                               <input
                                 type="text"
                                 value={item.bigisub_plan_id || ''}
