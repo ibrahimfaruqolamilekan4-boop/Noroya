@@ -7,6 +7,7 @@ import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
 import { supabase } from "./src/lib/supabase.js";
+initProviders(supabase); // wire providers with Supabase client
 import axios from "axios";
 
 const ensureUUID = (strId: string): string => {
@@ -50,6 +51,37 @@ const resolveBigisubApiKey = async (): Promise<string> => {
     console.warn("[resolveBigisubApiKey] Error querying Supabase, using env fallback:", err);
   }
   return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
+};
+
+// ─── VTU Provider Plugin System ─────────────────────────────────────────────
+// Providers live in src/lib/vtu-providers.ts
+// To add a new provider: implement VtuProvider there and add to PROVIDERS map
+import { getProvider, initProviders, listProviders } from './src/lib/vtu-providers';
+
+// ─── Failure logger ───────────────────────────────────────────────────────────
+const logVtuFailure = async (opts: {
+  provider: string; network: string; phone: string;
+  planId: string; planName: string; amount: number;
+  error: string; raw?: any;
+}) => {
+  const entry = {
+    provider:      opts.provider,
+    network:       opts.network,
+    phone_last4:   String(opts.phone).slice(-4),        // privacy — store last 4 only
+    plan_id:       opts.planId,
+    plan_name:     opts.planName,
+    amount:        opts.amount,
+    error_message: opts.error,
+    raw_response:  JSON.stringify(opts.raw || {}).substring(0, 2000),
+    timestamp:     new Date().toISOString(),
+  };
+  console.error('[VTU FAILURE]', JSON.stringify(entry));
+  try {
+    await supabase.from('vtu_failure_log').insert(entry);
+  } catch (e: any) {
+    // Table may not exist yet — failure log itself should never crash the app
+    console.warn('[VTU FAILURE] Could not write to vtu_failure_log:', e?.message || e);
+  }
 };
 
 const resolveMozosubzApiKey = async (): Promise<string> => {
@@ -565,7 +597,7 @@ async function startServer() {
 
       const { data: rows, error: dbErr } = await supabase
         .from('services_config')
-        .select('id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active')
+        .select('id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active, provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id')
         .eq('is_active', true)
         .order('network');
 
@@ -591,8 +623,12 @@ async function startServer() {
         amount:               Number(r.selling_price || r.retail_price || 0),
         retail_price:         Number(r.selling_price || r.retail_price || 0),
         validity:             r.validity_days || '30 Days',
-        peyflex_variation_id: r.bigisub_identifier_id || String(r.id),
-        apiPlanId:            r.bigisub_identifier_id || String(r.id),
+        peyflex_variation_id: r.mozosubs_plan_id || r.mozosubz_plan_id || r.bigisub_identifier_id || String(r.id),
+        apiPlanId:            r.mozosubs_plan_id || r.mozosubz_plan_id || r.bigisub_identifier_id || String(r.id),
+        mozosubs_plan_id:     r.mozosubs_plan_id || r.mozosubz_plan_id || '',
+        mozosubz_service:     r.mozosubz_service || '',
+        bigisub_identifier_id: r.bigisub_identifier_id || '',
+        provider:             r.provider || 'mozosubz',
       }));
 
       const filtered = network
@@ -944,74 +980,76 @@ async function startServer() {
         else if (finalNetwork === 4) bigiNetworkId = 4;
       }
 
-      // 3. Dispatch via Mozosubz API
-      const MOZOSUBZ_KEY = await resolveMozosubzApiKey();
-      const MOZOSUBZ_BASE = "https://mozosubz.xyz/api/v1";
+      // 3. Look up plan config + chosen provider from services_config
+      let planConfig: any = null;
+      try {
+        const { data: pc } = await supabase
+          .from('services_config')
+          .select('provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id, bigisub_identifier_id, bigisub_network_id')
+          .or(`mozosubs_plan_id.eq.${resolvedPlanCode},mozosubz_plan_id.eq.${resolvedPlanCode},bigisub_identifier_id.eq.${resolvedPlanCode}`)
+          .maybeSingle();
+        planConfig = pc;
+      } catch (_) {}
+
+      const chosenProvider = planConfig?.provider || 'mozosubz';
+      const provider = getProvider(chosenProvider);
 
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (!MOZOSUBZ_KEY || MOZOSUBZ_KEY.length < 10) {
-        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      if (!provider) {
+        return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
       }
 
+      // Resolve the API key for this provider
+      const providerApiKey = await provider.resolveApiKey();
+      if (!providerApiKey || providerApiKey.length < 6) {
+        return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured. Contact admin.` });
+      }
+
+      // Dispatch through the provider plugin
       try {
-        // Also look up the mozosubz_service for this plan (needed for data purchase)
-        let mozosubzService = req.body.mozosubz_service || req.body.service || '';
-        if (!mozosubzService && finalType === 'data' && resolvedPlanCode) {
-          // Try to look it up from services_config
-          try {
-            const { data: planRow } = await supabase
-              .from('services_config')
-              .select('mozosubz_service, mozosubs_plan_id')
-              .or(`mozosubs_plan_id.eq.${resolvedPlanCode},mozosubz_plan_id.eq.${resolvedPlanCode}`)
-              .maybeSingle();
-            if (planRow?.mozosubz_service) mozosubzService = planRow.mozosubz_service;
-          } catch (_) {}
-        }
-
-        // Map network to Mozosubz lowercase format
-        const netLower = String(finalNetwork || '').toLowerCase();
-        let mozoNetwork = 'mtn';
-        if (netLower.includes('glo'))                                              mozoNetwork = 'glo';
-        else if (netLower.includes('airtel'))                                      mozoNetwork = 'airtel';
-        else if (netLower.includes('9mobile') || netLower.includes('etisalat'))   mozoNetwork = 'etisalat';
-
-        let mozoUrl: string;
-        let payload: any;
-
-        if (finalType === 'data') {
-          mozoUrl = `${MOZOSUBZ_BASE}/data/purchase`;
-          payload = {
-            service: mozosubzService || `${mozoNetwork}_sme`,
-            id:      String(resolvedPlanCode),
-            phone:   finalPhone,
-          };
-        } else {
-          mozoUrl = `${MOZOSUBZ_BASE}/airtime/purchase`;
-          payload = { network: mozoNetwork, amount: finalAmount, phone: finalPhone };
-        }
-
-        console.log(`[Mozosubz Purchase Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
-
-        const response = await axios.post(mozoUrl, payload, {
-          headers: { 'Content-Type': 'application/json', 'X-Connect-Key': MOZOSUBZ_KEY },
-          timeout: 12000
+        const result = await provider.purchase({
+          type:             finalType as 'data' | 'airtime',
+          network:          finalNetwork,
+          phone:            finalPhone,
+          amount:           finalAmount,
+          planId:           resolvedPlanCode,
+          providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
+          mozosubzService:  planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+          apiKey:           providerApiKey,
         });
 
-        apiResponseData = response.data;
-        console.log("[Mozosubz Purchase Response]:", apiResponseData);
-
-        if (apiResponseData?.success === true) {
+        apiResponseData = result.raw;
+        if (result.success) {
           apiSuccess = true;
         } else {
-          apiErrorMsg = apiResponseData?.error || apiResponseData?.message || "Purchase rejected by gateway.";
+          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
+          await logVtuFailure({
+            provider:  chosenProvider,
+            network:   finalNetwork,
+            phone:     finalPhone,
+            planId:    resolvedPlanCode,
+            planName:  plan_name || planName || '',
+            amount:    finalAmount,
+            error:     apiErrorMsg,
+            raw:       apiResponseData,
+          });
         }
-      } catch (axiosErr: any) {
-        console.error("[Mozosubz Purchase HTTP Error]:", axiosErr.response?.data || axiosErr.message);
-        const respData = axiosErr.response?.data;
-        apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection failed.";
+      } catch (providerErr: any) {
+        const rawErrData = providerErr.response?.data;
+        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
+        await logVtuFailure({
+          provider:  chosenProvider,
+          network:   finalNetwork,
+          phone:     finalPhone,
+          planId:    resolvedPlanCode,
+          planName:  plan_name || planName || '',
+          amount:    finalAmount,
+          error:     apiErrorMsg,
+          raw:       rawErrData,
+        });
       }
       
 

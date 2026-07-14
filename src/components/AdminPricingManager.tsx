@@ -36,17 +36,27 @@ type ServiceID = typeof MOZOSUBZ_SERVICES[number]['id'];
 
 interface RawPlan { id: string; name: string; price: number; }
 
+// All supported providers — add new ones here as you onboard them
+const PROVIDER_OPTIONS = [
+  { value: 'mozosubz', label: 'Mozosubz' },
+  { value: 'bigisub',  label: 'Bigisub'  },
+  // { value: 'myprovider', label: 'My Provider' }, ← plug in new providers here
+] as const;
+type ProviderSlug = typeof PROVIDER_OPTIONS[number]['value'];
+
 interface PricingRow {
-  planId:       string;
-  serviceId:    ServiceID;
-  network:      string;
-  name:         string;
-  costPrice:    number;    // Mozosubz wholesale price
-  markupPct:    number;    // % above cost
-  sellingPrice: number;    // costPrice * (1 + markupPct/100), rounded up
-  saved:        boolean;   // published to services_config?
-  saving:       boolean;
-  dirty:        boolean;   // edited since last publish
+  planId:              string;
+  serviceId:           ServiceID;
+  network:             string;
+  name:                string;
+  costPrice:           number;    // Mozosubz wholesale price
+  markupPct:           number;    // % above cost
+  sellingPrice:        number;    // costPrice * (1 + markupPct/100), rounded up
+  saved:               boolean;   // published to services_config?
+  saving:              boolean;
+  dirty:               boolean;   // edited since last publish
+  provider:            ProviderSlug; // which gateway fulfils this plan
+  bigisubPlanId:       string;    // Bigisub numeric/string plan ID (only used when provider=bigisub)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -88,12 +98,12 @@ export default function AdminPricingManager() {
   const loadExistingPrices = useCallback(async () => {
     const { data } = await supabase
       .from('services_config')
-      .select('mozosubs_plan_id, bigisub_identifier_id, selling_price, cost_price, is_active')
+      .select('mozosubs_plan_id, mozosubz_plan_id, bigisub_identifier_id, selling_price, cost_price, is_active, provider')
       .eq('service_type', 'data');
     const map: Record<string, { selling: number; cost: number; active: boolean }> = {};
     (data || []).forEach((r: any) => {
-      const k = String(r.mozosubs_plan_id || r.bigisub_identifier_id || '');
-      if (k) map[k] = { selling: Number(r.selling_price || 0), cost: Number(r.cost_price || 0), active: !!r.is_active };
+      const k = String(r.mozosubs_plan_id || r.mozosubz_plan_id || r.bigisub_identifier_id || '');
+      if (k) map[k] = { selling: Number(r.selling_price || 0), cost: Number(r.cost_price || 0), active: !!r.is_active, provider: r.provider || 'mozosubz', bigisub_identifier_id: r.bigisub_identifier_id || '' };
     });
     return map;
   }, []);
@@ -132,7 +142,7 @@ export default function AdminPricingManager() {
 
       const defaultMarkup = parseFloat(globalMarkup) || 10;
 
-      const newRows: PricingRow[] = plans.map(p => {
+      const newRows: PricingRow[] = plans.map((p: any) => {
         const existing = existingPrices[p.id];
         const cost     = p.price;
         let markup     = defaultMarkup;
@@ -142,16 +152,18 @@ export default function AdminPricingManager() {
         const selling = existing?.selling || calcSelling(cost, markup);
         const svc     = SERVICE_MAP[p.service] || { network: 'MTN' };
         return {
-          planId:       p.id,
-          serviceId:    p.service,
-          network:      svc.network,
-          name:         p.name,
-          costPrice:    cost,
-          markupPct:    Math.round(markup * 10) / 10,
-          sellingPrice: selling,
-          saved:        !!existing?.selling,
-          saving:       false,
-          dirty:        false,
+          planId:        p.id,
+          serviceId:     p.service,
+          network:       svc.network,
+          name:          p.name,
+          costPrice:     cost,
+          markupPct:     Math.round(markup * 10) / 10,
+          sellingPrice:  selling,
+          saved:         !!existing?.selling,
+          saving:        false,
+          dirty:         false,
+          provider:      ((existing as any)?.provider as ProviderSlug) || 'mozosubz',
+          bigisubPlanId: (existing as any)?.bigisub_identifier_id || '',
         };
       });
 
@@ -213,19 +225,22 @@ export default function AdminPricingManager() {
 
       const svc = SERVICE_MAP[row.serviceId];
       const payload = {
-        id:               row.planId,
-        name:             row.name,
-        network:          row.network,
-        service:          row.serviceId,
-        type:             'data',
-        price:            row.sellingPrice,
-        cost_price:       row.costPrice,
-        selling_price:    row.sellingPrice,
-        retail_price:     row.sellingPrice,
-        plan_category:    deriveCategory(row.serviceId),
-        validity_days:    parseValidity(row.name),
-        mozosubz_plan_id: row.planId,
-        mozosubz_service: row.serviceId,
+        id:                    row.planId,
+        name:                  row.name,
+        network:               row.network,
+        service:               row.serviceId,
+        type:                  'data',
+        price:                 row.sellingPrice,
+        cost_price:            row.costPrice,
+        selling_price:         row.sellingPrice,
+        retail_price:          row.sellingPrice,
+        plan_category:         deriveCategory(row.serviceId),
+        validity_days:         parseValidity(row.name),
+        mozosubz_plan_id:      row.planId,
+        mozosubs_plan_id:      row.planId,
+        mozosubz_service:      row.serviceId,
+        provider:              row.provider,
+        bigisub_identifier_id: row.provider === 'bigisub' ? row.bigisubPlanId : '',
       };
 
       const res = await fetch('/api/admin/create-plan', {
@@ -418,6 +433,36 @@ export default function AdminPricingManager() {
                   </button>
                 ))}
               </div>
+            </div>
+
+          {/* ── Batch Provider Setter ── */}
+          <div>
+            <label className="block text-xs text-slate-400 font-medium mb-1.5">Set all visible plans → provider</label>
+            <div className="flex items-center gap-2">
+              <select
+                id="batch-provider"
+                defaultValue="mozosubz"
+                className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {PROVIDER_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => {
+                  const sel = (document.getElementById('batch-provider') as HTMLSelectElement)?.value as ProviderSlug;
+                  setRows(prev => prev.map(r => {
+                    const tab  = activeTab === 'all' || r.serviceId === activeTab;
+                    const srch = !search || r.name.toLowerCase().includes(search.toLowerCase());
+                    return tab && srch ? { ...r, provider: sel, dirty: true } : r;
+                  }));
+                  toast.success(`Set ${filtered.length} plans → ${sel}`);
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium transition border border-slate-600"
+              >
+                Apply to visible
+              </button>
+            </div>
             </div>
           </div>
           <div className="flex items-center gap-3 ml-auto">
@@ -615,6 +660,36 @@ export default function AdminPricingManager() {
                           <span className="text-[10px] text-red-400 font-semibold mt-0.5">Below cost!</span>
                         )}
                       </div>
+                    </div>
+
+                    {/* Provider dropdown + Bigisub plan ID */}
+                    <div className="text-center space-y-1">
+                      <select
+                        value={row.provider}
+                        onChange={e => setRows(prev => prev.map(r =>
+                          r.planId === row.planId
+                            ? { ...r, provider: e.target.value as ProviderSlug, dirty: true }
+                            : r
+                        ))}
+                        className="w-full bg-slate-800 border border-slate-600 text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        {PROVIDER_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      {row.provider === 'bigisub' && (
+                        <input
+                          type="text"
+                          placeholder="Bigisub plan ID"
+                          value={row.bigisubPlanId}
+                          onChange={e => setRows(prev => prev.map(r =>
+                            r.planId === row.planId
+                              ? { ...r, bigisubPlanId: e.target.value, dirty: true }
+                              : r
+                          ))}
+                          className="w-full bg-slate-900 border border-amber-500/40 text-amber-300 text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder-slate-600 font-mono"
+                        />
+                      )}
                     </div>
 
                     {/* Status */}
