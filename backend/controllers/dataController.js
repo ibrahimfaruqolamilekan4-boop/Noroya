@@ -651,7 +651,7 @@ export async function getTransactions(req, res) {
   try {
     const mongoActive = await connectToMongo();
     if (mongoActive && userId) {
-      const records = await Transaction.find({ userId }).sort({ createdAt: -1 });
+      const records = await Transaction.find({ userId }).sort({ createdAt: -1 }).lean();
       return res.json(records);
     }
   } catch (err) {
