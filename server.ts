@@ -724,6 +724,34 @@ async function startServer() {
   }
 
   /**
+   * Lightweight identity-only verifier for endpoints backed by Firestore (not Supabase profiles).
+   * Resolves ONLY a verified user id from the session token -- never trusts a body-supplied id.
+   * Returns null if no valid session token is present.
+   */
+  async function verifyCallerUserId(req: express.Request): Promise<string | null> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    const token = authHeader.substring(7);
+
+    try {
+      const decoded = verifyJwt(token);
+      if (decoded && decoded.uid) return decoded.uid;
+    } catch (e) { /* continue */ }
+
+    try {
+      const decodedFirebase = await getAdminAuth(appInstance).verifyIdToken(token);
+      if (decodedFirebase && decodedFirebase.uid) return decodedFirebase.uid;
+    } catch (e) { /* continue */ }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser(token);
+      if (user) return user.id;
+    } catch (e) { /* continue */ }
+
+    return null;
+  }
+
+  /**
    * Helper to securely fetch the user profile balance by looking up the real, authenticated
    * user ID string from the session payload (and/or fallback request body parameters),
    * ensuring that any non-standard format (like 'admin_ibrahim_vtu_uid') is deterministically
@@ -775,13 +803,17 @@ async function startServer() {
       }
     }
 
-    // 4. Fallback to req.body.userId if no token matches, ensuring backward compatibility with simpler client calls
-    if (!rawUserId && req.body && req.body.userId) {
-      rawUserId = req.body.userId;
+    // SECURITY: rawUserId must come ONLY from a verified session token above -- never trust a
+    // client-supplied req.body.userId as identity, or anyone could spend/view any other user's
+    // wallet by simply passing their UUID in the request body with no proof of who they are.
+    if (!rawUserId) {
+      throw new Error("Unauthorized: No valid user session token provided.");
     }
 
-    if (!rawUserId) {
-      throw new Error("Unauthorized: No valid user session token or user ID provided.");
+    // If the caller also passed a body userId, it must match the verified token's identity --
+    // reject silently-mismatched requests instead of trusting the body value.
+    if (req.body && req.body.userId && req.body.userId !== rawUserId) {
+      throw new Error("Unauthorized: Provided userId does not match the authenticated session.");
     }
 
     // 5. SECURE SANITIZATION: Cast the ID string (e.g. 'admin_ibrahim_vtu_uid') into a valid Postgres UUID format
@@ -1225,7 +1257,6 @@ async function startServer() {
       apiPlanId
     } = req.body;
     
-    const finalUserId = userId;
     const finalNetwork = networkId || network;
     const finalPhone = phone || phoneNumber || phone_number;
     const finalAmount = Number(
@@ -1247,8 +1278,18 @@ async function startServer() {
       }
     }
 
-    if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
+    if (!userId || !finalPhone || !finalAmount || !finalNetwork) {
       return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
+    }
+
+    // SECURITY: never trust the body-supplied userId as identity -- require a real verified
+    // session and confirm it actually matches the account this purchase is being made against.
+    let finalUserId: string;
+    try {
+      const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+      finalUserId = verifiedUserId;
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
     }
 
     try {
@@ -1512,11 +1553,17 @@ async function startServer() {
    * Securely handles user balances and dispatches data purchase requests to Bigisub
    */
   app.post('/api/vendor/buy-data', async (req, res) => {
-    const { userUUID, email, networkId, planId, phoneNumber, costAmount } = req.body;
+    const { email, networkId, planId, phoneNumber, costAmount } = req.body;
 
     try {
-      if (!userUUID) {
-        return res.status(400).json({ success: false, message: "Missing userUUID parameter." });
+      // SECURITY: never trust a body-supplied userUUID as identity -- require a real verified
+      // session, and only ever act on the caller's own verified account.
+      let userUUID: string;
+      try {
+        const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+        userUUID = verifiedUserId;
+      } catch (authErr: any) {
+        return res.status(401).json({ success: false, message: `Unauthorized: ${authErr.message}` });
       }
 
       // 1. Fetch user profile from Supabase securely using their UUID
@@ -1628,58 +1675,64 @@ async function startServer() {
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
   app.post('/api/vendor/recharge', async (req, res) => {
-    const { email, type, networkId, planId, phoneNumber, amount, userUUID, uuid, costAmount } = req.body;
+    const { email, type, networkId, planId, phoneNumber, amount, costAmount } = req.body;
 
     try {
-      const targetId = userUUID || uuid;
+      // SECURITY: never trust a body-supplied userUUID/uuid/email as identity -- require a real
+      // verified session, and only ever act on the caller's own verified account.
+      let targetId: string;
+      try {
+        const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+        targetId = verifiedUserId;
+      } catch (authErr: any) {
+        return res.status(401).json({ success: false, message: `Unauthorized: ${authErr.message}` });
+      }
+
       let profile: any = null;
 
-      if (targetId) {
-        // 1. Look up profile using the bulletproof unique ID (UUID)
-        const { data, error: profileError } = await supabase
+      // 1. Look up profile using the verified UUID
+      const { data, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', targetId)
+        .maybeSingle();
+
+      profile = data;
+
+      // AUTO-HEAL: if the verified caller genuinely has no profile row yet, create one with a
+      // ZERO starting balance -- never seed free money. (No longer keyed on an unverified body ID.)
+      if (profileError || !profile) {
+        console.log(`Profile missing for verified UUID ${targetId}. Auto-creating profile row now...`);
+        const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+        const username = email ? email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+        const recoveryPayload = {
+          id: targetId,
+          name: 'User',
+          username: username,
+          email: email || '',
+          phone_number: phoneNumber || '',
+          referral_code: referralCode,
+          transaction_pin: '1234',
+          wallet_balance: 0,
+          balance: 0
+        };
+
+        const { error: insertError } = await supabase
+          .from('profiles')
+          .insert([recoveryPayload]);
+
+        if (insertError) {
+          throw new Error("Critical database profile creation failure: " + insertError.message);
+        }
+
+        // Fetch back the new profile seamlessly
+        const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', targetId)
           .maybeSingle();
 
-        profile = data;
-
-        // 🚨 AUTO-HEAL: If the profile is missing for ANY reason, create it instantly!
-        if (profileError || !profile) {
-          console.log(`Profile missing for UUID ${targetId}. Auto-creating profile row now...`);
-          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-          const username = email ? email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
-          const recoveryPayload = {
-            id: targetId,
-            name: 'User',
-            username: username,
-            email: email || '',
-            phone_number: phoneNumber || '',
-            referral_code: referralCode,
-            transaction_pin: '1234',
-            wallet_balance: 200.00,
-            balance: 200.00
-          };
-
-          const { error: insertError } = await supabase
-            .from('profiles')
-            .insert([recoveryPayload]);
-
-          if (insertError) {
-            throw new Error("Critical database profile creation failure: " + insertError.message);
-          }
-
-          // Fetch back the new profile seamlessly
-          const { data: newProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', targetId)
-            .maybeSingle();
-
-          profile = newProfile || recoveryPayload;
-        }
-      } else if (email) {
-        profile = await getOrCreateProfileByEmail(email);
+        profile = newProfile || recoveryPayload;
       }
 
       if (!profile) {
@@ -2721,145 +2774,6 @@ async function startServer() {
     }
   });
 
-  // JWT Registration Route
-  app.post("/api/auth/register", async (req, res) => {
-    const { email, password, fullName, phoneNumber } = req.body;
-    if (!email || !password || !fullName) {
-      return res.status(400).json({ error: "Missing required registration parameters" });
-    }
-    
-    try {
-      const safeEmail = email.toLowerCase().trim();
-      const userRef = db.collection('users').doc();
-      const uid = userRef.id;
-      
-      const referralCode = `NOROYA-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-      
-      const newUser = {
-        uid,
-        email: safeEmail,
-        fullName,
-        phoneNumber: phoneNumber || "",
-        balance: 10000, // Credit ₦10,000 baseline baseline for simple, instant VTU sandbox testing!
-        role: "user",
-        referralCode,
-        createdAt: new Date().toISOString()
-      };
-
-      await userRef.set({
-        ...newUser,
-        createdAt: FieldValue.serverTimestamp()
-      });
-
-      // Save into backup store
-      const localStore = loadLocalDb();
-      localStore.users[uid] = newUser;
-      saveLocalDb(localStore);
-
-      const token = signJwt({ uid, email: safeEmail, role: "user" });
-
-      return res.json({
-        success: true,
-        token,
-        user: newUser
-      });
-    } catch (err: any) {
-      console.error("[JWT Register Error]:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // JWT Login Route
-  app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Missing login parameters" });
-    }
-    
-    try {
-      const safeEmail = email.toLowerCase().trim();
-      let foundUser: any = null;
-      
-      const snap = await db.collection('users').where('email', '==', safeEmail).limit(1).get();
-      if (!snap.empty) {
-        foundUser = { uid: snap.docs[0].id, ...snap.docs[0].data() };
-      } else {
-        const localStore = loadLocalDb();
-        foundUser = Object.values(localStore.users).find((u: any) => u.email === safeEmail);
-      }
-      
-      if (!foundUser) {
-        return res.status(401).json({ error: "Invalid login credentials" });
-      }
-
-      const uid = foundUser.uid || foundUser.id;
-      const token = signJwt({ uid, email: safeEmail, role: foundUser.role || "user" });
-      
-      return res.json({
-        success: true,
-        token,
-        user: foundUser
-      });
-    } catch (err: any) {
-      console.error("[JWT Login Error]:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // JWT Session Validator Route
-  app.get("/api/auth/session", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "No authorization header found" });
-    }
-    
-    const token = authHeader.split(" ")[1];
-    const decoded = verifyJwt(token);
-    if (!decoded) {
-      return res.status(401).json({ error: "Invalid or expired session token" });
-    }
-    
-    try {
-      const userRef = db.collection('users').doc(decoded.uid);
-      const docSnap = await userRef.get();
-      if (docSnap.exists) {
-        return res.json({ success: true, user: docSnap.data() });
-      } else {
-        const localStore = loadLocalDb();
-        const user = localStore.users[decoded.uid];
-        if (user) {
-          return res.json({ success: true, user });
-        }
-      }
-      return res.status(404).json({ error: "User session revoked" });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Server-side Firebase Admin Live Connection test
-  app.get("/api/firebase/debug", async (req, res) => {
-    try {
-      const testRef = db.collection('_connection_test_').doc('status');
-      await testRef.set({
-        lastCheck: new Date().toISOString(),
-        status: "ok"
-      });
-      const snap = await testRef.get();
-      return res.json({
-        success: true,
-        message: "Successfully synchronized with Firestore from the Node server!",
-        data: snap.data()
-      });
-    } catch (err: any) {
-      console.error("[Firebase Debug Connection Failed]:", err);
-      return res.status(500).json({
-        success: false,
-        error: err.message,
-        stack: err.stack
-      });
-    }
-  });
 
   // Admin Create Plan backend endpoint
   app.post("/api/admin/create-plan", async (req, res) => {
@@ -3256,99 +3170,26 @@ async function startServer() {
     }
   });
 
-  // Admin Passwordless Login Bypass
-  app.post("/api/auth/admin-login", async (req, res) => {
-    const { email } = req.body;
-    if (!email || email.toLowerCase() !== 'ibrahimfaruqolamilekan4@gmail.com') {
-      return res.status(403).json({ error: "Access denied. Standard users must sign in via standard forms." });
-    }
-
-    try {
-      const adminAuth = getAdminAuth(appInstance);
-      const uid = "admin_ibrahim_vtu_uid";
-
-      // Ensure the Admin user is registered in the Users collection in Firestore
-      const userRef = db.collection('users').doc(uid);
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        // Create the admin document in Firestore
-        await userRef.set({
-          uid,
-          email: email.toLowerCase(),
-          fullName: "Faruq Ibrahim (Admin)",
-          balance: 0, // Default 0 balance for admin
-          role: "admin",
-          referralCode: "NOROYA-ADMIN-99",
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        // Ensure there is a referral code mapping for them
-        await db.collection('referralCodes').doc("NOROYA-ADMIN-99").set({
-          ownerUid: uid,
-          ownerName: "Faruq Ibrahim (Admin)"
-        });
-      }
-
-      // Check if we can mint a real Custom Token (this requires Google Application Default Credentials or a Service Account)
-      try {
-        const customToken = await adminAuth.createCustomToken(uid, {
-          email: email.toLowerCase(),
-          email_verified: true,
-          admin: true
-        });
-        
-        return res.json({ 
-          success: true, 
-          token: customToken, 
-          simulated: false,
-          userData: {
-            uid,
-            email: email.toLowerCase(),
-            fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
-            role: "admin",
-            referralCode: "NOROYA-ADMIN-99",
-            createdAt: new Date().toISOString()
-          }
-        });
-      } catch (tokenErr: any) {
-        console.warn("Could not generate standard Custom Token (expected behavior in standard sandbox):", tokenErr.message);
-        // Fallback to high-fidelity client simulation
-        return res.json({ 
-          success: true, 
-          simulated: true, 
-          reason: "Backdoor active for main workspace domain",
-          userData: {
-            uid,
-            email: email.toLowerCase(),
-            fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
-            role: "admin",
-            referralCode: "NOROYA-ADMIN-99",
-            createdAt: new Date().toISOString()
-          }
-        });
-      }
-    } catch (error: any) {
-      console.error("Admin bypass login controller error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // Monnify credentials helpers completely removed
 
   // 1.5 Secure Paystack Payment Webhook Endpoint
   app.post("/api/v1/payment-webhook", async (req, res) => {
     try {
+      // SECURITY: fail closed if no real secret is configured -- never fall back to a
+      // hardcoded test key, or anyone could forge a valid signature and mint free wallet funds.
+      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
+      if (!secretKey || secretKey.includes("PASTE_YOUR")) {
+        console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY is not configured. Rejecting webhook.");
+        return res.status(503).send("Payment provider not configured.");
+      }
+
       const signature = req.headers["x-paystack-signature"];
       if (!signature) {
         console.warn("[Paystack Webhook] Missing x-paystack-signature header.");
         return res.status(401).send("Unauthorized: Signature header missing.");
       }
 
-      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY || "sk_test_6722fa7c94e8d9d5a736e";
-      
       let rawBody = "";
       if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
         rawBody = (req as any).rawBody.toString("utf-8");
@@ -3363,13 +3204,14 @@ async function startServer() {
         }
       }
 
-      // Verify Paystack HMAC-SHA512 Signature
+      // Verify Paystack HMAC-SHA512 Signature -- NO bypass string of any kind. A mismatch is
+      // always rejected; this is the only thing standing between the internet and free money.
       const computedHash = crypto
         .createHmac("sha512", secretKey)
         .update(rawBody)
         .digest("hex");
 
-      if (signature !== computedHash && signature !== "local-bypass") {
+      if (signature !== computedHash) {
         console.warn("[Paystack Webhook] Calculated signature mismatch.");
         return res.status(401).send("Unauthorized: Invalid signature hash verification.");
       }
@@ -3390,6 +3232,25 @@ async function startServer() {
         return res.status(400).send("Bad Request: Incomplete webhook payload parameters.");
       }
 
+      // SECURITY: Defense-in-depth. Even though the signature above proves this request came
+      // from Paystack, independently re-verify the transaction directly against Paystack's own
+      // API using the reference, confirming status + amount server-side before crediting anyone.
+      try {
+        const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          timeout: 10000
+        });
+        const verifyData = verifyResp.data?.data;
+        const verifiedAmountNaira = Number(verifyData?.amount) / 100;
+        if (!verifyData || verifyData.status !== "success" || Math.abs(verifiedAmountNaira - amountInNaira) > 0.01) {
+          console.error("[Paystack Webhook] Server-side verification mismatch for reference", reference);
+          return res.status(400).send("Bad Request: Transaction could not be independently verified with Paystack.");
+        }
+      } catch (verifyErr: any) {
+        console.error("[Paystack Webhook] Failed to independently verify transaction with Paystack:", verifyErr.message);
+        return res.status(502).send("Could not verify transaction with payment provider.");
+      }
+
       // Idempotency: log check in 'processed_payments' collection to prevent double crediting
       const paymentRefDoc = db.collection("processed_payments").doc(reference);
 
@@ -3400,16 +3261,10 @@ async function startServer() {
           return { alreadyProcessed: true };
         }
 
-        // Fetch corresponding user document by userId (direct doc lookup) or email (case-insensitive)
+        // SECURITY: resolve the recipient ONLY by the customer email that Paystack itself
+        // verified for this charge -- never trust a client/webhook-body-supplied userId, since
+        // that would let anyone redirect someone else's real payment into an attacker's wallet.
         let userDoc: any = null;
-        const requestUserId = req.body.userId || data?.metadata?.userId || data?.userId;
-
-        if (requestUserId) {
-          const directDoc = await transaction.get(db.collection("users").doc(requestUserId));
-          if (directDoc.exists) {
-            userDoc = directDoc;
-          }
-        }
 
         if (!userDoc) {
           const userQuery = db.collection("users").where("email", "==", customerEmail).limit(1);
@@ -4815,6 +4670,13 @@ async function startServer() {
       return res.status(400).json({ error: "Invalid parameters" });
     }
 
+    // SECURITY: require a verified session that actually matches the target userId -- otherwise
+    // anyone could force a role change + fee deduction on any victim's account.
+    const verifiedCallerId = await verifyCallerUserId(req);
+    if (!verifiedCallerId || verifiedCallerId !== userId) {
+      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
+    }
+
     const fee = desireRole === 'agent' ? 1500 : 3500;
 
     try {
@@ -4871,116 +4733,22 @@ async function startServer() {
   });
 
   // Bulk Capital Funding with Reseller/Agent Incentive Bonuses
+  // SECURITY: this endpoint let ANYONE instantly credit ANY wallet with fake, unbacked-by-any-
+  // real-payment funds (no gateway call, no signature, no session check -- just "amount >= 1000"
+  // and a straight balance increment). Disabled permanently. Real top-ups must go through the
+  // Paystack/Flutterwave webhooks or verify-flutterwave, which independently confirm real money moved.
   app.post("/api/agent/bulk-fund", async (req, res) => {
-    const { userId, amount } = req.body;
-    const numAmount = Number(amount);
-    if (!userId || isNaN(numAmount) || numAmount < 1000) {
-      return res.status(400).json({ error: "Minimum manual simulated bulk deposit threshold is ₦1,000" });
-    }
-
-    try {
-      const userRef = db.collection('users').doc(userId);
-
-      const result = await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          throw new Error("User profile not found");
-        }
-
-        const userData = userDoc.data();
-        const currentBalance = userData?.balance || 0;
-
-        // Calculate incentive bonus percent based on volume
-        let bonusPercent = 0;
-        if (numAmount >= 100000) bonusPercent = 0.015; // 1.5% back
-        else if (numAmount >= 50000) bonusPercent = 0.01;   // 1.0% back
-        else if (numAmount >= 15000) bonusPercent = 0.005;  // 0.5% back
-
-        const bonus = Number((numAmount * bonusPercent).toFixed(2));
-        const finalBalance = currentBalance + numAmount + bonus;
-
-        transaction.update(userRef, {
-          balance: finalBalance
-        });
-
-        const txRef = db.collection('transactions').doc();
-        const transactionData = {
-          userId,
-          type: 'funding',
-          amount: numAmount + bonus,
-          status: 'completed',
-          description: `Bulk Merchant Funding (Deposit: ₦${numAmount.toLocaleString()}${bonus > 0 ? ` + ₦${bonus.toFixed(2)} Agent Loyalty Bonus` : ''})`,
-          reference: `BULK-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          createdAt: FieldValue.serverTimestamp()
-        };
-        transaction.set(txRef, transactionData);
-
-        return { finalBalance, bonus, transaction: transactionData };
-      });
-
-      res.json({
-        success: true,
-        message: `Bulk Wallet credited with ₦${(numAmount + result.bonus).toLocaleString()}!`,
-        balance: result.finalBalance,
-        bonusEarned: result.bonus
-      });
-    } catch (error: any) {
-      console.error("[Bulk Funding Exception]:", error);
-      res.status(400).json({ error: error.message });
-    }
+    return res.status(501).json({
+      error: "Bulk capital deposit is disabled. Please fund your wallet through a real payment channel (Paystack/Flutterwave)."
+    });
   });
 
-  // Set User Wallet Balance directly (self-service reset/adjustment to 0 or any amount)
+  // SECURITY: this let ANYONE set ANY user's wallet balance to ANY arbitrary number with zero
+  // auth and zero real money involved -- a direct wallet-mint/drain primitive. Disabled permanently.
   app.post("/api/wallet/reset-balance", async (req, res) => {
-    const { userId, targetBalance } = req.body;
-    if (!userId) {
-      return res.status(400).json({ error: "Missing userId" });
-    }
-
-    const tBal = typeof targetBalance === 'number' ? targetBalance : 0;
-
-    try {
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      if (!userDoc.exists) {
-        // Fallback for mock/local database store
-        const localStore = loadLocalDb();
-        if (localStore.users[userId]) {
-          localStore.users[userId].balance = tBal;
-          saveLocalDb(localStore);
-        }
-        return res.json({ success: true, balance: tBal });
-      }
-
-      await db.runTransaction(async (transaction) => {
-        const docSnap = await transaction.get(userRef);
-        const currentBalance = docSnap.data()?.balance || 0;
-        const difference = tBal - currentBalance;
-
-        transaction.update(userRef, {
-          balance: tBal
-        });
-
-        // Add a debit/refund transaction for history audit
-        if (difference !== 0) {
-          const txRef = db.collection('transactions').doc();
-          transaction.set(txRef, {
-            userId,
-            type: difference > 0 ? 'funding' : 'purchase',
-            amount: Math.abs(difference),
-            status: 'completed',
-            description: `Self-Service Balance Adjustment (Set to ₦${tBal.toLocaleString()})`,
-            reference: `ADJ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-            createdAt: FieldValue.serverTimestamp()
-          });
-        }
-      });
-
-      res.json({ success: true, balance: tBal });
-    } catch (error: any) {
-      console.error("[Reset Balance Exception]:", error);
-      res.status(500).json({ error: error.message });
-    }
+    return res.status(501).json({
+      error: "Self-service balance adjustment is disabled. Contact support for balance corrections."
+    });
   });
 
   // Daily Bonus Lucky Wheels Reward Endpoint
@@ -4988,6 +4756,20 @@ async function startServer() {
     const { userId, wonAmount } = req.body;
     if (!userId || !wonAmount || wonAmount <= 0) {
       return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // SECURITY: require a verified session matching userId -- previously anyone could credit any
+    // wallet with any "wonAmount" with zero auth and zero server-side proof a spin ever happened.
+    const verifiedCallerId = await verifyCallerUserId(req);
+    if (!verifiedCallerId || verifiedCallerId !== userId) {
+      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
+    }
+
+    // SECURITY: never trust the client's claimed prize amount uncapped -- clamp to the maximum
+    // a legitimate daily spin could ever award, so a manipulated client can't mint arbitrary funds.
+    const MAX_DAILY_BONUS = 500;
+    if (Number(wonAmount) > MAX_DAILY_BONUS) {
+      return res.status(400).json({ error: `Invalid bonus amount. Maximum daily bonus is ₦${MAX_DAILY_BONUS}.` });
     }
 
     try {
@@ -5081,81 +4863,78 @@ async function startServer() {
       }
 
       // 2. Query Flutterwave API server-side
+      // SECURITY: this must ALWAYS be a real, verified check. There is no "simulated"/unconfigured
+      // fallback path anymore -- an unconfigured key or a fake transactionId now hard-fails instead
+      // of silently trusting the client-supplied amount/status.
       const fwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim();
       let isVerified = false;
       let verifiedAmount = Number(amount);
       const customerEmail = email.toLowerCase().trim();
+      let verifiedApiEmail = "";
 
       const hasRealSecret = fwSecretKey && !fwSecretKey.includes("PASTE_YOUR") && fwSecretKey !== "";
 
-      if (hasRealSecret && transactionId !== "simulated") {
-        try {
-          const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
-          const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${fwSecretKey}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (response.ok) {
-            const resultData = await response.json() as any;
-            if (resultData?.status === 'success' && resultData?.data?.status === 'successful') {
-              isVerified = true;
-              verifiedAmount = Number(resultData.data.amount || amount);
-              const apiEmail = resultData.data.customer?.email?.toLowerCase() || customerEmail;
-              if (apiEmail !== customerEmail) {
-                console.warn(`[Flutterwave warning] Email mismatch: expected ${customerEmail} but got ${apiEmail}`);
-              }
-            } else {
-              console.warn("[Flutterwave validation declined]:", resultData);
-            }
-          } else {
-            console.warn("[Flutterwave fetch status error]:", response.status);
-          }
-        } catch (apiErr: any) {
-          console.error("[Flutterwave fetch communication fail]:", apiErr.message);
-        }
-      } else {
-        // Fallback to high-fidelity dashboard credit on sandbox setups (e.g. key unconfigured or simulated/local bypass)
-        console.warn("[Flutterwave Sandbox] Running simulation authentication. Bypassing live endpoint request.");
-        isVerified = true;
+      if (!hasRealSecret) {
+        console.error("[Flutterwave Verify] FLUTTERWAVE_SECRET_KEY is not configured. Rejecting verification request.");
+        return res.status(503).json({ error: "Payment provider not configured." });
       }
 
-      if (!isVerified) {
+      if (transactionId === "simulated") {
+        return res.status(400).json({ error: "Invalid transaction reference." });
+      }
+
+      try {
+        const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${fwSecretKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const resultData = await response.json() as any;
+          if (
+            resultData?.status === 'success' &&
+            resultData?.data?.status === 'successful' &&
+            resultData?.data?.tx_ref === reference &&
+            Math.abs(Number(resultData.data.amount) - Number(amount)) < 0.01
+          ) {
+            isVerified = true;
+            verifiedAmount = Number(resultData.data.amount || amount);
+            verifiedApiEmail = resultData.data.customer?.email?.toLowerCase() || "";
+          } else {
+            console.warn("[Flutterwave validation declined]:", resultData);
+          }
+        } else {
+          console.warn("[Flutterwave fetch status error]:", response.status);
+        }
+      } catch (apiErr: any) {
+        console.error("[Flutterwave fetch communication fail]:", apiErr.message);
+      }
+
+      if (!isVerified || !verifiedApiEmail) {
         return res.status(400).json({ error: "Flutterwave returned unverified transaction status. Access revoked." });
       }
 
-      // 3. Look up the active user's document in Firestore by user ID or email (case-insensitive)
+      // 3. SECURITY: resolve the recipient ONLY by the customer email that Flutterwave itself
+      // verified for this transaction -- never a client-supplied userId, since that would let
+      // anyone redirect someone else's real payment into an attacker's wallet.
       let userDoc: any = null;
-      const requestUserId = req.body.userId;
-
-      if (requestUserId) {
-        const directDoc = await db.collection("users").doc(requestUserId).get();
-        if (directDoc.exists) {
-          userDoc = directDoc;
-        }
-      }
 
       if (!userDoc) {
-        let userQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
+        let userQuery = await db.collection("users").where("email", "==", verifiedApiEmail).limit(1).get();
         if (!userQuery.empty) {
           userDoc = userQuery.docs[0];
-        } else {
-          // Try exact original email casing match
-          userQuery = await db.collection("users").where("email", "==", email.trim()).limit(1).get();
-          if (!userQuery.empty) {
-            userDoc = userQuery.docs[0];
-          }
         }
 
-        // Fallback scan (search some users for match)
+        // Fallback scan (search some users for match) -- still keyed on the verified email only
         if (!userDoc) {
           const allUsersSnap = await db.collection("users").limit(100).get();
           userDoc = allUsersSnap.docs.find(doc => {
             const docEmail = String(doc.data()?.email || "").toLowerCase().trim();
-            return docEmail === customerEmail;
+            return docEmail === verifiedApiEmail;
           });
         }
       }
@@ -5353,7 +5132,7 @@ async function startServer() {
   });
 
   // Secure Flutterwave Webhook Endpoint
-  app.post("/api/webhook/flutterwave", async (req, res) => {
+  const handleFlutterwaveWebhook = async (req: any, res: any) => {
     // Acknowledge Flutterwave immediately so they know the server is up
     res.status(200).send("Webhook Received");
 
@@ -5391,9 +5170,17 @@ async function startServer() {
           }
         }
 
+        // SECURITY: fail closed, always. No configured secret at all => reject (never silently
+        // trust an unsigned webhook). A configured secret that doesn't match => reject. There is
+        // no "warn and continue" path anymore -- either the signature is genuinely valid, or we stop.
         const hasKeys = secretHash || flwSecretKey;
-        if (hasKeys && !isAuthorized) {
+        if (!hasKeys) {
+          console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook.");
+          return;
+        }
+        if (!isAuthorized) {
           console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
+          return;
         }
 
         const payload = req.body;
@@ -5406,6 +5193,33 @@ async function startServer() {
 
         if (!isChargeCompleted || !isSuccessful) {
           console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+          return;
+        }
+
+        // SECURITY: Defense-in-depth -- independently re-verify this transaction directly against
+        // Flutterwave's own API before crediting anyone, even though the signature already passed.
+        const fwTxId = payload.data?.id || payload.id;
+        if (flwSecretKey && fwTxId) {
+          try {
+            const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
+              method: 'GET',
+              headers: { 'Authorization': `Bearer ${flwSecretKey}`, 'Content-Type': 'application/json' }
+            });
+            if (!verifyResp.ok) {
+              console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
+              return;
+            }
+            const verifyData = await verifyResp.json() as any;
+            if (verifyData?.status !== 'success' || verifyData?.data?.status !== 'successful') {
+              console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
+              return;
+            }
+          } catch (verifyErr: any) {
+            console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+            return;
+          }
+        } else {
+          console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
           return;
         }
 
@@ -5554,355 +5368,11 @@ async function startServer() {
         console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
       }
     })();
-  });
+  };
 
-  // Secure Flutterwave Webhook Handler Route
-  app.post("/api/webhooks/flutterwave", async (req, res) => {
-    // Acknowledge Flutterwave immediately so they know the server is up
-    res.status(200).send("Webhook Received");
+  // Both legacy webhook URL variants point to the same hardened handler above.
+  app.post(["/api/webhook/flutterwave", "/api/webhooks/flutterwave"], handleFlutterwaveWebhook);
 
-    // Process everything asynchronously in the background to prevent timeouts and header errors
-    (async () => {
-      try {
-        console.log("Incoming Flutterwave Payload:", JSON.stringify(req.body));
-
-        // 2. SIGNATURE VALIDATION
-        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
-        
-        let secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-        let flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
-
-        let isAuthorized = false;
-
-        // Verify with direct hash comparison (common dashboard configuration)
-        if (signature && secretHash && signature === secretHash) {
-          isAuthorized = true;
-        }
-
-        // Verify with HMAC signature check (provided in user instructions)
-        if (!isAuthorized && signature && flwSecretKey) {
-          try {
-            const expectedSignature = crypto
-              .createHmac('sha256', flwSecretKey)
-              .update(JSON.stringify(req.body))
-              .digest('hex');
-            if (signature === expectedSignature) {
-              isAuthorized = true;
-            }
-          } catch (cryptoErr) {
-            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
-          }
-        }
-
-        const hasKeys = secretHash || flwSecretKey;
-        if (hasKeys && !isAuthorized) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
-        }
-
-        const payload = req.body;
-        const status = payload.data?.status || payload.status;
-
-        // 3. Process only successful events
-        if (status !== "successful") {
-          console.log(`[Flutterwave Webhook] Ignoring non-successful event status: ${status}`);
-          return;
-        }
-
-        // 4. Extract transaction ref, amount, user identifier, and customer email
-        const reference = payload.data?.tx_ref || payload.tx_ref || payload.data?.id?.toString() || payload.id?.toString() || `flw_webhook_${Date.now()}`;
-        const amount = Number(payload.data?.amount || payload.amount);
-        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-
-        // 👇 PASTE THE FIX RIGHT HERE 👇
-        let userId = payload.data?.meta_data?.userId || payload.data?.meta?.userId || payload.data?.meta?.user_id || payload.data?.userId || payload.userId || payload.data?.customer?.id;
-
-        if (!userId || userId === 'undefined') {
-            console.log("User ID missing, searching Supabase tables by email...");
-            
-            let foundProfileId: string | null = null;
-
-            // Try querying Supabase 'users' table by email first
-            if (customerEmail) {
-              try {
-                const { data: sbUserRow, error } = await supabase
-                    .from('users')
-                    .select('id')
-                    .eq('email', customerEmail)
-                    .maybeSingle();
-
-                if (!error && sbUserRow) {
-                    foundProfileId = sbUserRow.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase users table by email: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase users table email query failed:", sbErr.message);
-              }
-            }
-
-            // Try querying Supabase 'profiles' table by email (as fallback)
-            if (!foundProfileId && customerEmail) {
-              try {
-                const { data: profile, error } = await supabase
-                    .from('profiles')
-                    .select('id')
-                    .eq('email', customerEmail)
-                    .maybeSingle();
-
-                if (!error && profile) {
-                    foundProfileId = profile.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles table by email: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase profiles table email query failed (column probably doesn't exist):", sbErr.message);
-              }
-            }
-
-            // Try querying Supabase 'profiles' table by username prefix
-            if (!foundProfileId && customerEmail) {
-              try {
-                const prefix = customerEmail.split('@')[0];
-                const { data: profile, error } = await supabase
-                    .from('profiles')
-                    .select('id')
-                    .eq('username', prefix)
-                    .maybeSingle();
-
-                if (!error && profile) {
-                    foundProfileId = profile.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles by username prefix: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase username prefix query failed:", sbErr.message);
-              }
-            }
-
-            if (!foundProfileId) {
-                console.error("Could not find a matching profile in Supabase for this email:", customerEmail);
-                return;
-            }
-
-            userId = foundProfileId; 
-        }
-        // 👆 PASTE THE FIX RIGHT HERE 👆
-
-        if (isNaN(amount) || amount <= 0) {
-          console.warn(`[Flutterwave Webhook] Invalid amount detected: ${amount}`);
-          return;
-        }
-
-        console.log(`[Flutterwave Webhook Received] Reference: ${reference}, Amount: ${amount}, Email: ${customerEmail}, User ID: ${userId}`);
-
-        // 5. Idempotency check: prevent double-crediting via Supabase direct query
-        try {
-          const { data: existingTx, error: txCheckError } = await supabase
-            .from("transactions")
-            .select("id")
-            .eq("reference", reference)
-            .maybeSingle();
-
-          if (txCheckError) {
-            console.warn("[Flutterwave Webhook Idempotency Warning] Supabase query error:", txCheckError.message);
-          }
-
-          if (existingTx) {
-            console.log(`[Flutterwave Webhook] Reference ${reference} already processed in Supabase. Skipping.`);
-            return;
-          }
-        } catch (checkErr: any) {
-          console.warn("[Flutterwave Webhook Idempotency Catch] Supabase lookup exception:", checkErr.message || checkErr);
-        }
-
-        // Wrap the database processing block in a try/catch block
-        try {
-          // 6. Update user balance in Supabase securely (STRICTLY 'profiles' table)
-          let sbUser: any = null;
-          let targetUserId = userId;
-
-          const ensureUUID = (strId: string): string => {
-            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-            if (uuidRegex.test(strId)) return strId;
-            let seed = 0;
-            for (let i = 0; i < strId.length; i++) {
-              seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
-            }
-            const r = () => {
-              seed = (seed * 1664525 + 1013904223) >>> 0;
-              return seed;
-            };
-            const hexChars = '0123456789abcdef';
-            let hex32 = '';
-            for (let i = 0; i < 32; i++) {
-              hex32 += hexChars[r() % 16];
-            }
-            const part1 = hex32.substring(0, 8);
-            const part2 = hex32.substring(8, 12);
-            const part3 = '4' + hex32.substring(12, 15);
-            const part4 = 'a' + hex32.substring(15, 18);
-            const part5 = hex32.substring(18, 30);
-            return `${part1}-${part2}-${part3}-${part4}-${part5}`;
-          };
-
-          let resolvedUserId = targetUserId;
-
-          if (resolvedUserId) {
-            const pgUuid = ensureUUID(resolvedUserId);
-            const idsToTry = [pgUuid, resolvedUserId];
-
-            console.log(`[Flutterwave Webhook Debug] Attempting lookup in Supabase "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
-
-            for (const tryId of idsToTry) {
-              try {
-                const { data, error } = await supabase
-                  .from("profiles")
-                  .select("*")
-                  .eq("id", tryId)
-                  .maybeSingle();
-                if (!error && data) {
-                  sbUser = data;
-                  resolvedUserId = tryId;
-                  console.log(`[Flutterwave Webhook Debug] Successfully found existing profile in "profiles" by ID: ${tryId}`);
-                  break;
-                }
-                if (error) {
-                  console.warn(`[Flutterwave Webhook Debug] Error querying "profiles" table with ID "${tryId}":`, error.message);
-                }
-              } catch (err: any) {
-                console.warn(`[Supabase Webhook Lookup Exception in "profiles" for ID ${tryId}]:`, err.message);
-              }
-            }
-          }
-
-          // If user profile is STILL not found in Supabase profiles, auto-create it on the fly!
-          if (!sbUser && resolvedUserId) {
-            const pgUuid = ensureUUID(resolvedUserId);
-            const newUsername = customerEmail ? customerEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
-            const newName = customerEmail ? (customerEmail.split('@')[0].toUpperCase()) : "User";
-            const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-
-            console.log(`[Flutterwave Webhook] User profile not found in "profiles". Creating on-the-fly profile for ID: ${pgUuid} with wallet_balance: ${amount}`);
-            
-            try {
-              const { error: pgInsertErr } = await supabase
-                .from("profiles")
-                .insert({
-                  id: pgUuid,
-                  name: newName,
-                  username: newUsername,
-                  phone_number: "",
-                  referral_code: referralCode,
-                  transaction_pin: "1234",
-                  wallet_balance: amount
-                });
-
-              if (pgInsertErr) {
-                console.error(`[Flutterwave Webhook Supabase Create Error]:`, pgInsertErr.message);
-                throw new Error(`Failed to create on-the-fly user profile: ${pgInsertErr.message}`);
-              } else {
-                console.log(`[Flutterwave Webhook Supabase success] Successfully created "profiles" row and credited user ID ${pgUuid} with +₦${amount}.`);
-                sbUser = { id: pgUuid, wallet_balance: amount, name: newName };
-                resolvedUserId = pgUuid;
-              }
-            } catch (insertExc: any) {
-              console.error(`[Flutterwave Webhook Supabase Create Exception]:`, insertExc.message || insertExc);
-              throw insertExc;
-            }
-          } else if (sbUser) {
-            // If existing user is found, update their wallet_balance with increment_balance RPC call or fall back to direct update
-            let rpcCompleted = false;
-            try {
-              const { error: rpcErr } = await supabase.rpc('increment_balance', {
-                user_uuid: resolvedUserId,
-                amount: amount
-              });
-              if (!rpcErr) {
-                rpcCompleted = true;
-                console.log(`[Flutterwave Webhook Background] Balance incremented via RPC for user ID: ${resolvedUserId}`);
-              } else {
-                console.warn(`[Flutterwave Webhook Background RPC Error]:`, rpcErr.message);
-              }
-            } catch (rpcExc: any) {
-              console.warn(`[Flutterwave Webhook Background RPC Exception]:`, rpcExc.message || rpcExc);
-            }
-
-            if (!rpcCompleted) {
-              const currentWalletBalance = Number(sbUser.wallet_balance || 0);
-              const updatedWalletBalance = currentWalletBalance + amount;
-
-              console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
-
-              const { error: pgUpdateErr } = await supabase
-                .from("profiles")
-                .update({
-                  wallet_balance: updatedWalletBalance
-                })
-                .eq("id", resolvedUserId);
-
-              if (pgUpdateErr) {
-                console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
-                throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
-              } else {
-                console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
-              }
-            }
-          } else {
-            console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
-            throw new Error(`User not found and could not resolve ID for email ${customerEmail}`);
-          }
-
-          // Add a Transaction Log to Supabase 'transactions' table (failure here doesn't halt the flow)
-          if (resolvedUserId) {
-            const txId = `fw_fund_${Date.now()}`;
-            try {
-              const pgUuid = ensureUUID(resolvedUserId);
-              const { error: pgTxErr } = await supabase
-                .from('transactions')
-                .insert({
-                  id: txId,
-                  user_id: pgUuid,
-                  userId: resolvedUserId,
-                  amount: amount,
-                  status: 'success',
-                  platform: 'flutterwave',
-                  reference: reference,
-                  payment_method: 'flutterwave',
-                  description: `Flutterwave deposit of NGN ${amount}`,
-                  created_at: new Date().toISOString()
-                });
-
-              if (pgTxErr) {
-                console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
-                await supabase
-                  .from('transactions')
-                  .insert({
-                    id: txId,
-                    user_id: resolvedUserId,
-                    amount: amount,
-                    status: 'success',
-                    platform: 'flutterwave',
-                    reference: reference,
-                    payment_method: 'flutterwave',
-                    description: `Flutterwave deposit of NGN ${amount}`,
-                    created_at: new Date().toISOString()
-                  });
-              }
-              console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
-            } catch (txLogErr: any) {
-              console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
-            }
-          }
-
-          // 7. No secondary Firestore sync (Supabase is used exclusively)
-
-        } catch (dbError: any) {
-          console.error("[Flutterwave Webhook Database Processing Error]:", dbError);
-        }
-
-      } catch (err: any) {
-        console.error("[Flutterwave Webhook Handler Exception]:", err);
-      }
-    })();
-  });
 
   // Secure Mozosubs Webhook Handler Route
   app.post(["/api/webhooks/mozosubs", "/api/webhook/mozosubs"], async (req, res) => {
@@ -5913,8 +5383,18 @@ async function startServer() {
       console.log("[Mozosubs Webhook Received] Headers:", req.headers);
       console.log("[Mozosubs Webhook Received] Body:", JSON.stringify(body));
 
-      // Verify signature if Mozosubs provides one and secret is configured
-      if (signature && process.env.MOZOSUBS_WEBHOOK_SECRET) {
+      // SECURITY: signature verification is MANDATORY, always -- no conditional skip. Previously,
+      // a missing secret OR a missing header silently skipped verification entirely, letting anyone
+      // POST an arbitrary user_id + amount and get instantly credited with zero proof of origin.
+      if (!process.env.MOZOSUBS_WEBHOOK_SECRET) {
+        console.error("[Mozosubs Webhook] MOZOSUBS_WEBHOOK_SECRET is not configured. Rejecting webhook.");
+        return res.status(503).json({ error: 'Webhook not configured' });
+      }
+      if (!signature) {
+        console.warn("[Mozosubs Webhook] Missing signature header. Rejecting.");
+        return res.status(401).json({ error: 'Missing signature' });
+      }
+      {
         const expected = crypto
           .createHmac('sha256', process.env.MOZOSUBS_WEBHOOK_SECRET)
           .update(JSON.stringify(body))
