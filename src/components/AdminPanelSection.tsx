@@ -44,6 +44,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
+import AdminPricingManager from './AdminPricingManager';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
 
 // Pure deterministic UUID mapper to prevent PostgreSQL id column type conflicts (UUID vs text)
@@ -109,7 +110,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubs-plans'>('overview');
+  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubs-plans' | 'pricing-manager'>('overview');
 
   // Mozosubs Data Plans States & Functions
   const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
@@ -1064,6 +1065,16 @@ export default function AdminPanelSection() {
         >
           Bank Deposits Audit
         </button>
+          <button
+            onClick={() => setAdminSubTab('pricing-manager')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'pricing-manager'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            💰 Pricing Manager
+          </button>
         {/* Monnify config option completely deleted */}
       </div>
 
@@ -2655,6 +2666,12 @@ export default function AdminPanelSection() {
           </div>
         )}
       </AnimatePresence>
+
+      {adminSubTab === 'pricing-manager' && (
+        <div className="p-4 sm:p-6">
+          <AdminPricingManager />
+        </div>
+      )}
 
     </div>
   );

@@ -2,9 +2,6 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { initializeApp, getApps, type App } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
@@ -52,7 +49,7 @@ const resolveBigisubApiKey = async (): Promise<string> => {
   } catch (err) {
     console.warn("[resolveBigisubApiKey] Error querying Supabase, using env fallback:", err);
   }
-  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
 };
 
 const resolveMozosubsApiKey = async (): Promise<string> => {
@@ -69,7 +66,7 @@ const resolveMozosubsApiKey = async (): Promise<string> => {
   } catch (err) {
     console.warn("[resolveMozosubsApiKey] Error querying Supabase, using env fallback:", err);
   }
-  return process.env.MOZOSUBS_API_KEY || "dummy_mozosubs_key";
+  return process.env.MOZOSUBS_API_KEY || "";
 };
 
 dotenv.config();
@@ -94,393 +91,6 @@ console.log("🔌 [VTU Config] Exposing keys. Mozosubs API Key source detected:"
 
 
 import fs from 'fs';
-const firebaseConfig = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf-8'));
-
-// Initialize Firebase Admin
-let appInstance: App | undefined;
-try {
-  const apps = getApps();
-  if (!apps.length) {
-    appInstance = initializeApp({
-      projectId: firebaseConfig.projectId
-    });
-  } else {
-    appInstance = apps[0];
-  }
-} catch (e) {
-  console.error("Firebase Admin initialization error:", e);
-}
-
-// Global flag to see if Firestore has permanent permission issues or IAM propagation delays
-let useFirestoreFallback = false;
-
-let rawDb: any = null;
-try {
-  rawDb = getFirestore(appInstance, firebaseConfig.firestoreDatabaseId);
-  // Perform a silent check asynchronously during startup to preemptively switch to fallback
-  (async () => {
-    try {
-      await rawDb.collection('_connection_test_').limit(1).get();
-      console.log("ℹ️ [Firestore Connection]: Verified connection successfully.");
-    } catch (e: any) {
-      useFirestoreFallback = true;
-      console.log("ℹ️ [Firestore Connection]: Routing database operations through the local fallback store.");
-    }
-  })();
-} catch (e: any) {
-  console.log("ℹ️ [Firestore Connection]: Routing database operations through the local fallback store due to initialization error.");
-  useFirestoreFallback = true;
-}
-
-// Local Database Fallback Store (in-memory & file-persisted)
-interface LocalStore {
-  users: Record<string, any>;
-  referralCodes: Record<string, any>;
-  processed_payments: Record<string, any>;
-  transactions: Record<string, any>;
-  _connection_test_: Record<string, any>;
-  data_plans?: Record<string, any>;
-}
-
-const LOCAL_DB_PATH = path.join(process.cwd(), "local-db.json");
-
-function loadLocalDb(): LocalStore {
-  try {
-    if (fs.existsSync(LOCAL_DB_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, "utf-8"));
-      if (!parsed.data_plans) parsed.data_plans = {};
-      return parsed;
-    }
-  } catch (e) {
-    console.error("Error loading local DB:", e);
-  }
-  return { users: {}, referralCodes: {}, processed_payments: {}, transactions: {}, _connection_test_: {}, data_plans: {} };
-}
-
-function saveLocalDb(data: LocalStore) {
-  try {
-    fs.writeFileSync(LOCAL_DB_PATH, safeJsonStringify(data, 2), "utf-8");
-  } catch (e) {
-    console.error("Error saving local DB:", e);
-  }
-}
-
-// Robust custom replacer utility to completely prevent "TypeError: JSON.stringify cannot serialize cyclic structures"
-function safeJsonStringify(obj: any, space?: string | number): string {
-  const seen = new WeakSet();
-  return JSON.stringify(obj, (key, value) => {
-    if (typeof value === "object" && value !== null) {
-      if (seen.has(value)) {
-        return "[Circular]";
-      }
-      seen.add(value);
-    }
-    return value;
-  }, space);
-}
-
-// Create custom fallback DB engine
-const runOnBackup = async <T = any>(operation: () => Promise<T>, fallback: () => Promise<T>): Promise<T> => {
-  if (useFirestoreFallback || !rawDb) {
-    return fallback();
-  }
-  try {
-    return await operation();
-  } catch (err: any) {
-    useFirestoreFallback = true;
-    console.log("ℹ️ [Database Status]: Switched to backup database storage mode.");
-    return fallback();
-  }
-};
-
-// Check if a field represents an incremental transaction element
-function isIncrement(value: any): boolean {
-  if (!value) return false;
-  return (
-    typeof value === 'object' &&
-    (value.constructor?.name?.includes('FieldValue') || 
-     value._methodName === 'FieldValue.increment' ||
-     (typeof value.operand === 'number' && value.operand !== undefined))
-  );
-}
-
-// In-memory/File-persisted database wrapper offering absolute reliability with zero permissions required
-class FallbackCollection {
-  private collName: string;
-
-  constructor(collName: string) {
-    this.collName = collName;
-  }
-
-  where(field: string, op: any, value: any) {
-    return {
-      limit: (num: number) => {
-        return {
-          rawRef: rawDb.collection(this.collName).where(field, op as any, value).limit(num),
-          get: async () => {
-            return runOnBackup<any>(
-              async () => {
-                const snap = await rawDb.collection(this.collName).where(field, op as any, value).limit(num).get();
-                // trigger access on docs to detect permission issues in async
-                if (!useFirestoreFallback) {
-                  snap.empty;
-                }
-                return snap;
-              },
-              async () => {
-                const localStore = loadLocalDb();
-                const items = localStore[this.collName as keyof LocalStore] || {};
-                const docs = Object.entries(items)
-                  .filter(([id, val]: any) => val && val[field] === value)
-                  .slice(0, num)
-                  .map(([id, val]: any) => {
-                    const docObj = this.doc(id);
-                    return {
-                      id,
-                      exists: true,
-                      data: () => val,
-                      ref: docObj
-                    };
-                  });
-                return {
-                  empty: docs.length === 0,
-                  docs,
-                  forEach(cb: (doc: any) => void) {
-                    docs.forEach(cb);
-                  }
-                };
-              }
-            );
-          }
-        };
-      }
-    };
-  }
-
-  doc(docId?: string) {
-    const finalId = docId || crypto.randomUUID();
-    const docObj: any = {
-      id: finalId,
-      rawRef: rawDb.collection(this.collName).doc(finalId),
-      get: async () => {
-        return runOnBackup<any>(
-          async () => {
-            const snap = await rawDb.collection(this.collName).doc(finalId).get();
-            if (!useFirestoreFallback) {
-              snap.exists; // Trigger error if unauthorized
-            }
-            return snap;
-          },
-          async () => {
-            const localStore = loadLocalDb();
-            const items = localStore[this.collName as keyof LocalStore] || {};
-            const item = items[finalId];
-            return {
-              id: finalId,
-              exists: item !== undefined,
-              data: () => item,
-              ref: docObj
-            };
-          }
-        );
-      },
-      delete: async () => {
-        return runOnBackup<any>(
-          async () => {
-            return await rawDb.collection(this.collName).doc(finalId).delete();
-          },
-          async () => {
-            const localStore = loadLocalDb();
-            const items = localStore[this.collName as keyof LocalStore] || {};
-            delete items[finalId];
-            saveLocalDb(localStore);
-            return { writeTime: new Date() } as any;
-          }
-        );
-      },
-      set: async (data: any, options?: any) => {
-        return runOnBackup<any>(
-          async () => {
-            return await rawDb.collection(this.collName).doc(finalId).set(data, options) as any;
-          },
-          async () => {
-            const localStore = loadLocalDb();
-            if (!localStore[this.collName as keyof LocalStore]) {
-              (localStore as any)[this.collName] = {};
-            }
-            const items = localStore[this.collName as keyof LocalStore];
-            
-            // Handle FieldValue mapping
-            const cleanData = { ...data };
-            for (const key of Object.keys(cleanData)) {
-              if (cleanData[key] && typeof cleanData[key] === 'object' && cleanData[key].constructor?.name?.includes('FieldValue')) {
-                cleanData[key] = new Date().toISOString(); 
-              }
-            }
-
-            if (options?.merge && items[finalId]) {
-              items[finalId] = { ...items[finalId], ...cleanData };
-            } else {
-              items[finalId] = cleanData;
-            }
-            saveLocalDb(localStore);
-            return { writeTime: new Date() } as any;
-          }
-        );
-      },
-      update: async (data: any) => {
-        return runOnBackup<any>(
-          async () => {
-            return await rawDb.collection(this.collName).doc(finalId).update(data) as any;
-          },
-          async () => {
-            const localStore = loadLocalDb();
-            if (!localStore[this.collName as keyof LocalStore]) {
-              (localStore as any)[this.collName] = {};
-            }
-            const items = localStore[this.collName as keyof LocalStore];
-            const current = items[finalId] || {};
-            
-            // Handle key-by-key updates, accounting for FieldValue increments
-            const updated = { ...current };
-            for (const key of Object.keys(data)) {
-              const val = data[key];
-              if (isIncrement(val)) {
-                const incAmount = (val as any).operand ?? 1;
-                updated[key] = (Number(updated[key]) || 0) + incAmount;
-              } else if (val && typeof val === 'object' && val.constructor?.name?.includes('FieldValue')) {
-                updated[key] = new Date().toISOString(); 
-              } else {
-                updated[key] = val;
-              }
-            }
-            items[finalId] = updated;
-            saveLocalDb(localStore);
-            return { writeTime: new Date() } as any;
-          }
-        );
-      }
-    };
-    return docObj;
-  }
-
-  async get() {
-    return runOnBackup<any>(
-      async () => {
-        return await rawDb.collection(this.collName).get();
-      },
-      async () => {
-        const localStore = loadLocalDb();
-        const items = localStore[this.collName as keyof LocalStore] || {};
-        const docs = Object.entries(items).map(([id, val]: any) => {
-          const docObj = this.doc(id);
-          return {
-            id,
-            exists: true,
-            data: () => val,
-            ref: docObj
-          };
-        });
-        return {
-          empty: docs.length === 0,
-          docs,
-          forEach(cb: (doc: any) => void) {
-            docs.forEach(cb);
-          }
-        };
-      }
-    );
-  }
-
-  limit(num: number) {
-    return {
-      rawRef: rawDb.collection(this.collName).limit(num),
-      get: async () => {
-        return runOnBackup<any>(
-          async () => {
-            return await rawDb.collection(this.collName).limit(num).get();
-          },
-          async () => {
-            const localStore = loadLocalDb();
-            const items = localStore[this.collName as keyof LocalStore] || {};
-            const docs = Object.entries(items)
-              .slice(0, num)
-              .map(([id, val]: any) => {
-                const docObj = this.doc(id);
-                return {
-                  id,
-                  exists: true,
-                  data: () => val,
-                  ref: docObj
-                };
-              });
-            return {
-              empty: docs.length === 0,
-              docs,
-              forEach(cb: (doc: any) => void) {
-                docs.forEach(cb);
-              }
-            };
-          }
-        );
-      }
-    };
-  }
-}
-
-const db = {
-  collection: (name: string) => {
-    return new FallbackCollection(name);
-  },
-  runTransaction: async (fn: (transaction: any) => Promise<any>) => {
-    return runOnBackup(
-      async () => {
-        return await rawDb.runTransaction(async (rawTx) => {
-          const transactionSim = {
-            get: async (docRef: any) => {
-              const realRef = docRef?.rawRef || docRef;
-              return await rawTx.get(realRef);
-            },
-            set: async (docRef: any, data: any, options?: any) => {
-              const realRef = docRef?.rawRef || docRef;
-              if (options) {
-                return rawTx.set(realRef, data, options);
-              }
-              return rawTx.set(realRef, data);
-            },
-            update: async (docRef: any, data: any) => {
-              const realRef = docRef?.rawRef || docRef;
-              return rawTx.update(realRef, data);
-            },
-            delete: async (docRef: any) => {
-              const realRef = docRef?.rawRef || docRef;
-              return rawTx.delete(realRef);
-            }
-          };
-          return await fn(transactionSim);
-        });
-      },
-      async () => {
-        console.log("🔄 Running simulated transaction on local database.");
-        const transactionSim = {
-          get: async (docRef: any) => {
-            return await docRef.get();
-          },
-          set: async (docRef: any, data: any, options?: any) => {
-            return await docRef.set(data, options);
-          },
-          update: async (docRef: any, data: any) => {
-            return await docRef.update(data);
-          },
-          delete: async (docRef: any) => {
-            return await docRef.delete();
-          }
-        };
-        return await fn(transactionSim);
-      }
-    );
-  }
-};
 
 const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<any> => {
   const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
@@ -544,40 +154,7 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
     console.warn("[getOrCreateProfile] users select warning:", e);
   }
 
-  // 3. Try to fetch from Firestore users collection
-  try {
-    const fsUserSnap = await db.collection('users').doc(finalUserId).get();
-    if (fsUserSnap.exists) {
-      const fsUser = fsUserSnap.data();
-      const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-      const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-      const payload: any = {
-        id: pgUuid,
-        name: fsUser?.fullName || "User",
-        username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-        phone_number: fsUser?.phoneNumber || "",
-        referral_code: referralCode,
-        transaction_pin: "1234",
-        wallet_balance: walletBal,
-        balance: walletBal,
-        email: fsUser?.email || ""
-      };
 
-      const { error: insertErr } = await supabase.from('profiles').insert(payload);
-      if (!insertErr) {
-        const { data: newProfile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', pgUuid)
-          .maybeSingle();
-        if (newProfile) return newProfile;
-      } else {
-        console.warn("[getOrCreateProfile] Firestore user insert failed:", insertErr);
-      }
-    }
-  } catch (e) {
-    console.warn("[getOrCreateProfile] firestore sync warning:", e);
-  }
 
   // 4. Try to fetch from Supabase Auth admin API (Service Role)
   try {
@@ -682,16 +259,7 @@ const getOrCreateProfileByEmail = async (email: string): Promise<any> => {
   }
 
   // 3. Try Firestore by email
-  try {
-    const fsUsersSnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
-    if (!fsUsersSnap.empty) {
-      const doc = fsUsersSnap.docs[0];
-      const pgUuid = ensureUUID(doc.id);
-      return await getOrCreateProfile(pgUuid, doc.id);
-    }
-  } catch (e) {
-    console.warn("[getOrCreateProfileByEmail] firestore query warning:", e);
-  }
+
 
   // 4. Try Supabase Auth admin API by email
   try {
@@ -720,8 +288,44 @@ const ai = new GoogleGenAI({
 });
 
 async function startServer() {
+
+  // ── Admin Identity Guard ──────────────────────────────────────────────────
+  // Only the hardcoded owner email is recognised as admin.
+  // No role field, no body flag, no JWT claim can override this.
+  const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
+  const requireAdmin = async (req: any, res: any): Promise<boolean> => {
+    const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+    if (!token) { res.status(401).json({ error: "Unauthorized: no session token." }); return false; }
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) { res.status(401).json({ error: "Unauthorized: invalid session." }); return false; }
+      if (user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+        res.status(403).json({ error: "Forbidden: admin access only." }); return false;
+      }
+      return true;
+    } catch (e) {
+      res.status(401).json({ error: "Unauthorized." }); return false;
+    }
+  };
+
   const app = express();
   const PORT = 3000;
+
+  // ─── Legacy local-db helpers (compile-compat stubs; Supabase is source of truth) ─
+  function safeJsonStringify(obj: any, space?: string | number): string {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    }, space);
+  }
+  interface LocalStore { users: Record<string,any>; transactions: Record<string,any>; data_plans?: Record<string,any>; [k: string]: any; }
+  function loadLocalDb(): LocalStore { return { users: {}, transactions: {}, data_plans: {} }; }
+  function saveLocalDb(_data: LocalStore): void { /* no-op — Supabase is source of truth */ }
+  // ───────────────────────────────────────────────────────────────────────────────────
 
   app.use(express.json());
 
@@ -770,6 +374,29 @@ async function startServer() {
   }
 
   /**
+   * Lightweight identity-only verifier. Resolves verified caller user id from session token.
+   * Resolves ONLY a verified user id from the session token -- never trusts a body-supplied id.
+   * Returns null if no valid session token is present.
+   */
+  async function verifyCallerUserId(req: express.Request): Promise<string | null> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    const token = authHeader.substring(7);
+
+    try {
+      const decoded = verifyJwt(token);
+      if (decoded && decoded.uid) return decoded.uid;
+    } catch (e) { /* continue */ }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser(token);
+      if (user) return user.id;
+    } catch (e) { /* continue */ }
+
+    return null;
+  }
+
+  /**
    * Helper to securely fetch the user profile balance by looking up the real, authenticated
    * user ID string from the session payload (and/or fallback request body parameters),
    * ensuring that any non-standard format (like 'admin_ibrahim_vtu_uid') is deterministically
@@ -794,18 +421,6 @@ async function startServer() {
         // Safe to ignore, continue to next strategy
       }
 
-      // 2. Try decoding with Firebase Admin verifyIdToken as fallback
-      if (!rawUserId) {
-        try {
-          const decodedFirebase = await getAdminAuth(appInstance).verifyIdToken(token);
-          if (decodedFirebase && decodedFirebase.uid) {
-            rawUserId = decodedFirebase.uid;
-            userEmail = decodedFirebase.email || null;
-          }
-        } catch (e) {
-          // Continue to next strategy
-        }
-      }
 
       // 3. Try decoding with Supabase Auth as secondary fallback
       if (!rawUserId) {
@@ -821,13 +436,17 @@ async function startServer() {
       }
     }
 
-    // 4. Fallback to req.body.userId if no token matches, ensuring backward compatibility with simpler client calls
-    if (!rawUserId && req.body && req.body.userId) {
-      rawUserId = req.body.userId;
+    // SECURITY: rawUserId must come ONLY from a verified session token above -- never trust a
+    // client-supplied req.body.userId as identity, or anyone could spend/view any other user's
+    // wallet by simply passing their UUID in the request body with no proof of who they are.
+    if (!rawUserId) {
+      throw new Error("Unauthorized: No valid user session token provided.");
     }
 
-    if (!rawUserId) {
-      throw new Error("Unauthorized: No valid user session token or user ID provided.");
+    // If the caller also passed a body userId, it must match the verified token's identity --
+    // reject silently-mismatched requests instead of trusting the body value.
+    if (req.body && req.body.userId && req.body.userId !== rawUserId) {
+      throw new Error("Unauthorized: Provided userId does not match the authenticated session.");
     }
 
     // 5. SECURE SANITIZATION: Cast the ID string (e.g. 'admin_ibrahim_vtu_uid') into a valid Postgres UUID format
@@ -866,36 +485,10 @@ async function startServer() {
     }
 
     if (!activeProfile) {
-      // Sync on-the-fly from Firestore backup if it exists
+      // Profile not found -- create a fresh one with zero balance.
       let syncedProfile = null;
       try {
-        const fsUserSnap = await db.collection('users').doc(rawUserId).get();
-        if (fsUserSnap.exists) {
-          const fsUser = fsUserSnap.data();
-          const referralCode = fsUser?.referralCode || `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-          const walletBal = Number(fsUser?.balance || fsUser?.wallet_balance || 10000);
-          
-          const { error: pgInsertErr } = await supabase
-            .from("profiles")
-            .insert({
-              id: pgUuid,
-              name: fsUser?.fullName || "User",
-              username: fsUser?.email ? fsUser.email.toLowerCase().split('@')[0] : `user_${Date.now()}`,
-              phone_number: fsUser?.phoneNumber || "",
-              referral_code: referralCode,
-              transaction_pin: "1234",
-              wallet_balance: walletBal
-            });
-
-          if (!pgInsertErr) {
-            const { data } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', pgUuid)
-              .maybeSingle();
-            syncedProfile = data;
-          }
-        } else {
+        {
           // Firestore document doesn't exist either. Create a brand new profile in Supabase profiles!
           const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
           const newUsername = userEmail ? userEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
@@ -965,107 +558,57 @@ async function startServer() {
     };
   }
 
-  // GET /plans and GET /api/plans: Query plans dynamically by network & planType (Firestore is the One and Only Source of Truth!)
+  // GET /plans and GET /api/plans: Query plans from Supabase services_config (single source of truth)
   app.get(["/plans", "/api/plans"], async (req, res) => {
     try {
       const { network } = req.query;
-      const localStore = loadLocalDb();
-      let firestorePlansList: any[] = [];
-      try {
-        if (db) {
-          // Fetch 'data_plans' collection dynamically from Firestore as primary source
-          const dataPlansSnap = await db.collection('data_plans').get();
-          const combinedDocs = new Map();
-          const nowMs = Date.now();
 
-          dataPlansSnap.docs.forEach((doc: any) => {
-            const data = doc.data();
-            let isExpired = false;
-            if (data.expiresAt) {
-              let expiryTime: number;
-              if (data.expiresAt.toDate) {
-                expiryTime = data.expiresAt.toDate().getTime();
-              } else if (data.expiresAt.seconds) {
-                expiryTime = data.expiresAt.seconds * 1000;
-              } else {
-                expiryTime = new Date(data.expiresAt).getTime();
-              }
-              if (!isNaN(expiryTime) && expiryTime < nowMs) {
-                isExpired = true;
-              }
-            }
-            if (!isExpired) {
-              combinedDocs.set(doc.id, { id: doc.id, ...data });
-            }
-          });
-          firestorePlansList = Array.from(combinedDocs.values());
-        }
-      } catch (fsErr: any) {
-        console.warn("[Plans Route] Firestore is not accessible or empty, attempting to read from localStore.data_plans:", fsErr.message);
+      const { data: rows, error: dbErr } = await supabase
+        .from('services_config')
+        .select('id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active')
+        .eq('is_active', true)
+        .order('network');
+
+      if (dbErr) {
+        console.error("[Plans] Supabase error:", dbErr.message);
+        return res.status(503).json({ error: "Failed to load plans. Please try again." });
       }
 
-      if (!firestorePlansList || firestorePlansList.length === 0) {
-        const localPlans = localStore.data_plans || {};
-        firestorePlansList = Object.values(localPlans);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ error: "No active plans available. Please contact support." });
       }
 
-      // If both Firestore and localStore are empty, use built-in high-availability simulated data plans
-      if (!firestorePlansList || firestorePlansList.length === 0) {
-        firestorePlansList = [
-          { id: "101", network: "MTN", network_type: "MTN", name: "MTN SME 1GB", price: 230, validity: "30 Days", plan_name: "MTN SME 1GB" },
-          { id: "102", network: "MTN", network_type: "MTN", name: "MTN SME 2GB", price: 460, validity: "30 Days", plan_name: "MTN SME 2GB" },
-          { id: "103", network: "MTN", network_type: "MTN", name: "MTN SME 5GB", price: 1150, validity: "30 Days", plan_name: "MTN SME 5GB" },
-          { id: "201", network: "GLO", network_type: "GLO", name: "GLO 1.35GB", price: 450, validity: "30 Days", plan_name: "GLO 1.35GB" },
-          { id: "301", network: "Airtel", network_type: "Airtel", name: "Airtel CG 1.5GB", price: 500, validity: "30 Days", plan_name: "Airtel CG 1.5GB" },
-          { id: "401", network: "9mobile", network_type: "9mobile", name: "9mobile 1.5GB", price: 600, validity: "30 Days", plan_name: "9mobile 1.5GB" }
-        ];
-      }
+      const plans = rows.map((r: any) => ({
+        id:                   r.bigisub_identifier_id || String(r.id),
+        network:              r.network_type || r.network || r.provider_or_network,
+        network_type:         r.network_type || r.network,
+        type:                 r.service_type || 'data',
+        planType:             r.plan_category || 'GIFTING',
+        planName:             r.plan_name || r.name || r.item_name,
+        name:                 r.plan_name || r.name || r.item_name,
+        plan_name:            r.plan_name || r.name || r.item_name,
+        price:                Number(r.selling_price || r.retail_price || 0),
+        amount:               Number(r.selling_price || r.retail_price || 0),
+        retail_price:         Number(r.selling_price || r.retail_price || 0),
+        validity:             r.validity_days || '30 Days',
+        peyflex_variation_id: r.bigisub_identifier_id || String(r.id),
+        apiPlanId:            r.bigisub_identifier_id || String(r.id),
+      }));
 
-      // Map firestore/local plans to match our expected schema
-      const formattedPlans = firestorePlansList.map(p => {
-        const pName = p.plan_name || p.name || `${p.network_type || p.network} Dynamic Plan`;
-        const pPrice = Number(p.retail_price || p.price || p.amount || 0);
-        const pNetwork = p.network_type || p.network;
-        const pVarId = p.peyflex_variation_id || p.apiPlanId || p.peyflex_id || p.id;
-        
-        return {
-          id: p.id,
-          network: pNetwork,
-          type: p.type || 'data',
-          planType: p.planType || (pName?.includes("SME") ? "SME" : (pName?.includes("CG") || pName?.includes("Corporate") ? "Corporate Gifting" : "Gifting")),
-          planName: pName,
-          name: pName,
-          price: pPrice,
-          amount: pPrice,
-          validity: p.duration || p.validity || (pName?.includes("2 Days") ? "2 Days" : "30 Days"),
-          apiPlanId: pVarId,
-          peyflex_id: pVarId,
-          peyflex_variation_id: pVarId,
-          
-          // Literal dynamic keys requested by user
-          plan_name: pName,
-          retail_price: pPrice,
-          network_type: pNetwork,
-        };
-      });
+      const filtered = network
+        ? plans.filter((p: any) => (p.network_type || p.network || '').toLowerCase() === String(network).toLowerCase())
+        : plans;
 
-      let filtered = formattedPlans;
-      if (network) {
-        filtered = filtered.filter(p => {
-          const nw = p.network_type || p.network || '';
-          return nw.toLowerCase() === String(network).toLowerCase();
-        });
-      }
-      
       return res.json(filtered);
     } catch (err: any) {
-      console.error("Error fetching dynamic plans: ", err);
+      console.error("[Plans] Unexpected error:", err);
       return res.status(500).json({ error: err.message });
     }
   });
 
   // GET /api/sync-mozosubs-plans and GET /api/data/plans/sync: Sync data plans from Mozosubs API into Postgres & Firestore
   app.get(["/api/sync-mozosubs-plans", "/api/sync/mozosubs-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     try {
       const localStore = loadLocalDb();
       const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
@@ -1074,18 +617,10 @@ async function startServer() {
       let mozosubsPlans: any[] = [];
       let isFallbackNeeded = false;
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation] Fetching simulated data plans...");
-        mozosubsPlans = [
-          { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
-          { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
-          { id: 103, network: 1, name: "MTN SME 5GB", price: 1150, validity: "30 Days" },
-          { id: 201, network: 2, name: "GLO 1.35GB", price: 450, validity: "30 Days" },
-          { id: 301, network: 3, name: "Airtel CG 1.5GB", price: 500, validity: "30 Days" },
-          { id: 401, network: 4, name: "9mobile 1.5GB", price: 600, validity: "30 Days" }
-        ];
-      } else {
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
+        return res.status(503).json({ error: "Mozosubs provider not configured. Please set MOZOSUBS_API_KEY." });
+      }
+      {  // live fetch
         const mozoPlansUrl = `${MOZOSUBS_BASE_URL}/data/plans/`;
         console.log(`[Mozosubs API] Fetching plans from: ${mozoPlansUrl}`);
         
@@ -1122,7 +657,7 @@ async function startServer() {
       }
 
       if (isFallbackNeeded || !mozosubsPlans || !Array.isArray(mozosubsPlans) || mozosubsPlans.length === 0) {
-        console.warn("[Mozosubs Sync Warning] Real Mozosubs plans could not be fetched (returned error or 404). Switching gracefully to high-availability local simulated plans fallback.");
+        console.error("[Mozosubs] Failed to fetch live plans from API. No simulation fallback — check MOZOSUBS_API_KEY.");
         mozosubsPlans = [
           { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
           { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
@@ -1176,9 +711,7 @@ async function startServer() {
         }
 
         try {
-          if (db) {
-            await db.collection('data_plans').doc(String(pId)).set({
-              id: String(pId),
+            await supabase.from('services_config').upsert({ bigisub_identifier_id: String(pId), id: String(pId),
               mozosubs_plan_id: String(pId),
               network: String(plan.network || ''),
               plan_name: String(plan.name || plan.plan_name || ''),
@@ -1186,10 +719,7 @@ async function startServer() {
               retail_price: Number(plan.price || 0),
               validity: String(plan.validity || '30 Days'),
               is_active: plan.is_active !== undefined ? plan.is_active : true,
-              updatedAt: FieldValue.serverTimestamp()
-            }, { merge: true });
-            syncedSuccessful = true;
-          }
+              updatedAt: new Date().toISOString() }, { onConflict: 'bigisub_identifier_id' });
         } catch (fsErr: any) {
           console.warn(`[Mozosubs Sync] Firestore sync warning for plan ${pId}:`, fsErr.message);
         }
@@ -1325,7 +855,6 @@ async function startServer() {
       apiPlanId
     } = req.body;
     
-    const finalUserId = userId;
     const finalNetwork = networkId || network;
     const finalPhone = phone || phoneNumber || phone_number;
     const finalAmount = Number(
@@ -1347,8 +876,18 @@ async function startServer() {
       }
     }
 
-    if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
+    if (!userId || !finalPhone || !finalAmount || !finalNetwork) {
       return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
+    }
+
+    // SECURITY: never trust the body-supplied userId as identity -- require a real verified
+    // session and confirm it actually matches the account this purchase is being made against.
+    let finalUserId: string;
+    try {
+      const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+      finalUserId = verifiedUserId;
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
     }
 
     try {
@@ -1413,24 +952,10 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Bigisub Simulation] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
-          apiSuccess = false;
-          apiErrorMsg = "Simulated carrier gateway timeout";
-        } else {
-          apiSuccess = true;
-          apiResponseData = {
-            status: "success",
-            success: true,
-            reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-            message: "Simulated purchase successful"
-          };
-        }
-      } else {
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           const endpoint = finalType === "airtime" ? "airtime" : "data";
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
@@ -1489,7 +1014,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
           }
         }
-      }
+      
 
       // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
       if (apiSuccess) {
@@ -1523,19 +1048,7 @@ async function startServer() {
           // Ignored backup table failure
         }
 
-        // Secondary Firestore sync for secondary database compatibility
-        try {
-          if (db) {
-            const userRef = db.collection('users').doc(finalUserId);
-            await userRef.update({
-              wallet_balance: deductedBalance,
-              available_balance: deductedBalance,
-              balance: deductedBalance
-            });
-          }
-        } catch (fsErr) {
-          // Ignored Firestore fallback
-        }
+        // (Supabase profiles already updated above)
 
         // Create a transaction record in Supabase 'transactions' table
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
@@ -1557,9 +1070,8 @@ async function startServer() {
 
         // Create transaction record in Firestore as fallback
         try {
-          if (db) {
             const txId = `bigi_${Date.now()}`;
-            await db.collection('transactions').doc(txId).set({
+            await supabase.from('transactions').insert({
               id: txId,
               userId: finalUserId,
               type: finalType,
@@ -1567,9 +1079,8 @@ async function startServer() {
               status: 'completed',
               description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
               reference: referenceCode,
-              createdAt: FieldValue.serverTimestamp()
+              createdAt: new Date().toISOString()
             });
-          }
         } catch (fsTxErr) {
           // Ignored
         }
@@ -1612,11 +1123,17 @@ async function startServer() {
    * Securely handles user balances and dispatches data purchase requests to Bigisub
    */
   app.post('/api/vendor/buy-data', async (req, res) => {
-    const { userUUID, email, networkId, planId, phoneNumber, costAmount } = req.body;
+    const { email, networkId, planId, phoneNumber, costAmount } = req.body;
 
     try {
-      if (!userUUID) {
-        return res.status(400).json({ success: false, message: "Missing userUUID parameter." });
+      // SECURITY: never trust a body-supplied userUUID as identity -- require a real verified
+      // session, and only ever act on the caller's own verified account.
+      let userUUID: string;
+      try {
+        const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+        userUUID = verifiedUserId;
+      } catch (authErr: any) {
+        return res.status(401).json({ success: false, message: `Unauthorized: ${authErr.message}` });
       }
 
       // 1. Fetch user profile from Supabase securely using their UUID
@@ -1652,15 +1169,11 @@ async function startServer() {
       let apiSuccess = false;
 
       // 3. Check for simulation mode or execute live request
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log("[Bigisub Simulation Vendor Buy-Data] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        apiSuccess = true;
-        bigisubResponseData = {
-          status: 'success',
-          id: `BIGI-SIM-${Date.now()}`
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         const bigisubPayload = {
           network: parseInt(verifiedNetworkId),
           plan: parseInt(planId),
@@ -1680,7 +1193,7 @@ async function startServer() {
         if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
           apiSuccess = true;
         }
-      }
+      
 
       // 4. If successful, settle accounts
       if (apiSuccess) {
@@ -1728,58 +1241,64 @@ async function startServer() {
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
   app.post('/api/vendor/recharge', async (req, res) => {
-    const { email, type, networkId, planId, phoneNumber, amount, userUUID, uuid, costAmount } = req.body;
+    const { email, type, networkId, planId, phoneNumber, amount, costAmount } = req.body;
 
     try {
-      const targetId = userUUID || uuid;
+      // SECURITY: never trust a body-supplied userUUID/uuid/email as identity -- require a real
+      // verified session, and only ever act on the caller's own verified account.
+      let targetId: string;
+      try {
+        const { userId: verifiedUserId } = await getAuthenticatedUserBalance(req);
+        targetId = verifiedUserId;
+      } catch (authErr: any) {
+        return res.status(401).json({ success: false, message: `Unauthorized: ${authErr.message}` });
+      }
+
       let profile: any = null;
 
-      if (targetId) {
-        // 1. Look up profile using the bulletproof unique ID (UUID)
-        const { data, error: profileError } = await supabase
+      // 1. Look up profile using the verified UUID
+      const { data, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', targetId)
+        .maybeSingle();
+
+      profile = data;
+
+      // AUTO-HEAL: if the verified caller genuinely has no profile row yet, create one with a
+      // ZERO starting balance -- never seed free money. (No longer keyed on an unverified body ID.)
+      if (profileError || !profile) {
+        console.log(`Profile missing for verified UUID ${targetId}. Auto-creating profile row now...`);
+        const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
+        const username = email ? email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
+        const recoveryPayload = {
+          id: targetId,
+          name: 'User',
+          username: username,
+          email: email || '',
+          phone_number: phoneNumber || '',
+          referral_code: referralCode,
+          transaction_pin: '1234',
+          wallet_balance: 0,
+          balance: 0
+        };
+
+        const { error: insertError } = await supabase
+          .from('profiles')
+          .insert([recoveryPayload]);
+
+        if (insertError) {
+          throw new Error("Critical database profile creation failure: " + insertError.message);
+        }
+
+        // Fetch back the new profile seamlessly
+        const { data: newProfile } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', targetId)
           .maybeSingle();
 
-        profile = data;
-
-        // 🚨 AUTO-HEAL: If the profile is missing for ANY reason, create it instantly!
-        if (profileError || !profile) {
-          console.log(`Profile missing for UUID ${targetId}. Auto-creating profile row now...`);
-          const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-          const username = email ? email.toLowerCase().split('@')[0] : `user_${Date.now()}`;
-          const recoveryPayload = {
-            id: targetId,
-            name: 'User',
-            username: username,
-            email: email || '',
-            phone_number: phoneNumber || '',
-            referral_code: referralCode,
-            transaction_pin: '1234',
-            wallet_balance: 200.00,
-            balance: 200.00
-          };
-
-          const { error: insertError } = await supabase
-            .from('profiles')
-            .insert([recoveryPayload]);
-
-          if (insertError) {
-            throw new Error("Critical database profile creation failure: " + insertError.message);
-          }
-
-          // Fetch back the new profile seamlessly
-          const { data: newProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', targetId)
-            .maybeSingle();
-
-          profile = newProfile || recoveryPayload;
-        }
-      } else if (email) {
-        profile = await getOrCreateProfileByEmail(email);
+        profile = newProfile || recoveryPayload;
       }
 
       if (!profile) {
@@ -1812,17 +1331,12 @@ async function startServer() {
       let mozoResponseData: any = null;
       let apiSuccess = false;
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation Vendor] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        apiSuccess = true;
-        mozoResponseData = {
-          status: 'success',
-          id: `MOZO-SIM-${Date.now()}`
-        };
-      } else {
-        const mozoPayload: any = {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes('dummy') || MOZOSUBS_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
+      const mozoPayload: any = {
           network: mozoNetworkId,
           mobile_number: phoneNumber,
           Ported_number: true
@@ -1853,7 +1367,7 @@ async function startServer() {
         if (mozoResponseData.status === 'success' || mozoResponseData.Status === 'successful' || mozoResponseData.success === true || mozoResponseData.status === 'successful') {
           apiSuccess = true;
         }
-      }
+      
 
       // Step D: If Mozosubs passes, deduct wallet funds securely
       if (apiSuccess) {
@@ -1907,6 +1421,7 @@ async function startServer() {
 
   // 1. Automated Plan Generator: Processes and maps/upserts plans directly from Bigisub API payload
   app.post("/api/admin/generate-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     try {
       const { plans } = req.body;
       if (!plans || !Array.isArray(plans)) {
@@ -2148,6 +1663,7 @@ async function startServer() {
 
   // 3. PUT Admin Control Route: Allows instant modifications of plan parameters
   app.put("/api/admin/services/:id", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     try {
       const { id } = req.params;
       const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
@@ -2309,18 +1825,16 @@ async function startServer() {
 
       // Sync 'pending' status to Firestore fallback
       try {
-        if (db) {
-          await db.collection('transactions').doc(transactionId).set({
-            id: transactionId,
-            userId: resolvedUserId,
-            type: service.service_type,
-            amount: finalPrice,
-            status: 'pending',
-            description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
-            reference: localReference,
-            createdAt: FieldValue.serverTimestamp()
-          });
-        }
+          await supabase.from('transactions').insert({
+              id: transactionId,
+              userId: resolvedUserId,
+              type: service.service_type,
+              amount: finalPrice,
+              status: 'pending',
+              description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
+              reference: localReference,
+              createdAt: new Date().toISOString()
+            });
       } catch (e) {}
 
       const BIGISUB_API_KEY = await resolveBigisubApiKey();
@@ -2392,18 +1906,11 @@ async function startServer() {
       let apiErrorMsg = "";
 
       // Simulation mode if key is placeholder
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log(`[Bigisub Simulation Mode] Simulating ${service.service_type} purchase...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
 
-        apiSuccess = true;
-        apiResponseData = {
-          status: "success",
-          success: true,
-          reference: `BIGI-SIM-UTL-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Simulated utility purchase successful!"
-        };
-      } else {
         try {
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
           console.log(`[Bigisub Outbound HTTP Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
@@ -2442,7 +1949,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
           }
         }
-      }
+      
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalPrice;
@@ -2474,13 +1981,11 @@ async function startServer() {
         } catch (e) {}
 
         try {
-          if (db) {
-            await db.collection('users').doc(resolvedUserId).update({
+            await supabase.from('profiles').update({
               wallet_balance: deductedBalance,
               available_balance: deductedBalance,
               balance: deductedBalance
-            });
-          }
+            }).eq('id', resolvedUserId);
         } catch (e) {}
 
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
@@ -2500,12 +2005,10 @@ async function startServer() {
         }
 
         try {
-          if (db) {
-            await db.collection('transactions').doc(transactionId).update({
+            await supabase.from('transactions').update({
               status: 'success',
               reference: referenceCode
-            });
-          }
+            }).eq('id', transactionId);
         } catch (e) {}
 
         return res.json({
@@ -2533,12 +2036,10 @@ async function startServer() {
         }
 
         try {
-          if (db) {
-            await db.collection('transactions').doc(transactionId).update({
+            await supabase.from('transactions').update({
               status: 'failed',
               description: `FAILED: ${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'} (${apiErrorMsg || "Gateway transaction rejected."})`
-            });
-          }
+            }).eq('id', transactionId);
         } catch (e) {}
 
         return res.status(400).json({ 
@@ -2632,18 +2133,16 @@ async function startServer() {
       }
 
       try {
-        if (db) {
-          await db.collection('transactions').doc(transactionId).set({
-            id: transactionId,
-            userId: resolvedUserId,
-            type: 'airtime',
-            amount: chargeAmount,
-            status: 'pending',
-            description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
-            reference: localReference,
-            createdAt: FieldValue.serverTimestamp()
-          });
-        }
+          await supabase.from('transactions').insert({
+              id: transactionId,
+              userId: resolvedUserId,
+              type: 'airtime',
+              amount: chargeAmount,
+              status: 'pending',
+              description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
+              reference: localReference,
+              createdAt: new Date().toISOString()
+            });
       } catch (e) {}
 
       const BIGISUB_API_KEY = await resolveBigisubApiKey();
@@ -2669,17 +2168,11 @@ async function startServer() {
       let apiErrorMsg = "";
 
       // Simulation mode if key is placeholder
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log(`[Bigisub Simulation Mode] Simulating airtime purchase for ${network}...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        apiSuccess = true;
-        apiResponseData = {
-          status: "success",
-          success: true,
-          reference: `BIGI-SIM-ART-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Simulated airtime top-up successful!"
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           const bigisubUrl = `${BIGISUB_BASE_URL}/airtime/`;
           console.log(`[Bigisub Airtime Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
@@ -2713,7 +2206,7 @@ async function startServer() {
           const respData = axiosErr.response?.data;
           apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
         }
-      }
+      
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - chargeAmount;
@@ -2736,22 +2229,13 @@ async function startServer() {
           });
         }
 
-        // Sync to users table and firebase collection
+        // Sync wallet balance in profiles
         try {
-          await supabase
-            .from('users')
-            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', pgUuid);
-        } catch (e) {}
-
-        try {
-          if (db) {
-            await db.collection('users').doc(resolvedUserId).update({
-              wallet_balance: deductedBalance,
-              available_balance: deductedBalance,
-              balance: deductedBalance
-            });
-          }
+          await supabase.from('profiles').update({
+            wallet_balance: deductedBalance,
+            available_balance: deductedBalance,
+            balance: deductedBalance
+          }).eq('id', resolvedUserId);
         } catch (e) {}
 
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
@@ -2771,12 +2255,10 @@ async function startServer() {
         }
 
         try {
-          if (db) {
-            await db.collection('transactions').doc(transactionId).update({
+            await supabase.from('transactions').update({
               status: 'success',
               reference: referenceCode
-            });
-          }
+            }).eq('id', transactionId);
         } catch (e) {}
 
         return res.status(200).json({
@@ -2803,12 +2285,10 @@ async function startServer() {
         }
 
         try {
-          if (db) {
-            await db.collection('transactions').doc(transactionId).update({
+            await supabase.from('transactions').update({
               status: 'failed',
               description: `FAILED: Airtime VTU ₦${parsedAmount} to ${phone_number} (${apiErrorMsg || "Gateway transaction rejected."})`
-            });
-          }
+            }).eq('id', transactionId);
         } catch (e) {}
 
         return res.status(400).json({
@@ -2821,152 +2301,11 @@ async function startServer() {
     }
   });
 
-  // JWT Registration Route
-  app.post("/api/auth/register", async (req, res) => {
-    const { email, password, fullName, phoneNumber } = req.body;
-    if (!email || !password || !fullName) {
-      return res.status(400).json({ error: "Missing required registration parameters" });
-    }
-    
-    try {
-      const safeEmail = email.toLowerCase().trim();
-      const userRef = db.collection('users').doc();
-      const uid = userRef.id;
-      
-      const referralCode = `NOROYA-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-      
-      const newUser = {
-        uid,
-        email: safeEmail,
-        fullName,
-        phoneNumber: phoneNumber || "",
-        balance: 10000, // Credit ₦10,000 baseline baseline for simple, instant VTU sandbox testing!
-        role: "user",
-        referralCode,
-        createdAt: new Date().toISOString()
-      };
-
-      await userRef.set({
-        ...newUser,
-        createdAt: FieldValue.serverTimestamp()
-      });
-
-      // Save into backup store
-      const localStore = loadLocalDb();
-      localStore.users[uid] = newUser;
-      saveLocalDb(localStore);
-
-      const token = signJwt({ uid, email: safeEmail, role: "user" });
-
-      return res.json({
-        success: true,
-        token,
-        user: newUser
-      });
-    } catch (err: any) {
-      console.error("[JWT Register Error]:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // JWT Login Route
-  app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Missing login parameters" });
-    }
-    
-    try {
-      const safeEmail = email.toLowerCase().trim();
-      let foundUser: any = null;
-      
-      const snap = await db.collection('users').where('email', '==', safeEmail).limit(1).get();
-      if (!snap.empty) {
-        foundUser = { uid: snap.docs[0].id, ...snap.docs[0].data() };
-      } else {
-        const localStore = loadLocalDb();
-        foundUser = Object.values(localStore.users).find((u: any) => u.email === safeEmail);
-      }
-      
-      if (!foundUser) {
-        return res.status(401).json({ error: "Invalid login credentials" });
-      }
-
-      const uid = foundUser.uid || foundUser.id;
-      const token = signJwt({ uid, email: safeEmail, role: foundUser.role || "user" });
-      
-      return res.json({
-        success: true,
-        token,
-        user: foundUser
-      });
-    } catch (err: any) {
-      console.error("[JWT Login Error]:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // JWT Session Validator Route
-  app.get("/api/auth/session", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "No authorization header found" });
-    }
-    
-    const token = authHeader.split(" ")[1];
-    const decoded = verifyJwt(token);
-    if (!decoded) {
-      return res.status(401).json({ error: "Invalid or expired session token" });
-    }
-    
-    try {
-      const userRef = db.collection('users').doc(decoded.uid);
-      const docSnap = await userRef.get();
-      if (docSnap.exists) {
-        return res.json({ success: true, user: docSnap.data() });
-      } else {
-        const localStore = loadLocalDb();
-        const user = localStore.users[decoded.uid];
-        if (user) {
-          return res.json({ success: true, user });
-        }
-      }
-      return res.status(404).json({ error: "User session revoked" });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Server-side Firebase Admin Live Connection test
-  app.get("/api/firebase/debug", async (req, res) => {
-    try {
-      const testRef = db.collection('_connection_test_').doc('status');
-      await testRef.set({
-        lastCheck: new Date().toISOString(),
-        status: "ok"
-      });
-      const snap = await testRef.get();
-      return res.json({
-        success: true,
-        message: "Successfully synchronized with Firestore from the Node server!",
-        data: snap.data()
-      });
-    } catch (err: any) {
-      console.error("[Firebase Debug Connection Failed]:", err);
-      return res.status(500).json({
-        success: false,
-        error: err.message,
-        stack: err.stack
-      });
-    }
-  });
 
   // Admin Create Plan backend endpoint
   app.post("/api/admin/create-plan", async (req, res) => {
-    const { triggeredBy, network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id } = req.body;
-    if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
-      return res.status(403).json({ error: "Access denied." });
-    }
+    if (!await requireAdmin(req, res)) return;
+    const { network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id } = req.body;
 
     try {
       const rawNet = String(network || 'MTN').trim().toUpperCase();
@@ -2989,7 +2328,15 @@ async function startServer() {
         planCategory = "CG";
       }
 
-      const plansColl = db.collection('data_plans');
+      // Supabase: using services_config table instead of Firestore data_plans
+      const plansColl = { 
+        doc: (id: string) => ({ 
+          set: async (d: any) => supabase.from('services_config').upsert({ ...d, bigisub_identifier_id: id }, { onConflict: 'bigisub_identifier_id' }),
+          get: async () => { const { data } = await supabase.from('services_config').select('*').eq('bigisub_identifier_id', id).maybeSingle(); return { exists: !!data, data: () => data }; }
+        }),
+        where: () => ({ get: async () => { const { data } = await supabase.from('services_config').select('*'); return { docs: (data||[]).map((r:any) => ({ id: r.bigisub_identifier_id, data: () => r })) }; } }),
+        get: async () => { const { data } = await supabase.from('services_config').select('*'); return { docs: (data||[]).map((r:any) => ({ id: r.bigisub_identifier_id, data: () => r })) }; }
+      };
       const docId = `plan_${Date.now()}`;
       await plansColl.doc(docId).set({
         network: finalNet,
@@ -3008,7 +2355,7 @@ async function startServer() {
         planType: planCategory,
         peyflex_variation_id: peyflex_variation_id || docId,
 
-        createdAt: FieldValue.serverTimestamp(),
+        createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       });
 
@@ -3021,6 +2368,7 @@ async function startServer() {
 
   // Admin Peyflex Fetch & Sync Utility backend endpoint
   app.post("/api/admin/fetch-peyflex-products", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     const { triggeredBy } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3133,6 +2481,7 @@ async function startServer() {
 
   // Admin Publish Peyflex Plans to Firestore collections and Supabase data_plans
   app.post("/api/admin/publish-peyflex-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     const { triggeredBy, plans } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3256,19 +2605,17 @@ async function startServer() {
         throw new Error(`Supabase insert failed: ${insertError.message}`);
       }
 
-      // Also support setting Firebase Firestore as legacy mirroring to ensure 0 regression across platforms
+      // Mirror plan upserts to services_config (already done above, this is a safety double-write)
       try {
         const promises = recordsToInsert.map(p => {
           const colName = p.type === "data" ? "data_plans" : (p.type === "exam" || p.type === "education" ? "exam_plans" : "utility_plans");
-          return db.collection(colName).doc(p.id).set({
-            ...p,
-            createdAt: FieldValue.serverTimestamp(),
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-          }, { merge: true });
+          return supabase.from('services_config').upsert({ bigisub_identifier_id: p.id, ...p,
+              createdAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }, { onConflict: 'bigisub_identifier_id' });
         });
         await Promise.all(promises);
       } catch (fbErr) {
-        console.warn("[Firebase Publish Mirroring Warning]:", fbErr);
+        console.warn("[Services Config Mirror Warning]:", fbErr);
       }
 
       return res.json({
@@ -3283,6 +2630,7 @@ async function startServer() {
 
   // Admin Edit Plan backend endpoint
   app.post("/api/admin/edit-plan", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     const { triggeredBy, id, network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id, collectionName } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3310,8 +2658,9 @@ async function startServer() {
       }
 
       const colName = collectionName || (type === 'data' ? 'data_plans' : ((type === 'exam' || type === 'education') ? 'exam_plans' : 'utility_plans'));
-      const plansColl = db.collection(colName);
-      await plansColl.doc(id).update({
+      // Supabase: using services_config table instead of Firestore data_plans
+      // Admin edit: update the plan directly via Supabase
+      const updatePayload: any = {
         network: finalNet,
         type: type || 'data',
         name: String(name).trim(),
@@ -3328,8 +2677,9 @@ async function startServer() {
         planType: planCategory,
         peyflex_variation_id: peyflex_variation_id || id,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        updatedAt: FieldValue.serverTimestamp()
-      });
+        updatedAt: new Date().toISOString()
+      };
+      await supabase.from('services_config').update(updatePayload).eq('bigisub_identifier_id', id);
 
       return res.json({ success: true, message: "Successfully updated service plan in backend!" });
     } catch (err: any) {
@@ -3340,15 +2690,13 @@ async function startServer() {
 
   // Admin Delete Plan backend endpoint
   app.post("/api/admin/delete-plan", async (req, res) => {
-    const { triggeredBy, id, collectionName } = req.body;
-    if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
-      return res.status(403).json({ error: "Access denied." });
-    }
+    if (!await requireAdmin(req, res)) return;
+    const { id, collectionName } = req.body;
 
     try {
       const colName = collectionName || 'data_plans';
-      const plansColl = db.collection(colName);
-      await plansColl.doc(id).delete();
+      // Supabase: using services_config table instead of Firestore data_plans
+      await supabase.from('services_config').delete().eq('bigisub_identifier_id', id);
       return res.json({ success: true, message: "Successfully deleted service plan!" });
     } catch (err: any) {
       console.error("Error deleting plan:", err);
@@ -3356,99 +2704,26 @@ async function startServer() {
     }
   });
 
-  // Admin Passwordless Login Bypass
-  app.post("/api/auth/admin-login", async (req, res) => {
-    const { email } = req.body;
-    if (!email || email.toLowerCase() !== 'ibrahimfaruqolamilekan4@gmail.com') {
-      return res.status(403).json({ error: "Access denied. Standard users must sign in via standard forms." });
-    }
-
-    try {
-      const adminAuth = getAdminAuth(appInstance);
-      const uid = "admin_ibrahim_vtu_uid";
-
-      // Ensure the Admin user is registered in the Users collection in Firestore
-      const userRef = db.collection('users').doc(uid);
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        // Create the admin document in Firestore
-        await userRef.set({
-          uid,
-          email: email.toLowerCase(),
-          fullName: "Faruq Ibrahim (Admin)",
-          balance: 0, // Default 0 balance for admin
-          role: "admin",
-          referralCode: "NOROYA-ADMIN-99",
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        // Ensure there is a referral code mapping for them
-        await db.collection('referralCodes').doc("NOROYA-ADMIN-99").set({
-          ownerUid: uid,
-          ownerName: "Faruq Ibrahim (Admin)"
-        });
-      }
-
-      // Check if we can mint a real Custom Token (this requires Google Application Default Credentials or a Service Account)
-      try {
-        const customToken = await adminAuth.createCustomToken(uid, {
-          email: email.toLowerCase(),
-          email_verified: true,
-          admin: true
-        });
-        
-        return res.json({ 
-          success: true, 
-          token: customToken, 
-          simulated: false,
-          userData: {
-            uid,
-            email: email.toLowerCase(),
-            fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
-            role: "admin",
-            referralCode: "NOROYA-ADMIN-99",
-            createdAt: new Date().toISOString()
-          }
-        });
-      } catch (tokenErr: any) {
-        console.warn("Could not generate standard Custom Token (expected behavior in standard sandbox):", tokenErr.message);
-        // Fallback to high-fidelity client simulation
-        return res.json({ 
-          success: true, 
-          simulated: true, 
-          reason: "Backdoor active for main workspace domain",
-          userData: {
-            uid,
-            email: email.toLowerCase(),
-            fullName: "Faruq Ibrahim (Admin)",
-            balance: userDoc.exists ? (userDoc.data()?.balance ?? 0) : 0,
-            role: "admin",
-            referralCode: "NOROYA-ADMIN-99",
-            createdAt: new Date().toISOString()
-          }
-        });
-      }
-    } catch (error: any) {
-      console.error("Admin bypass login controller error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // Monnify credentials helpers completely removed
 
   // 1.5 Secure Paystack Payment Webhook Endpoint
   app.post("/api/v1/payment-webhook", async (req, res) => {
     try {
+      // SECURITY: fail closed if no real secret is configured -- never fall back to a
+      // hardcoded test key, or anyone could forge a valid signature and mint free wallet funds.
+      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
+      if (!secretKey || secretKey.includes("PASTE_YOUR")) {
+        console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY is not configured. Rejecting webhook.");
+        return res.status(503).send("Payment provider not configured.");
+      }
+
       const signature = req.headers["x-paystack-signature"];
       if (!signature) {
         console.warn("[Paystack Webhook] Missing x-paystack-signature header.");
         return res.status(401).send("Unauthorized: Signature header missing.");
       }
 
-      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY || "sk_test_6722fa7c94e8d9d5a736e";
-      
       let rawBody = "";
       if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
         rawBody = (req as any).rawBody.toString("utf-8");
@@ -3463,13 +2738,14 @@ async function startServer() {
         }
       }
 
-      // Verify Paystack HMAC-SHA512 Signature
+      // Verify Paystack HMAC-SHA512 Signature -- NO bypass string of any kind. A mismatch is
+      // always rejected; this is the only thing standing between the internet and free money.
       const computedHash = crypto
         .createHmac("sha512", secretKey)
         .update(rawBody)
         .digest("hex");
 
-      if (signature !== computedHash && signature !== "local-bypass") {
+      if (signature !== computedHash) {
         console.warn("[Paystack Webhook] Calculated signature mismatch.");
         return res.status(401).send("Unauthorized: Invalid signature hash verification.");
       }
@@ -3490,134 +2766,40 @@ async function startServer() {
         return res.status(400).send("Bad Request: Incomplete webhook payload parameters.");
       }
 
-      // Idempotency: log check in 'processed_payments' collection to prevent double crediting
-      const paymentRefDoc = db.collection("processed_payments").doc(reference);
-
-      const transactionResult = await db.runTransaction(async (transaction) => {
-        const paymentSnap = await transaction.get(paymentRefDoc);
-        if (paymentSnap.exists) {
-          console.warn(`[Paystack Webhook] Transaction reference ${reference} already handled.`);
-          return { alreadyProcessed: true };
-        }
-
-        // Fetch corresponding user document by userId (direct doc lookup) or email (case-insensitive)
-        let userDoc: any = null;
-        const requestUserId = req.body.userId || data?.metadata?.userId || data?.userId;
-
-        if (requestUserId) {
-          const directDoc = await transaction.get(db.collection("users").doc(requestUserId));
-          if (directDoc.exists) {
-            userDoc = directDoc;
-          }
-        }
-
-        if (!userDoc) {
-          const userQuery = db.collection("users").where("email", "==", customerEmail).limit(1);
-          const userSnap = await transaction.get(userQuery);
-
-          if (!userSnap.empty) {
-            userDoc = userSnap.docs[0];
-          } else {
-            // Try original non-lowercased query
-            const rawEmail = data?.customer?.email;
-            if (rawEmail) {
-              const altUserQuery = db.collection("users").where("email", "==", rawEmail).limit(1);
-              const altUserSnap = await transaction.get(altUserQuery);
-              if (!altUserSnap.empty) {
-                userDoc = altUserSnap.docs[0];
-              }
-            }
-          }
-
-          // Fallback scan (search some users for match)
-          if (!userDoc) {
-            const allUsersSnap = await transaction.get(db.collection("users").limit(100));
-            userDoc = allUsersSnap.docs.find(doc => {
-              const docEmail = String(doc.data()?.email || "").toLowerCase().trim();
-              return docEmail === customerEmail;
-            });
-          }
-        }
-
-        if (!userDoc) {
-          throw new Error(`Profile not found for email ${customerEmail}`);
-        }
-
-        const userRef = userDoc.ref;
-
-        // Perform safe wallet Available Balance update with FieldValue.increment
-        transaction.update(userRef, {
-          wallet_balance: FieldValue.increment(amountInNaira),
-          balance: FieldValue.increment(amountInNaira),
-          available_balance: FieldValue.increment(amountInNaira), // matches prompt's field name explicitly
-          lastFundingAt: FieldValue.serverTimestamp()
+      // SECURITY: Defense-in-depth. Even though the signature above proves this request came
+      // from Paystack, independently re-verify the transaction directly against Paystack's own
+      // API using the reference, confirming status + amount server-side before crediting anyone.
+      try {
+        const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+          headers: { Authorization: `Bearer ${secretKey}` },
+          timeout: 10000
         });
+        const verifyData = verifyResp.data?.data;
+        const verifiedAmountNaira = Number(verifyData?.amount) / 100;
+        if (!verifyData || verifyData.status !== "success" || Math.abs(verifiedAmountNaira - amountInNaira) > 0.01) {
+          console.error("[Paystack Webhook] Server-side verification mismatch for reference", reference);
+          return res.status(400).send("Bad Request: Transaction could not be independently verified with Paystack.");
+        }
+      } catch (verifyErr: any) {
+        console.error("[Paystack Webhook] Failed to independently verify transaction with Paystack:", verifyErr.message);
+        return res.status(502).send("Could not verify transaction with payment provider.");
+      }
 
-        // Set processed payment reference documentation for future idempotency
-        transaction.set(paymentRefDoc, {
-          transactionReference: reference,
-          userId: userDoc.id,
-          userEmail: customerEmail,
-          amountPaid: amountInNaira,
-          gateway: "paystack",
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        // Store standard UI funding records
-        const txHistoryRef = db.collection("transactions").doc();
-        transaction.set(txHistoryRef, {
-          userId: userDoc.id,
-          type: "funding",
-          amount: amountInNaira,
-          status: "completed",
-          description: `Paystack Top-up (Ref: ${reference})`,
-          reference: `PSTK-${reference}`,
-          createdAt: FieldValue.serverTimestamp()
-        });
-
-        return { alreadyProcessed: false, userId: userDoc.id };
+      // Supabase: use process_payment_webhook RPC for atomic credit + idempotency
+      const transactionResult = await supabase.rpc('process_payment_webhook', {
+        p_reference: reference, p_email: customerEmail, p_amount: amountInNaira,
+        p_gateway: 'paystack', p_description: `Wallet Top-Up via Paystack (₦${amountInNaira.toLocaleString()})`
       });
-
-      if (transactionResult.alreadyProcessed) {
+      const trd = transactionResult?.data;
+      if (trd?.status === 'already_processed') {
         return res.json({ status: "skipped", message: "Transaction already processed." });
       }
-
-      // Sync and update local store if fallback in use
-      try {
-        const localStore = loadLocalDb();
-        const userId = transactionResult.userId;
-        if (localStore.users[userId]) {
-          const currentBal = localStore.users[userId].balance || 0;
-          localStore.users[userId].wallet_balance = (localStore.users[userId].wallet_balance || 0) + amountInNaira;
-          localStore.users[userId].balance = currentBal + amountInNaira;
-          localStore.users[userId].available_balance = (localStore.users[userId].available_balance || 0) + amountInNaira;
-        }
-        if (!localStore.processed_payments) localStore.processed_payments = {};
-        localStore.processed_payments[reference] = {
-          reference,
-          userId,
-          amount: amountInNaira,
-          email: customerEmail,
-          status: "completed",
-          createdAt: new Date().toISOString()
-        };
-        const txId = `pstk_fund_${Date.now()}`;
-        localStore.transactions[txId] = {
-          id: txId,
-          userId,
-          type: 'funding',
-          amount: amountInNaira,
-          status: 'completed',
-          description: `Paystack Top-up (Ref: ${reference})`,
-          referenceKey: reference,
-          createdAt: new Date().toISOString()
-        };
-        saveLocalDb(localStore);
-      } catch (localErr) {
-        // Ignored fallback
+      if (trd?.status === 'error') {
+        console.error("[Paystack Webhook] RPC error:", trd?.message);
+        return res.status(400).send("Could not credit user: " + trd?.message);
       }
 
-      console.log(`[Paystack Webhook] Funded user ${transactionResult.userId} successfully with ₦${amountInNaira}.`);
+      console.log(`[Paystack Webhook] Successfully processed Paystack top-up of ₦${amountInNaira}.`);
       return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
 
     } catch (err: any) {
@@ -3681,27 +2863,13 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
-          apiSuccess = false;
-          apiErrorMsg = "Simulated carrier gateway timeout";
-        } else {
-          apiSuccess = true;
-          apiResponseData = {
-            status: "success",
-            success: true,
-            reference: `MOZO-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-            message: "Simulated purchase successful"
-          };
-        }
-      } else {
-        try {
-          const endpoint = finalType === "airtime" ? "airtime" : "data";
-          const mozoUrl = `${MOZOSUBS_BASE_URL}/${endpoint}/`;
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes('dummy') || MOZOSUBS_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
+      try {
+        const endpoint = finalType === "airtime" ? "airtime" : "data";
+        const mozoUrl = `${MOZOSUBS_BASE_URL}/${endpoint}/`;
 
           // Map network strings or IDs from frontend safely into Mozosubs's expected IDs
           let mozoNetworkId = finalNetwork;
@@ -3771,7 +2939,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
           }
         }
-      }
+      
 
       // 3. Decrement the user's Supabase balance only if the Mozosubs API call succeeds
       if (apiSuccess) {
@@ -3805,19 +2973,7 @@ async function startServer() {
           // Ignored backup table failure
         }
 
-        // Secondary Firestore sync for secondary database compatibility
-        try {
-          if (db) {
-            const userRef = db.collection('users').doc(finalUserId);
-            await userRef.update({
-              wallet_balance: deductedBalance,
-              available_balance: deductedBalance,
-              balance: deductedBalance
-            });
-          }
-        } catch (fsErr) {
-          // Ignored Firestore fallback
-        }
+        // (Supabase profiles already updated above)
 
         // Create a transaction record in Supabase 'transactions' table
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
@@ -3839,9 +2995,8 @@ async function startServer() {
 
         // Create transaction record in Firestore as fallback
         try {
-          if (db) {
             const txId = `mozo_${Date.now()}`;
-            await db.collection('transactions').doc(txId).set({
+            await supabase.from('transactions').insert({
               id: txId,
               userId: finalUserId,
               type: finalType,
@@ -3849,9 +3004,8 @@ async function startServer() {
               status: 'completed',
               description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
               reference: referenceCode,
-              createdAt: FieldValue.serverTimestamp()
+              createdAt: new Date().toISOString()
             });
-          }
         } catch (fsTxErr) {
           // Ignored
         }
@@ -3963,68 +3117,9 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
 
-      // Simulation/Sandbox fallback if no real token is set
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 800));
 
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo",
-          "Nnena Cynthia Egwu",
-          "Abubakar Sadiq Musa",
-          "Olumide Joseph Coker",
-          "Fatima Bello Gumel",
-          "Emeka Harrison Okafor"
-        ];
-        
-        const digit = Number(number[number.length - 1] || '0');
-        const nameIdx = digit % names.length;
-        const customerName = names[nameIdx];
-        
-        let address = "";
-        let debtAmount = 0;
-        if (type === 'electricity' || String(provider).toLowerCase().includes("disco") || ['ekedc', 'ikedc', 'aedc', 'phed', 'ibedc', 'kaedco', 'kedco', 'eedc'].includes(String(provider).toLowerCase())) {
-          const streets = [
-            "Herbert Macaulay Way",
-            "Bode Thomas Street",
-            "Adeniran Ogunsanya Ave",
-            "Awolowo Road",
-            "Allen Avenue",
-            "Adetokunbo Ademola St",
-            "Aminu Kano Crescent",
-            "Olusegun Obasanjo Way"
-          ];
-          const districts = [
-            "Yaba District",
-            "Surulere Zone 2",
-            "Ikeja Coverage Area",
-            "Lekki Phase 1",
-            "Wuse II Business Hub",
-            "Garki Area 11",
-            "GRA Phase II",
-            "Kano Suburban Zone"
-          ];
-          const streetIdx = (digit + 3) % streets.length;
-          const districtIdx = (digit + 7) % districts.length;
-          address = `${Math.floor(12 + (digit * 15))}, ${streets[streetIdx]}, ${districts[districtIdx]}.`;
-          debtAmount = type === 'postpaid' ? Math.floor(digit * 450) : 0;
-        }
-
-        return res.json({
-          success: true,
-          customerName,
-          address: address || undefined,
-          debtAmount,
-          meterNumber: number,
-          smartcardNo: number,
-          provider: String(provider).toUpperCase()
-        });
-      }
 
       // Real API Call to Bigisub validation endpoint
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
@@ -4087,29 +3182,10 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(smartcard_number[smartcard_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
 
-        return res.json({
-          success: true,
-          customerName,
-          smartcard_number,
-          provider: provider.toUpperCase()
-        });
-      }
 
       // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
       let cableTvCode = 1;
@@ -4158,31 +3234,10 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(meter_number[meter_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
-        const address = `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
 
-        return res.json({
-          success: true,
-          customerName,
-          address,
-          meter_number,
-          disco_name: disco_name.toUpperCase()
-        });
-      }
 
       // Determine Disco name code: 1: IKEDC, 2: EKEDC, 3: AEDC, 4: IBEDC
       let discoCode = 1;
@@ -4237,35 +3292,13 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       const provUpper = provider_name.toUpperCase();
       const isCable = type === 'cable' || provUpper.includes("DSTV") || provUpper.includes("GOTV") || provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES") || provUpper.includes("CABLE");
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(account_number[account_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
-        const address = isCable ? undefined : `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
 
-        return res.json({
-          success: true,
-          customerName,
-          address,
-          account_number,
-          provider_name: provider_name.toUpperCase(),
-          type: isCable ? "cable" : "electricity"
-        });
-      }
 
       if (isCable) {
         // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
@@ -4476,28 +3509,18 @@ async function startServer() {
       }
 
       // 3. Drop payload directly to Bigisub's server
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let dispatchSuccess = false;
       let responseBody: any = null;
       let apiErrorMsg = "";
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        // Sandbox simulation
-        await new Promise(r => setTimeout(r, 800));
-        dispatchSuccess = true;
-        let simulatedToken = "";
-        if (reqType === 'electricity' && !(plan || '').toLowerCase().includes("postpaid") && !(meter_type === 2 || meter_type === '2')) {
-          simulatedToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-        }
-        responseBody = {
-          status: "success",
-          reference: `BIGI-SIM-UTIL-${Date.now()}`,
-          message: "Processed through Bigisub simulator sandbox successfully",
-          token: simulatedToken || undefined
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           let endpoint = "";
           let payload: any = {};
@@ -4578,7 +3601,7 @@ async function startServer() {
           console.error("[Bigisub /api/buy-utility dispatch Exception]:", fetchErr);
           apiErrorMsg = fetchErr.response?.data?.message || fetchErr.response?.data?.error || fetchErr.message || "Network Gateway Timeout";
         }
-      }
+      
 
       if (dispatchSuccess) {
         // Deduct price from balance
@@ -4621,290 +3644,23 @@ async function startServer() {
           console.error("[Supabase Audit Log Insertion Error]:", txInsertErr.message);
         }
 
-        // Sync with backup Firestore users database
-        try {
-          if (db) {
-            const userQuery = await db.collection("users").where("email", "==", profile.email).limit(1).get();
-            if (!userQuery.empty) {
-              const userDoc = userQuery.docs[0];
-              await userDoc.ref.update({
-                balance: deductedBalance,
-                wallet_balance: deductedBalance,
-                available_balance: deductedBalance
-              });
-
-              await db.collection("transactions").doc(transactionId).set({
-                id: transactionId,
-                userId: userDoc.id,
-                userEmail: profile.email,
-                amount: finalPrice,
-                status: "success",
-                type: reqType,
-                reference: referenceCode,
-                description: descriptionText,
-                createdAt: new Date().toISOString()
-              });
-            }
-          }
-        } catch (fsSyncErr: any) {
-          console.warn("[Firestore sync bypassed in /api/buy-utility]:", fsSyncErr.message);
-        }
-
-        return res.json({
-          success: true,
-          message: `${reqType.toUpperCase()} purchase completed successfully.`,
-          balance: deductedBalance,
-          reference: referenceCode,
-          token: responseBody?.token || undefined,
-          response: responseBody
-        });
-      } else {
-        return res.status(400).json({ 
-          error: `Gateway purchase rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
-        });
-      }
-    } catch (err: any) {
-      console.error("[POST /api/buy-utility Exception]:", err);
-      return res.status(500).json({ error: "Internal processing error during utility purchase flow." });
-    }
-  });
-
-  // Bigisub-powered Purchase & Wallet Ledger Routing (Migrated from Peyflex)
-  app.post("/api/v1/utility/pay", async (req, res) => {
-    const { userId, type, provider, amount, number, plan } = req.body;
-
-    if (!userId || !provider || !amount || !number) {
-      return res.status(400).json({ error: "Missing required checkout parameters" });
-    }
-
-    try {
-      const pgUuid = userId ? ensureUUID(userId) : null;
-      // Find matching service configuration in services_config first using provider and plan (bigisub_plan_id)
-      const { data: service, error: serviceErr } = await supabase
-        .from('services_config')
-        .select('*')
-        .eq('service_type', type === 'cable' ? 'cable' : 'electricity')
-        .ilike('provider_or_network', `%${provider}%`)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      if (!userDoc.exists) {
-        return res.status(404).json({ error: "User profile not found" });
-      }
-
-      const userData = userDoc.data();
-      const currentBalance = userData?.wallet_balance !== undefined
-        ? Number(userData.wallet_balance)
-        : (userData?.balance || 0);
-      const userRole = userData?.role || 'user';
-
-      if (currentBalance < amount) {
-        return res.status(400).json({ error: "Insufficient wallet balance. Please fund your wallet and retry." });
-      }
-
-      // Calculate cashback rate dynamically (User: 2%, Agent: 3%, Reseller: 4%)
-      let cashbackRate = 0.02;
-      if (userRole === 'agent') cashbackRate = 0.03;
-      else if (userRole === 'reseller') cashbackRate = 0.04;
-      const cashbackEarned = Number((amount * cashbackRate).toFixed(2));
-
-      // 1. Debit user wallet (Pre-requisite ledger debit)
-      const debitedBalance = currentBalance - amount + cashbackEarned;
-      await userRef.update({
-        wallet_balance: debitedBalance,
-        available_balance: debitedBalance,
-        balance: debitedBalance
-      });
-
-      // Update Supabase profiles in tandem
-      try {
-        if (pgUuid) {
-          await supabase
-            .from('profiles')
-            .update({ 
-              wallet_balance: debitedBalance,
-              balance: debitedBalance
-            })
-            .eq('id', pgUuid);
-        }
-      } catch (e) {}
-
-      // Write Transaction log
-      const txRef = db.collection('transactions').doc();
-      const txId = txRef.id;
-      const txRefCode = `${type === 'cable' ? 'CAB' : 'ELE'}-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-
-      const txData = {
-        userId,
-        type: 'bill',
-        amount,
-        status: 'completed',
-        description: `${provider.toUpperCase()} ${plan || (type === 'cable' ? 'Cable TV' : 'Electricity')} to ${number}${cashbackEarned > 0 ? ` (₦${cashbackEarned.toFixed(2)} Cashback earned)` : ''}`,
-        reference: txRefCode,
-        createdAt: FieldValue.serverTimestamp(),
-        cashbackEarned
-      };
-      await txRef.set(txData);
-
-      // Process referral commission if referred
-      if (userData?.referredBy) {
-        try {
-          const referrerRef = db.collection('users').doc(userData.referredBy);
-          const referrerDoc = await referrerRef.get();
-          if (referrerDoc.exists) {
-            const commission = Number((amount * 0.02).toFixed(2));
-            if (commission > 0) {
-              await referrerRef.update({
-                balance: FieldValue.increment(commission)
-              });
-              const refTxRef = db.collection('transactions').doc();
-              await refTxRef.set({
-                userId: userData.referredBy,
-                type: 'funding',
-                amount: commission,
-                status: 'completed',
-                description: `2% Referral Commission from ${userData.fullName || 'Referred User'} utility payment`,
-                reference: `REF-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-                createdAt: FieldValue.serverTimestamp()
-              });
-            }
-          }
-        } catch (refErr) {
-          console.error("Referred commission skip:", refErr);
-        }
-      }
-
-      // 2. Dispatch to live Bigisub gateway
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
-      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
-      let dispatchSuccess = false;
-      let responseBody: any = null;
-      let networkErr = "";
-
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        // sandbox simulation
-        await new Promise(r => setTimeout(r, 1000));
-        dispatchSuccess = true;
-        
-        let generatedToken = "";
-        if (type === 'electricity' && !plan?.toLowerCase().includes("postpaid")) {
-          generatedToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-        }
-
-        responseBody = {
-          status: "success",
-          reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Processed through Bigisub simulator sandbox successfully",
-          token: generatedToken || undefined
-        };
-      } else {
-        try {
-          const endpoint = type === 'cable' ? 'cable' : 'electricity';
-          const payload: any = {};
-          
-          if (type === 'cable') {
-            let cableTvCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("DSTV")) cableTvCode = 2;
-            else if (provUpper.includes("STARTIMES")) cableTvCode = 3;
-
-            payload.cablename = cableTvCode;
-            payload.smartcard_number = number;
-            payload.cableplan = plan || service?.bigisub_plan_id || "gotv_lite";
-          } else {
-            let discoCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("EKEDC")) discoCode = 2;
-            else if (provUpper.includes("AEDC")) discoCode = 3;
-            else if (provUpper.includes("IBEDC")) discoCode = 4;
-
-            payload.disco_name = discoCode;
-            payload.meter_number = number;
-            payload.amount = amount;
-            payload.meter_type = plan?.toLowerCase().includes("postpaid") ? 2 : 1;
-          }
-
-          const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${BIGISUB_API_KEY}`
-            },
-            timeout: 8000
-          });
-
-          responseBody = response.data;
-          if (response.status === 200 && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
-            dispatchSuccess = true;
-          } else {
-            networkErr = responseBody.error || responseBody.message || `Bigisub utility gateway error code ${response.status}`;
-          }
-        } catch (fetchErr: any) {
-          console.error("[Bigisub Utility Dispatch fetch Exception]:", fetchErr);
-          networkErr = fetchErr.message || "Network Timeout";
-        }
-      }
-
-      if (dispatchSuccess) {
-        // Success: write to Supabase transactions as well for unified reporting
-        try {
-          const pgUuid = userId ? ensureUUID(userId) : null;
-          await supabase.from('transactions').insert({
-            id: `bigi_utl_v1_${Date.now()}`,
-            userId: pgUuid,
-            user_id: pgUuid,
-            type: type === 'cable' ? 'cable' : 'electricity',
-            amount: amount,
-            status: 'completed',
-            description: `${provider.toUpperCase()} ${plan || (type === 'cable' ? 'Cable TV' : 'Electricity')} to ${number}`,
-            reference: responseBody?.reference || txRefCode,
-            createdAt: new Date().toISOString()
-          });
-        } catch (e) {}
-
         return res.json({
           status: "success",
           message: "Transaction completed successfully",
-          transaction: {
-            ...txData,
-            id: txId,
-            reference: responseBody?.reference || txRefCode,
-            token: responseBody?.token || undefined,
-            cashbackEarned
-          }
+          reference: referenceCode,
+          description: descriptionText
         });
       } else {
-        // 3. REFUND ROLLBACK
-        const refundedBalance = debitedBalance + amount - cashbackEarned;
-        await userRef.update({
-          wallet_balance: refundedBalance,
-          available_balance: refundedBalance,
-          balance: refundedBalance
-        });
-
-        try {
-          const pgUuid = userId ? ensureUUID(userId) : null;
-          await supabase
-            .from('profiles')
-            .update({ 
-              wallet_balance: refundedBalance,
-              balance: refundedBalance
-            })
-            .eq('id', pgUuid);
-        } catch (e) {}
-
-        await txRef.update({
-          status: 'failed_refunded',
-          description: `FAILED: ${provider.toUpperCase()} to ${number} (Refunded: ${networkErr})`
-        });
-
-        return res.status(400).json({ error: `Billing gateway rejected payload: ${networkErr}. Refunded wallet successfully.` });
+        // Revert balance deduction on gateway failure
+        await supabase.from('profiles').update({
+          balance: currentBalance,
+          wallet_balance: currentBalance
+        }).eq('id', profile.id);
+        return res.status(400).json({ error: `Gateway rejected the transaction. Your wallet was not charged.` });
       }
     } catch (err: any) {
-      console.error("[Bigisub Utility Purchase Checkout Exception]:", err);
-      return res.status(500).json({ error: "Local processing gateway error. Please retry." });
+      console.error("[Bigisub /api/buy-utility Exception]:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -4915,54 +3671,47 @@ async function startServer() {
       return res.status(400).json({ error: "Invalid parameters" });
     }
 
+    // SECURITY: require a verified session that actually matches the target userId -- otherwise
+    // anyone could force a role change + fee deduction on any victim's account.
+    const verifiedCallerId = await verifyCallerUserId(req);
+    if (!verifiedCallerId || verifiedCallerId !== userId) {
+      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
+    }
+
     const fee = desireRole === 'agent' ? 1500 : 3500;
 
     try {
-      const userRef = db.collection('users').doc(userId);
+      const pgUuid = ensureUUID(userId);
 
-      const result = await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          throw new Error("User profile not found");
-        }
+      // Fetch current balance
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles').select('wallet_balance,role').eq('id', pgUuid).maybeSingle();
+      if (profileErr || !profile) {
+        return res.status(404).json({ error: "User profile not found." });
+      }
+      const currentBalance = Number(profile.wallet_balance || 0);
+      if (currentBalance < fee) {
+        return res.status(400).json({ error: `Insufficient balance. ₦${fee} required to upgrade to ${desireRole}.` });
+      }
 
-        const userData = userDoc.data();
-        const currentBalance = userData?.wallet_balance !== undefined
-          ? Number(userData.wallet_balance)
-          : (userData?.balance || 0);
+      const newBalance = currentBalance - fee;
+      const { error: updateErr } = await supabase.from('profiles')
+        .update({ role: desireRole, wallet_balance: newBalance, balance: newBalance })
+        .eq('id', pgUuid);
+      if (updateErr) throw new Error(updateErr.message);
 
-        if (currentBalance < fee) {
-          throw new Error(`Insufficient wallet balance. You need ₦${fee.toLocaleString()} to upgrade to ${desireRole} account class.`);
-        }
-
-        const finalBalance = currentBalance - fee;
-        transaction.update(userRef, {
-          wallet_balance: finalBalance,
-          available_balance: finalBalance,
-          balance: finalBalance,
-          role: desireRole
-        });
-
-        const txRef = db.collection('transactions').doc();
-        const transactionData = {
-          userId,
-          type: 'bill',
-          amount: fee,
-          status: 'completed',
-          description: `Account Class Upgrade Charge to ${desireRole.toUpperCase()}`,
-          reference: `UPGR-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          createdAt: FieldValue.serverTimestamp()
-        };
-        transaction.set(txRef, transactionData);
-
-        return { finalBalance, transaction: transactionData };
+      await supabase.from('transactions').insert({
+        id: `upgrade_${Date.now()}`, user_id: pgUuid, type: 'upgrade',
+        amount: fee, status: 'completed',
+        description: `Account upgraded to ${desireRole.toUpperCase()} (₦${fee} deducted)`,
+        created_at: new Date().toISOString()
       });
 
       res.json({
         success: true,
         message: `Congratulations! You are now classified as a VTU ${desireRole.toUpperCase()}. 🎉`,
         role: desireRole,
-        balance: result.finalBalance
+        balance: newBalance
       });
     } catch (error: any) {
       console.error("[Upgrade Option Exception]:", error);
@@ -4971,116 +3720,22 @@ async function startServer() {
   });
 
   // Bulk Capital Funding with Reseller/Agent Incentive Bonuses
+  // SECURITY: this endpoint let ANYONE instantly credit ANY wallet with fake, unbacked-by-any-
+  // real-payment funds (no gateway call, no signature, no session check -- just "amount >= 1000"
+  // and a straight balance increment). Disabled permanently. Real top-ups must go through the
+  // Paystack/Flutterwave webhooks or verify-flutterwave, which independently confirm real money moved.
   app.post("/api/agent/bulk-fund", async (req, res) => {
-    const { userId, amount } = req.body;
-    const numAmount = Number(amount);
-    if (!userId || isNaN(numAmount) || numAmount < 1000) {
-      return res.status(400).json({ error: "Minimum manual simulated bulk deposit threshold is ₦1,000" });
-    }
-
-    try {
-      const userRef = db.collection('users').doc(userId);
-
-      const result = await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          throw new Error("User profile not found");
-        }
-
-        const userData = userDoc.data();
-        const currentBalance = userData?.balance || 0;
-
-        // Calculate incentive bonus percent based on volume
-        let bonusPercent = 0;
-        if (numAmount >= 100000) bonusPercent = 0.015; // 1.5% back
-        else if (numAmount >= 50000) bonusPercent = 0.01;   // 1.0% back
-        else if (numAmount >= 15000) bonusPercent = 0.005;  // 0.5% back
-
-        const bonus = Number((numAmount * bonusPercent).toFixed(2));
-        const finalBalance = currentBalance + numAmount + bonus;
-
-        transaction.update(userRef, {
-          balance: finalBalance
-        });
-
-        const txRef = db.collection('transactions').doc();
-        const transactionData = {
-          userId,
-          type: 'funding',
-          amount: numAmount + bonus,
-          status: 'completed',
-          description: `Bulk Merchant Funding (Deposit: ₦${numAmount.toLocaleString()}${bonus > 0 ? ` + ₦${bonus.toFixed(2)} Agent Loyalty Bonus` : ''})`,
-          reference: `BULK-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          createdAt: FieldValue.serverTimestamp()
-        };
-        transaction.set(txRef, transactionData);
-
-        return { finalBalance, bonus, transaction: transactionData };
-      });
-
-      res.json({
-        success: true,
-        message: `Bulk Wallet credited with ₦${(numAmount + result.bonus).toLocaleString()}!`,
-        balance: result.finalBalance,
-        bonusEarned: result.bonus
-      });
-    } catch (error: any) {
-      console.error("[Bulk Funding Exception]:", error);
-      res.status(400).json({ error: error.message });
-    }
+    return res.status(501).json({
+      error: "Bulk capital deposit is disabled. Please fund your wallet through a real payment channel (Paystack/Flutterwave)."
+    });
   });
 
-  // Set User Wallet Balance directly (self-service reset/adjustment to 0 or any amount)
+  // SECURITY: this let ANYONE set ANY user's wallet balance to ANY arbitrary number with zero
+  // auth and zero real money involved -- a direct wallet-mint/drain primitive. Disabled permanently.
   app.post("/api/wallet/reset-balance", async (req, res) => {
-    const { userId, targetBalance } = req.body;
-    if (!userId) {
-      return res.status(400).json({ error: "Missing userId" });
-    }
-
-    const tBal = typeof targetBalance === 'number' ? targetBalance : 0;
-
-    try {
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      if (!userDoc.exists) {
-        // Fallback for mock/local database store
-        const localStore = loadLocalDb();
-        if (localStore.users[userId]) {
-          localStore.users[userId].balance = tBal;
-          saveLocalDb(localStore);
-        }
-        return res.json({ success: true, balance: tBal });
-      }
-
-      await db.runTransaction(async (transaction) => {
-        const docSnap = await transaction.get(userRef);
-        const currentBalance = docSnap.data()?.balance || 0;
-        const difference = tBal - currentBalance;
-
-        transaction.update(userRef, {
-          balance: tBal
-        });
-
-        // Add a debit/refund transaction for history audit
-        if (difference !== 0) {
-          const txRef = db.collection('transactions').doc();
-          transaction.set(txRef, {
-            userId,
-            type: difference > 0 ? 'funding' : 'purchase',
-            amount: Math.abs(difference),
-            status: 'completed',
-            description: `Self-Service Balance Adjustment (Set to ₦${tBal.toLocaleString()})`,
-            reference: `ADJ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-            createdAt: FieldValue.serverTimestamp()
-          });
-        }
-      });
-
-      res.json({ success: true, balance: tBal });
-    } catch (error: any) {
-      console.error("[Reset Balance Exception]:", error);
-      res.status(500).json({ error: error.message });
-    }
+    return res.status(501).json({
+      error: "Self-service balance adjustment is disabled. Contact support for balance corrections."
+    });
   });
 
   // Daily Bonus Lucky Wheels Reward Endpoint
@@ -5090,44 +3745,44 @@ async function startServer() {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // SECURITY: require a verified session matching userId -- previously anyone could credit any
+    // wallet with any "wonAmount" with zero auth and zero server-side proof a spin ever happened.
+    const verifiedCallerId = await verifyCallerUserId(req);
+    if (!verifiedCallerId || verifiedCallerId !== userId) {
+      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
+    }
+
+    // SECURITY: never trust the client's claimed prize amount uncapped -- clamp to the maximum
+    // a legitimate daily spin could ever award, so a manipulated client can't mint arbitrary funds.
+    const MAX_DAILY_BONUS = 500;
+    if (Number(wonAmount) > MAX_DAILY_BONUS) {
+      return res.status(400).json({ error: `Invalid bonus amount. Maximum daily bonus is ₦${MAX_DAILY_BONUS}.` });
+    }
+
     try {
-      const userRef = db.collection('users').doc(userId);
-      
-      const result = await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          throw new Error("User profile not found");
-        }
+      const verifiedUserId = await verifyCallerUserId(req);
+      if (!verifiedUserId || verifiedUserId !== userId) {
+        return res.status(401).json({ error: "Unauthorized." });
+      }
+      const pgUuid = ensureUUID(userId);
 
-        const currentBalance = userDoc.data()?.balance || 0;
-        const finalBalance = currentBalance + wonAmount;
+      // Determine bonus amount (random wheel spin, max ₦500)
+      const bonusOptions = [10, 20, 50, 100, 200, 500];
+      const wonAmount = bonusOptions[Math.floor(Math.random() * bonusOptions.length)];
 
-        // Update Balance
-        transaction.update(userRef, {
-          balance: finalBalance
-        });
+      const { data: updated, error: rpcErr } = await supabase.rpc('increment_balance', {
+        user_uuid: pgUuid, amount: wonAmount
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
 
-        // Insert Transaction Record
-        const txRef = db.collection('transactions').doc();
-        const bonusTx = {
-          userId,
-          type: 'funding',
-          amount: wonAmount,
-          status: 'completed',
-          description: `Daily Lucky Spin Wheel Bonus Reward`,
-          reference: `BONUS-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-          createdAt: FieldValue.serverTimestamp()
-        };
-        transaction.set(txRef, bonusTx);
-
-        return { finalBalance, bonusTx };
+      await supabase.from('transactions').insert({
+        id: `bonus_${Date.now()}`, user_id: pgUuid, type: 'bonus',
+        amount: wonAmount, status: 'completed',
+        description: `Daily bonus wheel reward of ₦${wonAmount}`,
+        created_at: new Date().toISOString()
       });
 
-      res.json({
-        success: true,
-        wonAmount,
-        newBalance: result.finalBalance
-      });
+      res.json({ success: true, wonAmount, message: `You won ₦${wonAmount} from today's bonus wheel! 🎉` });
     } catch (err: any) {
       console.error("[Daily Bonus Api Exception]:", err);
       res.status(500).json({ error: err.message });
@@ -5142,9 +3797,9 @@ async function startServer() {
       let context = "You are Noroya, the friendly AI assistant for Noroya Data, a VTU platform in Nigeria.";
       
       if (userId) {
-        const userDoc = await db.collection('users').doc(userId).get();
+        const { data: userDoc } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
         if (userDoc.exists) {
-          const userData = userDoc.data();
+          const userData = userDoc;
           context += ` The user's name is ${userData?.fullName} and their current wallet balance is ₦${userData?.balance}.`;
         }
       }
@@ -5173,131 +3828,102 @@ async function startServer() {
     console.log(`[Flutterwave verification requested] reference: ${reference}, tx_id: ${transactionId}, amount: ${amount}, email: ${email}`);
 
     try {
-      // 1. Double check processed payments for idempotency
-      const processedRef = db.collection("processed_payments").doc(reference);
-      const processedSnap = await processedRef.get();
-      if (processedSnap.exists) {
+      // 1. Idempotency check via processed_payments table
+      const { data: alreadyDone } = await supabase
+        .from('processed_payments')
+        .select('reference')
+        .eq('reference', reference)
+        .maybeSingle();
+      if (alreadyDone) {
         return res.status(200).json({ status: "skipped", message: "Transaction already processed successfully." });
       }
 
       // 2. Query Flutterwave API server-side
+      // SECURITY: this must ALWAYS be a real, verified check. There is no "simulated"/unconfigured
+      // fallback path anymore -- an unconfigured key or a fake transactionId now hard-fails instead
+      // of silently trusting the client-supplied amount/status.
       const fwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim();
       let isVerified = false;
       let verifiedAmount = Number(amount);
       const customerEmail = email.toLowerCase().trim();
+      let verifiedApiEmail = "";
 
       const hasRealSecret = fwSecretKey && !fwSecretKey.includes("PASTE_YOUR") && fwSecretKey !== "";
 
-      if (hasRealSecret && transactionId !== "simulated") {
-        try {
-          const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
-          const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${fwSecretKey}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (response.ok) {
-            const resultData = await response.json() as any;
-            if (resultData?.status === 'success' && resultData?.data?.status === 'successful') {
-              isVerified = true;
-              verifiedAmount = Number(resultData.data.amount || amount);
-              const apiEmail = resultData.data.customer?.email?.toLowerCase() || customerEmail;
-              if (apiEmail !== customerEmail) {
-                console.warn(`[Flutterwave warning] Email mismatch: expected ${customerEmail} but got ${apiEmail}`);
-              }
-            } else {
-              console.warn("[Flutterwave validation declined]:", resultData);
-            }
-          } else {
-            console.warn("[Flutterwave fetch status error]:", response.status);
-          }
-        } catch (apiErr: any) {
-          console.error("[Flutterwave fetch communication fail]:", apiErr.message);
-        }
-      } else {
-        // Fallback to high-fidelity dashboard credit on sandbox setups (e.g. key unconfigured or simulated/local bypass)
-        console.warn("[Flutterwave Sandbox] Running simulation authentication. Bypassing live endpoint request.");
-        isVerified = true;
+      if (!hasRealSecret) {
+        console.error("[Flutterwave Verify] FLUTTERWAVE_SECRET_KEY is not configured. Rejecting verification request.");
+        return res.status(503).json({ error: "Payment provider not configured." });
       }
 
-      if (!isVerified) {
+      if (!transactionId || transactionId === "simulated" || typeof transactionId !== "string") {
+        return res.status(400).json({ error: "Invalid or missing transaction ID." });
+      }
+
+      try {
+        const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${fwSecretKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const resultData = await response.json() as any;
+          if (
+            resultData?.status === 'success' &&
+            resultData?.data?.status === 'successful' &&
+            resultData?.data?.tx_ref === reference &&
+            Math.abs(Number(resultData.data.amount) - Number(amount)) < 0.01
+          ) {
+            isVerified = true;
+            verifiedAmount = Number(resultData.data.amount || amount);
+            verifiedApiEmail = resultData.data.customer?.email?.toLowerCase() || "";
+          } else {
+            console.warn("[Flutterwave validation declined]:", resultData);
+          }
+        } else {
+          console.warn("[Flutterwave fetch status error]:", response.status);
+        }
+      } catch (apiErr: any) {
+        console.error("[Flutterwave fetch communication fail]:", apiErr.message);
+      }
+
+      if (!isVerified || !verifiedApiEmail) {
         return res.status(400).json({ error: "Flutterwave returned unverified transaction status. Access revoked." });
       }
 
-      // 3. Look up the active user's document in Firestore by user ID or email (case-insensitive)
-      let userDoc: any = null;
-      const requestUserId = req.body.userId;
-
-      if (requestUserId) {
-        const directDoc = await db.collection("users").doc(requestUserId).get();
-        if (directDoc.exists) {
-          userDoc = directDoc;
-        }
-      }
-
-      if (!userDoc) {
-        let userQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
-        if (!userQuery.empty) {
-          userDoc = userQuery.docs[0];
-        } else {
-          // Try exact original email casing match
-          userQuery = await db.collection("users").where("email", "==", email.trim()).limit(1).get();
-          if (!userQuery.empty) {
-            userDoc = userQuery.docs[0];
-          }
-        }
-
-        // Fallback scan (search some users for match)
-        if (!userDoc) {
-          const allUsersSnap = await db.collection("users").limit(100).get();
-          userDoc = allUsersSnap.docs.find(doc => {
-            const docEmail = String(doc.data()?.email || "").toLowerCase().trim();
-            return docEmail === customerEmail;
-          });
-        }
-      }
+      // 3. SECURITY: resolve the recipient ONLY by the customer email that Flutterwave itself
+      // verified for this transaction -- never a client-supplied userId, since that would let
+      // anyone redirect someone else's real payment into an attacker's wallet.
+      // Resolve user by verified email only (never client-supplied userId)
+      const { data: userDoc } = await supabase
+        .from('profiles').select('*')
+        .ilike('email', verifiedApiEmail)
+        .maybeSingle();
 
       if (!userDoc) {
         return res.status(404).json({ error: `User with email ${customerEmail} not found in database.` });
       }
 
-      const userId = userDoc.id; // core Firebase uid
+      const userId = userDoc.id; // user's Supabase profile id
 
-      // 4. Secure balance updates inside atomic Firestore Transaction
-      await db.runTransaction(async (transaction) => {
-        const userRef = userDoc.ref;
-        const freshUserSnap = await transaction.get(userRef);
-        if (!freshUserSnap.exists) {
-          throw new Error("Specified user data became stale during transit.");
-        }
-
-        const balanceVal = Number(freshUserSnap.data()?.balance || 0);
-        const finalBalance = balanceVal + verifiedAmount;
-
-        transaction.update(userRef, {
-          balance: finalBalance,
-          wallet_balance: finalBalance,
-          available_balance: finalBalance,
-          lastFundingAt: FieldValue.serverTimestamp()
-        });
-
-        // Store reference in processed_payments
-        transaction.set(processedRef, {
-          reference,
-          userId,
-          amount: verifiedAmount,
-          status: "success",
-          source: "flutterwave_webhook",
-          processedAt: FieldValue.serverTimestamp()
-        });
+      // 4. Credit user wallet atomically (idempotent via process_payment_webhook RPC)
+      const transactionResult = await supabase.rpc('process_payment_webhook', {
+        p_reference: reference, p_email: verifiedApiEmail, p_amount: verifiedAmount,
+        p_gateway: 'flutterwave', p_description: `Wallet Top-Up via Flutterwave (₦${verifiedAmount.toLocaleString()})`
       });
+      const trd = transactionResult?.data;
+      if (trd?.status === 'already_processed') {
+        return res.status(200).json({ status: "skipped", message: "Transaction already processed." });
+      }
+      if (trd?.status === 'error') {
+        return res.status(400).send("Could not credit user: " + trd?.message);
+      }
 
-      // 5. Look up user and securely update their wallet in Supabase (profiles, accounts, or users table) and register transaction log
       try {
-        const ensureUUID = (strId: string): string => {
+        const ensureUUID_inner = (strId: string): string => {
           const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
           if (uuidRegex.test(strId)) return strId;
           let seed = 0;
@@ -5410,7 +4036,7 @@ async function startServer() {
 
       // 6. Record transaction history for UI representation
       const txId = `fw_fund_${Date.now()}`;
-      await db.collection("transactions").doc(txId).set({
+      await supabase.from('transactions').insert({
         id: txId,
         userId,
         type: "funding",
@@ -5419,29 +4045,10 @@ async function startServer() {
         description: `Flutterwave Inline (Ref: ${reference})`,
         reference,
         paymentMethod: "Flutterwave",
-        createdAt: FieldValue.serverTimestamp()
+        createdAt: new Date().toISOString()
       });
 
-      // 7. Local File Storage Fallback Sync
-      try {
-        const localStore = loadLocalDb();
-        if (localStore.users[userId]) {
-          const currentLocalBal = localStore.users[userId].balance || 0;
-          localStore.users[userId].wallet_balance = (localStore.users[userId].wallet_balance || 0) + verifiedAmount;
-          localStore.users[userId].balance = currentLocalBal + verifiedAmount;
-          localStore.users[userId].available_balance = (localStore.users[userId].available_balance || 0) + verifiedAmount;
-        }
-        if (!localStore.processed_payments) localStore.processed_payments = {};
-        localStore.processed_payments[reference] = {
-          reference,
-          userId,
-          amount: verifiedAmount,
-          email: customerEmail,
-          status: "completed",
-          createdAt: new Date().toISOString()
-        };
-        saveLocalDb(localStore);
-      } catch (localStoreErr) {}
+
 
       console.log(`[Flutterwave verification complete] Successfully credited User ${userId} with ₦${verifiedAmount}.`);
       return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
@@ -5453,7 +4060,7 @@ async function startServer() {
   });
 
   // Secure Flutterwave Webhook Endpoint
-  app.post("/api/webhook/flutterwave", async (req, res) => {
+  const handleFlutterwaveWebhook = async (req: any, res: any) => {
     // Acknowledge Flutterwave immediately so they know the server is up
     res.status(200).send("Webhook Received");
 
@@ -5491,9 +4098,17 @@ async function startServer() {
           }
         }
 
+        // SECURITY: fail closed, always. No configured secret at all => reject (never silently
+        // trust an unsigned webhook). A configured secret that doesn't match => reject. There is
+        // no "warn and continue" path anymore -- either the signature is genuinely valid, or we stop.
         const hasKeys = secretHash || flwSecretKey;
-        if (hasKeys && !isAuthorized) {
+        if (!hasKeys) {
+          console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook.");
+          return;
+        }
+        if (!isAuthorized) {
           console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
+          return;
         }
 
         const payload = req.body;
@@ -5506,6 +4121,33 @@ async function startServer() {
 
         if (!isChargeCompleted || !isSuccessful) {
           console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+          return;
+        }
+
+        // SECURITY: Defense-in-depth -- independently re-verify this transaction directly against
+        // Flutterwave's own API before crediting anyone, even though the signature already passed.
+        const fwTxId = payload.data?.id || payload.id;
+        if (flwSecretKey && fwTxId) {
+          try {
+            const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
+              method: 'GET',
+              headers: { 'Authorization': `Bearer ${flwSecretKey}`, 'Content-Type': 'application/json' }
+            });
+            if (!verifyResp.ok) {
+              console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
+              return;
+            }
+            const verifyData = await verifyResp.json() as any;
+            if (verifyData?.status !== 'success' || verifyData?.data?.status !== 'successful') {
+              console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
+              return;
+            }
+          } catch (verifyErr: any) {
+            console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+            return;
+          }
+        } else {
+          console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
           return;
         }
 
@@ -5616,393 +4258,17 @@ async function startServer() {
           console.log(`[Flutterwave Webhook Background] Audit log created successfully for reference: ${txId}`);
         }
 
-        // Keep local / Firestore database synchronized if available
-        try {
-          if (db) {
-            const userQuery = await db.collection("users").where("email", "==", customerEmail).limit(1).get();
-            if (!userQuery.empty) {
-              const userDoc = userQuery.docs[0];
-              const userRef = userDoc.ref;
-              const currentFsBalance = Number(userDoc.data()?.balance || userDoc.data()?.wallet_balance || 0);
-              const newFsBalance = currentFsBalance + amount;
-
-              await userRef.update({
-                balance: newFsBalance,
-                wallet_balance: newFsBalance,
-                available_balance: newFsBalance
-              });
-
-              await db.collection("transactions").doc(`fw_webhook_${txId}`).set({
-                id: `fw_webhook_${txId}`,
-                userId: userDoc.id,
-                userEmail: customerEmail,
-                amount: amount,
-                status: "success",
-                type: "deposit",
-                reference: String(txId),
-                description: `Flutterwave deposit of NGN ${amount}`,
-                createdAt: new Date().toISOString()
-              });
-              console.log("[Flutterwave Webhook Background] Successfully synchronized backup Firestore user database.");
-            }
-          }
-        } catch (fsSyncErr: any) {
-          console.warn("[Flutterwave Webhook Background] Firestore sync exception bypassed:", fsSyncErr.message || fsSyncErr);
-        }
+        // (Supabase credit already applied via process_payment_webhook RPC above)
 
       } catch (bgExc: any) {
         console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
       }
     })();
-  });
+  };
 
-  // Secure Flutterwave Webhook Handler Route
-  app.post("/api/webhooks/flutterwave", async (req, res) => {
-    // Acknowledge Flutterwave immediately so they know the server is up
-    res.status(200).send("Webhook Received");
+  // Both legacy webhook URL variants point to the same hardened handler above.
+  app.post(["/api/webhook/flutterwave", "/api/webhooks/flutterwave"], handleFlutterwaveWebhook);
 
-    // Process everything asynchronously in the background to prevent timeouts and header errors
-    (async () => {
-      try {
-        console.log("Incoming Flutterwave Payload:", safeJsonStringify(req.body));
-
-        // 2. SIGNATURE VALIDATION
-        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
-        
-        let secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-        let flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
-
-        let isAuthorized = false;
-
-        // Verify with direct hash comparison (common dashboard configuration)
-        if (signature && secretHash && signature === secretHash) {
-          isAuthorized = true;
-        }
-
-        // Verify with HMAC signature check (provided in user instructions)
-        if (!isAuthorized && signature && flwSecretKey) {
-          try {
-            const expectedSignature = crypto
-              .createHmac('sha256', flwSecretKey)
-              .update(safeJsonStringify(req.body))
-              .digest('hex');
-            if (signature === expectedSignature) {
-              isAuthorized = true;
-            }
-          } catch (cryptoErr) {
-            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
-          }
-        }
-
-        const hasKeys = secretHash || flwSecretKey;
-        if (hasKeys && !isAuthorized) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
-        }
-
-        const payload = req.body;
-        const status = payload.data?.status || payload.status;
-
-        // 3. Process only successful events
-        if (status !== "successful") {
-          console.log(`[Flutterwave Webhook] Ignoring non-successful event status: ${status}`);
-          return;
-        }
-
-        // 4. Extract transaction ref, amount, user identifier, and customer email
-        const reference = payload.data?.tx_ref || payload.tx_ref || payload.data?.id?.toString() || payload.id?.toString() || `flw_webhook_${Date.now()}`;
-        const amount = Number(payload.data?.amount || payload.amount);
-        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-
-        // 👇 PASTE THE FIX RIGHT HERE 👇
-        let userId = payload.data?.meta_data?.userId || payload.data?.meta?.userId || payload.data?.meta?.user_id || payload.data?.userId || payload.userId || payload.data?.customer?.id;
-
-        if (!userId || userId === 'undefined') {
-            console.log("User ID missing, searching Supabase tables by email...");
-            
-            let foundProfileId: string | null = null;
-
-            // Try querying Supabase 'users' table by email first
-            if (customerEmail) {
-              try {
-                const { data: sbUserRow, error } = await supabase
-                    .from('users')
-                    .select('id')
-                    .eq('email', customerEmail)
-                    .maybeSingle();
-
-                if (!error && sbUserRow) {
-                    foundProfileId = sbUserRow.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase users table by email: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase users table email query failed:", sbErr.message);
-              }
-            }
-
-            // Try querying Supabase 'profiles' table by email (as fallback)
-            if (!foundProfileId && customerEmail) {
-              try {
-                const { data: profile, error } = await supabase
-                    .from('profiles')
-                    .select('id')
-                    .eq('email', customerEmail)
-                    .maybeSingle();
-
-                if (!error && profile) {
-                    foundProfileId = profile.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles table by email: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase profiles table email query failed (column probably doesn't exist):", sbErr.message);
-              }
-            }
-
-            // Try querying Supabase 'profiles' table by username prefix
-            if (!foundProfileId && customerEmail) {
-              try {
-                const prefix = customerEmail.split('@')[0];
-                const { data: profile, error } = await supabase
-                    .from('profiles')
-                    .select('id')
-                    .eq('username', prefix)
-                    .maybeSingle();
-
-                if (!error && profile) {
-                    foundProfileId = profile.id;
-                    console.log(`[Flutterwave Webhook] Found user in Supabase profiles by username prefix: ${foundProfileId}`);
-                }
-              } catch (sbErr: any) {
-                console.warn("[Flutterwave Webhook] Supabase username prefix query failed:", sbErr.message);
-              }
-            }
-
-            if (!foundProfileId) {
-                console.error("Could not find a matching profile in Supabase for this email:", customerEmail);
-                return;
-            }
-
-            userId = foundProfileId; 
-        }
-        // 👆 PASTE THE FIX RIGHT HERE 👆
-
-        if (isNaN(amount) || amount <= 0) {
-          console.warn(`[Flutterwave Webhook] Invalid amount detected: ${amount}`);
-          return;
-        }
-
-        console.log(`[Flutterwave Webhook Received] Reference: ${reference}, Amount: ${amount}, Email: ${customerEmail}, User ID: ${userId}`);
-
-        // 5. Idempotency check: prevent double-crediting via Supabase direct query
-        try {
-          const { data: existingTx, error: txCheckError } = await supabase
-            .from("transactions")
-            .select("id")
-            .eq("reference", reference)
-            .maybeSingle();
-
-          if (txCheckError) {
-            console.warn("[Flutterwave Webhook Idempotency Warning] Supabase query error:", txCheckError.message);
-          }
-
-          if (existingTx) {
-            console.log(`[Flutterwave Webhook] Reference ${reference} already processed in Supabase. Skipping.`);
-            return;
-          }
-        } catch (checkErr: any) {
-          console.warn("[Flutterwave Webhook Idempotency Catch] Supabase lookup exception:", checkErr.message || checkErr);
-        }
-
-        // Wrap the database processing block in a try/catch block
-        try {
-          // 6. Update user balance in Supabase securely (STRICTLY 'profiles' table)
-          let sbUser: any = null;
-          let targetUserId = userId;
-
-          const ensureUUID = (strId: string): string => {
-            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-            if (uuidRegex.test(strId)) return strId;
-            let seed = 0;
-            for (let i = 0; i < strId.length; i++) {
-              seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
-            }
-            const r = () => {
-              seed = (seed * 1664525 + 1013904223) >>> 0;
-              return seed;
-            };
-            const hexChars = '0123456789abcdef';
-            let hex32 = '';
-            for (let i = 0; i < 32; i++) {
-              hex32 += hexChars[r() % 16];
-            }
-            const part1 = hex32.substring(0, 8);
-            const part2 = hex32.substring(8, 12);
-            const part3 = '4' + hex32.substring(12, 15);
-            const part4 = 'a' + hex32.substring(15, 18);
-            const part5 = hex32.substring(18, 30);
-            return `${part1}-${part2}-${part3}-${part4}-${part5}`;
-          };
-
-          let resolvedUserId = targetUserId;
-
-          if (resolvedUserId) {
-            const pgUuid = ensureUUID(resolvedUserId);
-            const idsToTry = [pgUuid, resolvedUserId];
-
-            console.log(`[Flutterwave Webhook Debug] Attempting lookup in Supabase "profiles" table using IDs: ${JSON.stringify(idsToTry)}`);
-
-            for (const tryId of idsToTry) {
-              try {
-                const { data, error } = await supabase
-                  .from("profiles")
-                  .select("*")
-                  .eq("id", tryId)
-                  .maybeSingle();
-                if (!error && data) {
-                  sbUser = data;
-                  resolvedUserId = tryId;
-                  console.log(`[Flutterwave Webhook Debug] Successfully found existing profile in "profiles" by ID: ${tryId}`);
-                  break;
-                }
-                if (error) {
-                  console.warn(`[Flutterwave Webhook Debug] Error querying "profiles" table with ID "${tryId}":`, error.message);
-                }
-              } catch (err: any) {
-                console.warn(`[Supabase Webhook Lookup Exception in "profiles" for ID ${tryId}]:`, err.message);
-              }
-            }
-          }
-
-          // If user profile is STILL not found in Supabase profiles, auto-create it on the fly!
-          if (!sbUser && resolvedUserId) {
-            const pgUuid = ensureUUID(resolvedUserId);
-            const newUsername = customerEmail ? customerEmail.toLowerCase().split('@')[0] : `user_${Date.now()}`;
-            const newName = customerEmail ? (customerEmail.split('@')[0].toUpperCase()) : "User";
-            const referralCode = `REF-${Math.floor(Math.random() * 90000) + 10000}`;
-
-            console.log(`[Flutterwave Webhook] User profile not found in "profiles". Creating on-the-fly profile for ID: ${pgUuid} with wallet_balance: ${amount}`);
-            
-            try {
-              const { error: pgInsertErr } = await supabase
-                .from("profiles")
-                .insert({
-                  id: pgUuid,
-                  name: newName,
-                  username: newUsername,
-                  phone_number: "",
-                  referral_code: referralCode,
-                  transaction_pin: "1234",
-                  wallet_balance: amount
-                });
-
-              if (pgInsertErr) {
-                console.error(`[Flutterwave Webhook Supabase Create Error]:`, pgInsertErr.message);
-                throw new Error(`Failed to create on-the-fly user profile: ${pgInsertErr.message}`);
-              } else {
-                console.log(`[Flutterwave Webhook Supabase success] Successfully created "profiles" row and credited user ID ${pgUuid} with +₦${amount}.`);
-                sbUser = { id: pgUuid, wallet_balance: amount, name: newName };
-                resolvedUserId = pgUuid;
-              }
-            } catch (insertExc: any) {
-              console.error(`[Flutterwave Webhook Supabase Create Exception]:`, insertExc.message || insertExc);
-              throw insertExc;
-            }
-          } else if (sbUser) {
-            // If existing user is found, update their wallet_balance with increment_balance RPC call or fall back to direct update
-            let rpcCompleted = false;
-            try {
-              const { error: rpcErr } = await supabase.rpc('increment_balance', {
-                user_uuid: resolvedUserId,
-                amount: amount
-              });
-              if (!rpcErr) {
-                rpcCompleted = true;
-                console.log(`[Flutterwave Webhook Background] Balance incremented via RPC for user ID: ${resolvedUserId}`);
-              } else {
-                console.warn(`[Flutterwave Webhook Background RPC Error]:`, rpcErr.message);
-              }
-            } catch (rpcExc: any) {
-              console.warn(`[Flutterwave Webhook Background RPC Exception]:`, rpcExc.message || rpcExc);
-            }
-
-            if (!rpcCompleted) {
-              const currentWalletBalance = Number(sbUser.wallet_balance || 0);
-              const updatedWalletBalance = currentWalletBalance + amount;
-
-              console.log(`[Flutterwave Webhook Debug] Found existing user in "profiles": wallet_balance=${currentWalletBalance}. Updating to: ${updatedWalletBalance}`);
-
-              const { error: pgUpdateErr } = await supabase
-                .from("profiles")
-                .update({
-                  wallet_balance: updatedWalletBalance
-                })
-                .eq("id", resolvedUserId);
-
-              if (pgUpdateErr) {
-                console.error(`[Flutterwave Webhook Supabase Update Error]:`, pgUpdateErr.message);
-                throw new Error(`Failed to update Supabase balance: ${pgUpdateErr.message}`);
-              } else {
-                console.log(`[Flutterwave Webhook Supabase success] Successfully updated "profiles" user ${resolvedUserId} with +₦${amount}. New wallet_balance is: ${updatedWalletBalance}`);
-              }
-            }
-          } else {
-            console.warn(`[Flutterwave Webhook] CRITICAL: Could not find or resolve user ID for email ${customerEmail}`);
-            throw new Error(`User not found and could not resolve ID for email ${customerEmail}`);
-          }
-
-          // Add a Transaction Log to Supabase 'transactions' table (failure here doesn't halt the flow)
-          if (resolvedUserId) {
-            const txId = `fw_fund_${Date.now()}`;
-            try {
-              const pgUuid = ensureUUID(resolvedUserId);
-              const { error: pgTxErr } = await supabase
-                .from('transactions')
-                .insert({
-                  id: txId,
-                  user_id: pgUuid,
-                  userId: resolvedUserId,
-                  amount: amount,
-                  status: 'success',
-                  platform: 'flutterwave',
-                  reference: reference,
-                  payment_method: 'flutterwave',
-                  description: `Flutterwave deposit of NGN ${amount}`,
-                  created_at: new Date().toISOString()
-                });
-
-              if (pgTxErr) {
-                console.warn("[Flutterwave Webhook Log retry]: Retrying insert with raw userId...");
-                await supabase
-                  .from('transactions')
-                  .insert({
-                    id: txId,
-                    user_id: resolvedUserId,
-                    amount: amount,
-                    status: 'success',
-                    platform: 'flutterwave',
-                    reference: reference,
-                    payment_method: 'flutterwave',
-                    description: `Flutterwave deposit of NGN ${amount}`,
-                    created_at: new Date().toISOString()
-                  });
-              }
-              console.log(`[Flutterwave Webhook Supabase Transaction success] Logged transaction with ref: ${reference}`);
-            } catch (txLogErr: any) {
-              console.warn("[Flutterwave Webhook Supabase transaction logging failed/skipped]:", txLogErr.message || txLogErr);
-            }
-          }
-
-          // 7. No secondary Firestore sync (Supabase is used exclusively)
-
-        } catch (dbError: any) {
-          console.error("[Flutterwave Webhook Database Processing Error]:", dbError);
-        }
-
-      } catch (err: any) {
-        console.error("[Flutterwave Webhook Handler Exception]:", err);
-      }
-    })();
-  });
 
   // Secure Mozosubs Webhook Handler Route
   app.post(["/api/webhooks/mozosubs", "/api/webhook/mozosubs"], async (req, res) => {
@@ -6013,8 +4279,18 @@ async function startServer() {
       console.log("[Mozosubs Webhook Received] Headers:", req.headers);
       console.log("[Mozosubs Webhook Received] Body:", safeJsonStringify(body));
 
-      // Verify signature if Mozosubs provides one and secret is configured
-      if (signature && process.env.MOZOSUBS_WEBHOOK_SECRET) {
+      // SECURITY: signature verification is MANDATORY, always -- no conditional skip. Previously,
+      // a missing secret OR a missing header silently skipped verification entirely, letting anyone
+      // POST an arbitrary user_id + amount and get instantly credited with zero proof of origin.
+      if (!process.env.MOZOSUBS_WEBHOOK_SECRET) {
+        console.error("[Mozosubs Webhook] MOZOSUBS_WEBHOOK_SECRET is not configured. Rejecting webhook.");
+        return res.status(503).json({ error: 'Webhook not configured' });
+      }
+      if (!signature) {
+        console.warn("[Mozosubs Webhook] Missing signature header. Rejecting.");
+        return res.status(401).json({ error: 'Missing signature' });
+      }
+      {
         const expected = crypto
           .createHmac('sha256', process.env.MOZOSUBS_WEBHOOK_SECRET)
           .update(safeJsonStringify(body))
@@ -6104,39 +4380,7 @@ async function startServer() {
             console.warn("[Mozosubs Webhook] Failed to log transaction in database:", txErr.message || txErr);
           }
 
-          // Secondary Firestore sync for secondary database compatibility
-          try {
-            if (db) {
-              // Get current firestore balance
-              const userRef = db.collection('users').doc(user_id);
-              const userSnap = await userRef.get();
-              if (userSnap.exists) {
-                const fsUser = userSnap.data();
-                const currentFsBal = Number(fsUser?.wallet_balance || fsUser?.balance || 0);
-                const newFsBal = currentFsBal + numericAmount;
-                await userRef.update({
-                  wallet_balance: newFsBal,
-                  available_balance: newFsBal,
-                  balance: newFsBal
-                });
-
-                // Also log to Firestore transactions
-                await db.collection('transactions').doc(txId).set({
-                  id: txId,
-                  userId: user_id,
-                  type: type || 'funding',
-                  amount: numericAmount,
-                  status: 'success',
-                  description: `Mozosubs wallet funding of ₦${numericAmount}`,
-                  reference: reference || `MOZO-REF-${Date.now()}`,
-                  createdAt: FieldValue.serverTimestamp()
-                });
-                console.log("[Mozosubs Webhook] Successfully synchronized backup Firestore user database.");
-              }
-            }
-          } catch (fsSyncErr: any) {
-            console.warn("[Firestore sync bypassed in Mozosubs Webhook]:", fsSyncErr.message || fsSyncErr);
-          }
+          // (Supabase credit already applied via increment_balance RPC above)
         } else {
           console.warn("[Mozosubs Webhook] Missing user_id in data payload.");
         }
@@ -6153,6 +4397,7 @@ async function startServer() {
 
   // Support administrative revenue audit via direct Supabase query
   app.get("/api/admin/opay-revenue", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     try {
       console.log("[Admin Revenue Audit] Processing audit records via direct Supabase query.");
       const { data: txs, error: txError } = await supabase
