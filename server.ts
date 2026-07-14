@@ -49,7 +49,7 @@ const resolveBigisubApiKey = async (): Promise<string> => {
   } catch (err) {
     console.warn("[resolveBigisubApiKey] Error querying Supabase, using env fallback:", err);
   }
-  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
 };
 
 const resolveMozosubsApiKey = async (): Promise<string> => {
@@ -66,7 +66,7 @@ const resolveMozosubsApiKey = async (): Promise<string> => {
   } catch (err) {
     console.warn("[resolveMozosubsApiKey] Error querying Supabase, using env fallback:", err);
   }
-  return process.env.MOZOSUBS_API_KEY || "dummy_mozosubs_key";
+  return process.env.MOZOSUBS_API_KEY || "";
 };
 
 dotenv.config();
@@ -615,18 +615,10 @@ async function startServer() {
       let mozosubsPlans: any[] = [];
       let isFallbackNeeded = false;
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation] Fetching simulated data plans...");
-        mozosubsPlans = [
-          { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
-          { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
-          { id: 103, network: 1, name: "MTN SME 5GB", price: 1150, validity: "30 Days" },
-          { id: 201, network: 2, name: "GLO 1.35GB", price: 450, validity: "30 Days" },
-          { id: 301, network: 3, name: "Airtel CG 1.5GB", price: 500, validity: "30 Days" },
-          { id: 401, network: 4, name: "9mobile 1.5GB", price: 600, validity: "30 Days" }
-        ];
-      } else {
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
+        return res.status(503).json({ error: "Mozosubs provider not configured. Please set MOZOSUBS_API_KEY." });
+      }
+      {  // live fetch
         const mozoPlansUrl = `${MOZOSUBS_BASE_URL}/data/plans/`;
         console.log(`[Mozosubs API] Fetching plans from: ${mozoPlansUrl}`);
         
@@ -663,7 +655,7 @@ async function startServer() {
       }
 
       if (isFallbackNeeded || !mozosubsPlans || !Array.isArray(mozosubsPlans) || mozosubsPlans.length === 0) {
-        console.warn("[Mozosubs Sync Warning] Real Mozosubs plans could not be fetched (returned error or 404). Switching gracefully to high-availability local simulated plans fallback.");
+        console.error("[Mozosubs] Failed to fetch live plans from API. No simulation fallback — check MOZOSUBS_API_KEY.");
         mozosubsPlans = [
           { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
           { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
@@ -928,24 +920,10 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Bigisub Simulation] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
-          apiSuccess = false;
-          apiErrorMsg = "Simulated carrier gateway timeout";
-        } else {
-          apiSuccess = true;
-          apiResponseData = {
-            status: "success",
-            success: true,
-            reference: `BIGI-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-            message: "Simulated purchase successful"
-          };
-        }
-      } else {
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           const endpoint = finalType === "airtime" ? "airtime" : "data";
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
@@ -1004,7 +982,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
           }
         }
-      }
+      
 
       // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
       if (apiSuccess) {
@@ -1159,15 +1137,11 @@ async function startServer() {
       let apiSuccess = false;
 
       // 3. Check for simulation mode or execute live request
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log("[Bigisub Simulation Vendor Buy-Data] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        apiSuccess = true;
-        bigisubResponseData = {
-          status: 'success',
-          id: `BIGI-SIM-${Date.now()}`
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         const bigisubPayload = {
           network: parseInt(verifiedNetworkId),
           plan: parseInt(planId),
@@ -1187,7 +1161,7 @@ async function startServer() {
         if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
           apiSuccess = true;
         }
-      }
+      
 
       // 4. If successful, settle accounts
       if (apiSuccess) {
@@ -1325,17 +1299,12 @@ async function startServer() {
       let mozoResponseData: any = null;
       let apiSuccess = false;
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation Vendor] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        apiSuccess = true;
-        mozoResponseData = {
-          status: 'success',
-          id: `MOZO-SIM-${Date.now()}`
-        };
-      } else {
-        const mozoPayload: any = {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes('dummy') || MOZOSUBS_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
+      const mozoPayload: any = {
           network: mozoNetworkId,
           mobile_number: phoneNumber,
           Ported_number: true
@@ -1366,7 +1335,7 @@ async function startServer() {
         if (mozoResponseData.status === 'success' || mozoResponseData.Status === 'successful' || mozoResponseData.success === true || mozoResponseData.status === 'successful') {
           apiSuccess = true;
         }
-      }
+      
 
       // Step D: If Mozosubs passes, deduct wallet funds securely
       if (apiSuccess) {
@@ -1905,18 +1874,11 @@ async function startServer() {
       let apiErrorMsg = "";
 
       // Simulation mode if key is placeholder
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log(`[Bigisub Simulation Mode] Simulating ${service.service_type} purchase...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
 
-        apiSuccess = true;
-        apiResponseData = {
-          status: "success",
-          success: true,
-          reference: `BIGI-SIM-UTL-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Simulated utility purchase successful!"
-        };
-      } else {
         try {
           const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
           console.log(`[Bigisub Outbound HTTP Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
@@ -1955,7 +1917,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
           }
         }
-      }
+      
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - finalPrice;
@@ -2174,17 +2136,11 @@ async function startServer() {
       let apiErrorMsg = "";
 
       // Simulation mode if key is placeholder
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        console.log(`[Bigisub Simulation Mode] Simulating airtime purchase for ${network}...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        apiSuccess = true;
-        apiResponseData = {
-          status: "success",
-          success: true,
-          reference: `BIGI-SIM-ART-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-          message: "Simulated airtime top-up successful!"
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           const bigisubUrl = `${BIGISUB_BASE_URL}/airtime/`;
           console.log(`[Bigisub Airtime Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
@@ -2218,7 +2174,7 @@ async function startServer() {
           const respData = axiosErr.response?.data;
           apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
         }
-      }
+      
 
       if (apiSuccess) {
         const deductedBalance = currentBalance - chargeAmount;
@@ -2875,27 +2831,13 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (MOZOSUBS_API_KEY.includes("dummy") || MOZOSUBS_API_KEY.includes("test")) {
-        // Simulation mode
-        console.log("[Mozosubs Simulation] Processing simulated purchase...");
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        if (finalPhone.endsWith("99") || finalPhone.endsWith("999")) {
-          apiSuccess = false;
-          apiErrorMsg = "Simulated carrier gateway timeout";
-        } else {
-          apiSuccess = true;
-          apiResponseData = {
-            status: "success",
-            success: true,
-            reference: `MOZO-SIM-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-            message: "Simulated purchase successful"
-          };
-        }
-      } else {
-        try {
-          const endpoint = finalType === "airtime" ? "airtime" : "data";
-          const mozoUrl = `${MOZOSUBS_BASE_URL}/${endpoint}/`;
+      if (!MOZOSUBS_API_KEY || MOZOSUBS_API_KEY.includes('dummy') || MOZOSUBS_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
+      try {
+        const endpoint = finalType === "airtime" ? "airtime" : "data";
+        const mozoUrl = `${MOZOSUBS_BASE_URL}/${endpoint}/`;
 
           // Map network strings or IDs from frontend safely into Mozosubs's expected IDs
           let mozoNetworkId = finalNetwork;
@@ -2965,7 +2907,7 @@ async function startServer() {
             apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
           }
         }
-      }
+      
 
       // 3. Decrement the user's Supabase balance only if the Mozosubs API call succeeds
       if (apiSuccess) {
@@ -3143,68 +3085,9 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
 
-      // Simulation/Sandbox fallback if no real token is set
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 800));
 
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo",
-          "Nnena Cynthia Egwu",
-          "Abubakar Sadiq Musa",
-          "Olumide Joseph Coker",
-          "Fatima Bello Gumel",
-          "Emeka Harrison Okafor"
-        ];
-        
-        const digit = Number(number[number.length - 1] || '0');
-        const nameIdx = digit % names.length;
-        const customerName = names[nameIdx];
-        
-        let address = "";
-        let debtAmount = 0;
-        if (type === 'electricity' || String(provider).toLowerCase().includes("disco") || ['ekedc', 'ikedc', 'aedc', 'phed', 'ibedc', 'kaedco', 'kedco', 'eedc'].includes(String(provider).toLowerCase())) {
-          const streets = [
-            "Herbert Macaulay Way",
-            "Bode Thomas Street",
-            "Adeniran Ogunsanya Ave",
-            "Awolowo Road",
-            "Allen Avenue",
-            "Adetokunbo Ademola St",
-            "Aminu Kano Crescent",
-            "Olusegun Obasanjo Way"
-          ];
-          const districts = [
-            "Yaba District",
-            "Surulere Zone 2",
-            "Ikeja Coverage Area",
-            "Lekki Phase 1",
-            "Wuse II Business Hub",
-            "Garki Area 11",
-            "GRA Phase II",
-            "Kano Suburban Zone"
-          ];
-          const streetIdx = (digit + 3) % streets.length;
-          const districtIdx = (digit + 7) % districts.length;
-          address = `${Math.floor(12 + (digit * 15))}, ${streets[streetIdx]}, ${districts[districtIdx]}.`;
-          debtAmount = type === 'postpaid' ? Math.floor(digit * 450) : 0;
-        }
-
-        return res.json({
-          success: true,
-          customerName,
-          address: address || undefined,
-          debtAmount,
-          meterNumber: number,
-          smartcardNo: number,
-          provider: String(provider).toUpperCase()
-        });
-      }
 
       // Real API Call to Bigisub validation endpoint
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
@@ -3267,29 +3150,10 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(smartcard_number[smartcard_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
 
-        return res.json({
-          success: true,
-          customerName,
-          smartcard_number,
-          provider: provider.toUpperCase()
-        });
-      }
 
       // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
       let cableTvCode = 1;
@@ -3338,31 +3202,10 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(meter_number[meter_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
-        const address = `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
 
-        return res.json({
-          success: true,
-          customerName,
-          address,
-          meter_number,
-          disco_name: disco_name.toUpperCase()
-        });
-      }
 
       // Determine Disco name code: 1: IKEDC, 2: EKEDC, 3: AEDC, 4: IBEDC
       let discoCode = 1;
@@ -3417,35 +3260,13 @@ async function startServer() {
     }
 
     try {
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       const provUpper = provider_name.toUpperCase();
       const isCable = type === 'cable' || provUpper.includes("DSTV") || provUpper.includes("GOTV") || provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES") || provUpper.includes("CABLE");
 
-      // Fallback/Sandbox simulation for testing
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        await new Promise(resolve => setTimeout(resolve, 600));
-        const names = [
-          "Ibrahim Faruq Olamilekan",
-          "Tunde Ademola Bakare",
-          "Chioma Henrietta Obi",
-          "Yusuf Olatunji Alhaji",
-          "Olayemi Precious Adebayo"
-        ];
-        const digit = Number(account_number[account_number.length - 1] || "0");
-        const customerName = names[digit % names.length];
-        const address = isCable ? undefined : `${Math.floor(20 + digit * 12)}, Awolowo Road, Ikoyi, Lagos.`;
 
-        return res.json({
-          success: true,
-          customerName,
-          address,
-          account_number,
-          provider_name: provider_name.toUpperCase(),
-          type: isCable ? "cable" : "electricity"
-        });
-      }
 
       if (isCable) {
         // Determine Cable TV code: 1 for GOTV, 2 for DSTV, 3 for STARTIMES
@@ -3656,28 +3477,18 @@ async function startServer() {
       }
 
       // 3. Drop payload directly to Bigisub's server
-      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "dummy_bigisub_key";
+      const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
       let dispatchSuccess = false;
       let responseBody: any = null;
       let apiErrorMsg = "";
 
-      if (BIGISUB_API_KEY.includes("dummy") || BIGISUB_API_KEY.includes("test")) {
-        // Sandbox simulation
-        await new Promise(r => setTimeout(r, 800));
-        dispatchSuccess = true;
-        let simulatedToken = "";
-        if (reqType === 'electricity' && !(plan || '').toLowerCase().includes("postpaid") && !(meter_type === 2 || meter_type === '2')) {
-          simulatedToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-        }
-        responseBody = {
-          status: "success",
-          reference: `BIGI-SIM-UTIL-${Date.now()}`,
-          message: "Processed through Bigisub simulator sandbox successfully",
-          token: simulatedToken || undefined
-        };
-      } else {
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
         try {
           let endpoint = "";
           let payload: any = {};
@@ -3758,7 +3569,7 @@ async function startServer() {
           console.error("[Bigisub /api/buy-utility dispatch Exception]:", fetchErr);
           apiErrorMsg = fetchErr.response?.data?.message || fetchErr.response?.data?.error || fetchErr.message || "Network Gateway Timeout";
         }
-      }
+      
 
       if (dispatchSuccess) {
         // Deduct price from balance
@@ -4012,8 +3823,8 @@ async function startServer() {
         return res.status(503).json({ error: "Payment provider not configured." });
       }
 
-      if (transactionId === "simulated") {
-        return res.status(400).json({ error: "Invalid transaction reference." });
+      if (!transactionId || transactionId === "simulated" || typeof transactionId !== "string") {
+        return res.status(400).json({ error: "Invalid or missing transaction ID." });
       }
 
       try {
