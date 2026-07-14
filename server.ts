@@ -944,76 +944,75 @@ async function startServer() {
         else if (finalNetwork === 4) bigiNetworkId = 4;
       }
 
-      // 3. Dispatch the secure request to Bigisub using Axios with an 8-second timeout
-      const BIGISUB_API_KEY = await resolveBigisubApiKey();
-      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+      // 3. Dispatch via Mozosubz API
+      const MOZOSUBZ_KEY = await resolveMozosubzApiKey();
+      const MOZOSUBZ_BASE = "https://mozosubz.xyz/api/v1";
 
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+      if (!MOZOSUBZ_KEY || MOZOSUBZ_KEY.length < 10) {
         return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
       }
 
-        try {
-          const endpoint = finalType === "airtime" ? "airtime" : "data";
-          const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
-
-          // Construct standard Bigisub payload matching mapping requirements of bigisub.ng
-          const payload: any = {
-            network: bigiNetworkId,
-            mobile_number: finalPhone,
-            phone: finalPhone,
-            phone_number: finalPhone,
-            amount: finalAmount,
-            Ported_number: true
-          };
-
-          if (finalType === "data") {
-            payload.plan = resolvedPlanCode;
-            payload.plan_id = resolvedPlanCode;
-            payload.data_plan = resolvedPlanCode;
-          } else {
-            payload.airtime_type = "VTU";
-          }
-
-          console.log(`[Bigisub API Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
-
-          const response = await axios.post(bigisubUrl, payload, {
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${BIGISUB_API_KEY}`
-            },
-            timeout: 8000 // 8-second timeout limit as requested
-          });
-
-          apiResponseData = response.data;
-          console.log("[Bigisub API Response]:", apiResponseData);
-
-          if (response.status === 200 || response.status === 201) {
-            const isSuccessStatus = apiResponseData.status === "success" || 
-                                    apiResponseData.status === "SUCCESSFUL" || 
-                                    apiResponseData.success === true ||
-                                    apiResponseData.status === "completed";
-            if (isSuccessStatus) {
-              apiSuccess = true;
-            } else {
-              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Bigisub purchase rejected by gateway.";
-            }
-          } else {
-            apiErrorMsg = `HTTP Gateway error status code: ${response.status}`;
-          }
-        } catch (axiosErr: any) {
-          console.error("[Bigisub API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
-          
-          if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
-            apiErrorMsg = "8-second API Timeout limit reached. Gateway was slow or non-responsive.";
-          } else {
-            const respData = axiosErr.response?.data;
-            apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
-          }
+      try {
+        // Also look up the mozosubz_service for this plan (needed for data purchase)
+        let mozosubzService = req.body.mozosubz_service || req.body.service || '';
+        if (!mozosubzService && finalType === 'data' && resolvedPlanCode) {
+          // Try to look it up from services_config
+          try {
+            const { data: planRow } = await supabase
+              .from('services_config')
+              .select('mozosubz_service, mozosubs_plan_id')
+              .or(`mozosubs_plan_id.eq.${resolvedPlanCode},mozosubz_plan_id.eq.${resolvedPlanCode}`)
+              .maybeSingle();
+            if (planRow?.mozosubz_service) mozosubzService = planRow.mozosubz_service;
+          } catch (_) {}
         }
+
+        // Map network to Mozosubz lowercase format
+        const netLower = String(finalNetwork || '').toLowerCase();
+        let mozoNetwork = 'mtn';
+        if (netLower.includes('glo'))                                              mozoNetwork = 'glo';
+        else if (netLower.includes('airtel'))                                      mozoNetwork = 'airtel';
+        else if (netLower.includes('9mobile') || netLower.includes('etisalat'))   mozoNetwork = 'etisalat';
+
+        let mozoUrl: string;
+        let payload: any;
+
+        if (finalType === 'data') {
+          mozoUrl = `${MOZOSUBZ_BASE}/data/purchase`;
+          payload = {
+            service: mozosubzService || `${mozoNetwork}_sme`,
+            id:      String(resolvedPlanCode),
+            phone:   finalPhone,
+          };
+        } else {
+          mozoUrl = `${MOZOSUBZ_BASE}/airtime/purchase`;
+          payload = { network: mozoNetwork, amount: finalAmount, phone: finalPhone };
+        }
+
+        console.log(`[Mozosubz Purchase Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
+
+        const response = await axios.post(mozoUrl, payload, {
+          headers: { 'Content-Type': 'application/json', 'X-Connect-Key': MOZOSUBZ_KEY },
+          timeout: 12000
+        });
+
+        apiResponseData = response.data;
+        console.log("[Mozosubz Purchase Response]:", apiResponseData);
+
+        if (apiResponseData?.success === true) {
+          apiSuccess = true;
+        } else {
+          apiErrorMsg = apiResponseData?.error || apiResponseData?.message || "Purchase rejected by gateway.";
+        }
+      } catch (axiosErr: any) {
+        console.error("[Mozosubz Purchase HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+        const respData = axiosErr.response?.data;
+        apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection failed.";
+      }
       
 
       // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
@@ -1051,7 +1050,7 @@ async function startServer() {
         // (Supabase profiles already updated above)
 
         // Create a transaction record in Supabase 'transactions' table
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-BIGI-${Date.now()}`;
+        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
         try {
           await supabase.from('transactions').insert({
             id: `bigi_${Date.now()}`,
@@ -1659,9 +1658,11 @@ async function startServer() {
           network_type: String(item.provider_or_network || 'MTN').toUpperCase(),
           network: String(item.provider_or_network || 'MTN').toUpperCase(),
           type: 'data',
-          peyflex_id: item.bigisub_plan_id,
-          peyflex_variation_id: item.bigisub_plan_id,
-          apiPlanId: item.bigisub_plan_id,
+          peyflex_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
+          peyflex_variation_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
+          apiPlanId: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
+          mozosubs_plan_id: item.mozosubs_plan_id || item.mozosubz_plan_id || '',
+          mozosubz_service: item.mozosubz_service || '',
           duration: planDays,
           validity_days: planDays,
           plan_category: planCategory,
