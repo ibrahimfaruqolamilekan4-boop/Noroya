@@ -74,6 +74,25 @@ const resolveMozosubsApiKey = async (): Promise<string> => {
 
 dotenv.config();
 
+// =========================================================================
+// 🗝️ VTU GATEWAY & MOZOSUBS CONFIGURATION CONFIG KEYS (EXPOSED VARIABLES)
+// =========================================================================
+// You can configure your credentials via two flexible methods:
+// Method 1: Environment Variables in ".env" or Platform Secrets:
+//   - MOZOSUBS_API_KEY       : Your Mozosubs API secret authorization token.
+//   - MOZOSUBS_BASE_URL      : Base endpoint for Mozosubs (Default: "https://mozosubs.com/api")
+//   - MOZOSUBS_WEBHOOK_SECRET: Secret for verifying inbound Mozosubs webhook signatures.
+//   - BIGISUB_API_KEY        : Your main Bigisub API secret token.
+//   - FLUTTERWAVE_SECRET_KEY : Your Flutterwave secret integration key.
+//
+// Method 2: Supabase Dynamic config in the "services_config" table:
+//   - Create a record with: bigisub_identifier_id = "mozosubs_api_key" and set the "item_name" as your key value.
+//   - Create a record with: bigisub_identifier_id = "bigisub_api_key" and set the "item_name" as your key value.
+// =========================================================================
+console.log("🔌 [VTU Config] Exposing keys. Mozosubs API Key source detected:", 
+  process.env.MOZOSUBS_API_KEY ? "Loaded from env (starts with: " + process.env.MOZOSUBS_API_KEY.slice(0, 5) + "...)" : "Not set (using fallback/Supabase/simulation)");
+
+
 import fs from 'fs';
 const firebaseConfig = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf-8'));
 
@@ -131,6 +150,20 @@ function saveLocalDb(data: LocalStore) {
   } catch (e) {
     console.error("Error saving local DB:", e);
   }
+}
+
+// Robust custom replacer utility to completely prevent "TypeError: JSON.stringify cannot serialize cyclic structures"
+function safeJsonStringify(obj: any, space?: string | number): string {
+  const seen = new WeakSet();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+    }
+    return value;
+  }, space);
 }
 
 // Create custom fallback DB engine
@@ -3356,7 +3389,7 @@ async function startServer() {
         rawBody = req.body;
       } else {
         try {
-          rawBody = JSON.stringify(req.body);
+          rawBody = safeJsonStringify(req.body);
         } catch (err) {
           console.warn("[Paystack Webhook] Circular reference detected in stringification fallback:", err);
           rawBody = "";
@@ -5381,7 +5414,7 @@ async function startServer() {
           try {
             const expectedSignature = crypto
               .createHmac('sha256', flwSecretKey)
-              .update(JSON.stringify(req.body))
+              .update(safeJsonStringify(req.body))
               .digest('hex');
             if (signature === expectedSignature) {
               isAuthorized = true;
@@ -5564,7 +5597,7 @@ async function startServer() {
     // Process everything asynchronously in the background to prevent timeouts and header errors
     (async () => {
       try {
-        console.log("Incoming Flutterwave Payload:", JSON.stringify(req.body));
+        console.log("Incoming Flutterwave Payload:", safeJsonStringify(req.body));
 
         // 2. SIGNATURE VALIDATION
         const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
@@ -5585,7 +5618,7 @@ async function startServer() {
           try {
             const expectedSignature = crypto
               .createHmac('sha256', flwSecretKey)
-              .update(JSON.stringify(req.body))
+              .update(safeJsonStringify(req.body))
               .digest('hex');
             if (signature === expectedSignature) {
               isAuthorized = true;
@@ -5911,13 +5944,13 @@ async function startServer() {
       const signature = req.get('x-mozosubs-signature') || req.headers['x-mozosubs-signature'];
 
       console.log("[Mozosubs Webhook Received] Headers:", req.headers);
-      console.log("[Mozosubs Webhook Received] Body:", JSON.stringify(body));
+      console.log("[Mozosubs Webhook Received] Body:", safeJsonStringify(body));
 
       // Verify signature if Mozosubs provides one and secret is configured
       if (signature && process.env.MOZOSUBS_WEBHOOK_SECRET) {
         const expected = crypto
           .createHmac('sha256', process.env.MOZOSUBS_WEBHOOK_SECRET)
-          .update(JSON.stringify(body))
+          .update(safeJsonStringify(body))
           .digest('hex');
         if (signature !== expected) {
           console.warn("[Mozosubs Webhook] Signature mismatch. Signature received:", signature, "Expected:", expected);
