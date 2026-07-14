@@ -53,20 +53,20 @@ const resolveBigisubApiKey = async (): Promise<string> => {
 };
 
 const resolveMozosubsApiKey = async (): Promise<string> => {
+  // Priority 1: MOZOSUBS_API_KEY env var (the canonical key — set this in your deployment secrets)
+  if (process.env.MOZOSUBS_API_KEY) return process.env.MOZOSUBS_API_KEY;
+  // Priority 2: Supabase services_config table (runtime override)
   try {
     const { data, error } = await supabase
       .from('services_config')
       .select('item_name')
       .eq('bigisub_identifier_id', 'mozosubs_api_key')
       .maybeSingle();
-    
-    if (!error && data?.item_name) {
-      return data.item_name;
-    }
+    if (!error && data?.item_name) return data.item_name;
   } catch (err) {
-    console.warn("[resolveMozosubsApiKey] Error querying Supabase, using env fallback:", err);
+    console.warn("[resolveMozosubsApiKey] Supabase query failed:", err);
   }
-  return process.env.MOZOSUBS_API_KEY || "";
+  return "";
 };
 
 dotenv.config();
@@ -1498,6 +1498,83 @@ async function startServer() {
     }
   });
 
+  // POST /api/admin/fetch-mozosubz-plans — Fetch all 9 service types from Mozosubz API in parallel
+  app.post("/api/admin/fetch-mozosubz-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { balanceOnly } = req.body;
+      const CONNECT_KEY = await resolveMozosubsApiKey();
+      const MOZO_BASE   = "https://mozosubz.xyz/api/v1";
+
+      if (balanceOnly) {
+        // Not exposed in Mozosubz v1 API — return null gracefully
+        return res.json({ balance: null });
+      }
+
+      const SERVICES = [
+        { id: "mtn_sme",       network: "MTN",    plan_type: "SME"       },
+        { id: "mtn_gifting",   network: "MTN",    plan_type: "GIFTING"   },
+        { id: "mtn_datashare", network: "MTN",    plan_type: "DATASHARE" },
+        { id: "mtn_awoof",     network: "MTN",    plan_type: "AWOOF"     },
+        { id: "glo_sme",       network: "GLO",    plan_type: "SME"       },
+        { id: "glo_data",      network: "GLO",    plan_type: "DATA"      },
+        { id: "airtel_sme",    network: "AIRTEL", plan_type: "SME"       },
+        { id: "airtel_gifting",network: "AIRTEL", plan_type: "GIFTING"   },
+        { id: "etisalat_data", network: "9MOBILE",plan_type: "DATA"      },
+      ];
+
+      // Fetch all services in parallel
+      const results = await Promise.allSettled(
+        SERVICES.map(async (svc) => {
+          const url = `${MOZO_BASE}/data/plans?service=${svc.id}`;
+          const resp = await fetch(url, {
+            headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(12000),
+          });
+          const data: any = await resp.json();
+          if (!data.success) return { svc, plans: [] };
+          const plans = (data.plans || []).map((p: any) => ({
+            service:    svc.id,
+            id:         String(p.id),
+            name:       p.name,
+            price:      Number(p.price),
+            network:    svc.network,
+            plan_type:  svc.plan_type,
+          }));
+          return { svc, plans };
+        })
+      );
+
+      // Flatten all plans
+      const allPlans: any[] = [];
+      for (const r of results) {
+        if (r.status === 'fulfilled') allPlans.push(...r.value.plans);
+        else console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
+      }
+
+      // Load existing DB selling prices for comparison
+      const { data: dbRows } = await supabase
+        .from('services_config')
+        .select('mozosubs_plan_id, bigisub_identifier_id, selling_price');
+      const priceMap: Record<string, number> = {};
+      (dbRows || []).forEach((r: any) => {
+        const k = String(r.mozosubs_plan_id || r.bigisub_identifier_id || '');
+        if (k) priceMap[k] = Number(r.selling_price || 0);
+      });
+
+      const enriched = allPlans.map(p => ({
+        ...p,
+        selling_price: priceMap[p.id] || 0,
+      }));
+
+      console.log(`[fetch-mozosubz-plans] Returning ${enriched.length} plans across ${SERVICES.length} services`);
+      return res.json({ plans: enriched });
+    } catch (err: any) {
+      console.error("[POST /api/admin/fetch-mozosubz-plans Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
   // GET API route to pull all plans (for admin management)
   app.get("/api/services/all", async (req, res) => {
     try {
@@ -1988,7 +2065,7 @@ async function startServer() {
             }).eq('id', resolvedUserId);
         } catch (e) {}
 
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
+        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localReference;
         
         // 2. After making the Axios request to Bigisub, if the API response returns a successful status, update transaction to 'success' and save Bigisub transaction reference code into 'api_reference'
         try {
@@ -2082,29 +2159,12 @@ async function startServer() {
         return res.status(500).json({ error: `Database error lookup: ${serviceErr.message}` });
       }
 
-      if (!service) {
-        return res.status(404).json({ error: `Airtime service config not found for network: ${network}.` });
-      }
-
-      if (!service.is_active) {
-        return res.status(400).json({ error: `The airtime service for ${network} is currently inactive/disabled.` });
-      }
-
-      // Calculate the custom selling_price / cost_price ratio
-      let sellingPercent = Number(service.selling_price || 100);
-      let costPercent = Number(service.cost_price || 100);
-
-      // Normalize if input as ratio (e.g. 0.98 vs 98)
-      if (sellingPercent <= 1 && sellingPercent > 0) {
-        sellingPercent = sellingPercent * 100;
-      }
-      if (costPercent <= 1 && costPercent > 0) {
-        costPercent = costPercent * 100;
-      }
-
-      const chargeAmount = parsedAmount * (sellingPercent / 100);
-      const apiCost = parsedAmount * (costPercent / 100);
-      const ratio = sellingPercent / costPercent;
+      // Mozosubz charges face value for airtime (no markup ratio)
+      // service config lookup is optional — used only if admin has set a custom ratio
+      const sellingPercent = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
+      const costPercent    = service?.cost_price    && service.cost_price > 1    ? Number(service.cost_price)    : 100;
+      const chargeAmount   = parsedAmount * (sellingPercent / 100);
+      const ratio          = sellingPercent / (costPercent || 100);
 
       if (currentBalance < chargeAmount) {
         return res.status(400).json({
@@ -2112,7 +2172,7 @@ async function startServer() {
         });
       }
 
-      const transactionId = `bigi_airtime_${Date.now()}`;
+      const transactionId = `mozo_airtime_${Date.now()}`;
       const localReference = `TRX-AIRTIME-${Date.now()}`;
 
       // Insert a 'pending' transaction into the 'transactions' table in Supabase and Firestore
@@ -2145,67 +2205,55 @@ async function startServer() {
             });
       } catch (e) {}
 
-      const BIGISUB_API_KEY = await resolveBigisubApiKey();
-      const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
+      const CONNECT_KEY = await resolveMozosubsApiKey();
+      const MOZO_BASE   = "https://mozosubz.xyz/api/v1";
 
-      let bigiNetworkId = 1;
-      const netLower = String(service.provider_or_network || network).toLowerCase().trim();
-      if (netLower.includes("mtn")) bigiNetworkId = 1;
-      else if (netLower.includes("glo")) bigiNetworkId = 2;
-      else if (netLower.includes("airtel")) bigiNetworkId = 3;
-      else if (netLower.includes("9mobile") || netLower.includes("9mob")) bigiNetworkId = 4;
+      if (!CONNECT_KEY || CONNECT_KEY.length < 10) {
+        return res.status(503).json({ error: "Airtime provider not configured. Please contact support." });
+      }
+
+      // Map network to Mozosubz format
+      const netLower = String(service?.provider_or_network || network).toLowerCase().trim();
+      let mozoNetwork = "mtn";
+      if (netLower.includes("glo")) mozoNetwork = "glo";
+      else if (netLower.includes("airtel")) mozoNetwork = "airtel";
+      else if (netLower.includes("9mobile") || netLower.includes("etisalat") || netLower.includes("9mob")) mozoNetwork = "etisalat";
 
       const payload = {
-        network: bigiNetworkId,
-        mobile_number: phone_number,
+        network: mozoNetwork,
         amount: parsedAmount,
-        airtime_type: "VTU",
-        Ported_number: true
+        phone: phone_number,
       };
 
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
 
-      // Simulation mode if key is placeholder
-      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
-      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
-        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
-      }
+      try {
+        const mozoUrl = `${MOZO_BASE}/airtime/purchase`;
+        console.log(`[Mozosubz Airtime Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
 
-        try {
-          const bigisubUrl = `${BIGISUB_BASE_URL}/airtime/`;
-          console.log(`[Bigisub Airtime Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
+        const response = await axios.post(mozoUrl, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Connect-Key": CONNECT_KEY,
+          },
+          timeout: 12000,
+        });
 
-          const response = await axios.post(bigisubUrl, payload, {
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${BIGISUB_API_KEY}`
-            },
-            timeout: 10000
-          });
+        apiResponseData = response.data;
+        console.log("[Mozosubz Airtime Response]:", apiResponseData);
 
-          apiResponseData = response.data;
-          console.log("[Bigisub Airtime Response]:", apiResponseData);
-
-          if (response.status === 200 || response.status === 201) {
-            const isSuccessStatus = apiResponseData.status === "success" || 
-                                    apiResponseData.status === "SUCCESSFUL" || 
-                                    apiResponseData.success === true ||
-                                    apiResponseData.status === "completed";
-            if (isSuccessStatus) {
-              apiSuccess = true;
-            } else {
-              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Gateway transaction rejected.";
-            }
-          } else {
-            apiErrorMsg = `Gateway error status: ${response.status}`;
-          }
-        } catch (axiosErr: any) {
-          console.error("[Bigisub Airtime Gateway HTTP Error]:", axiosErr.response?.data || axiosErr.message);
-          const respData = axiosErr.response?.data;
-          apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by carrier API.";
+        if (apiResponseData?.success === true) {
+          apiSuccess = true;
+        } else {
+          apiErrorMsg = apiResponseData?.error || apiResponseData?.message || "Gateway transaction rejected.";
         }
+      } catch (axiosErr: any) {
+        console.error("[Mozosubz Airtime HTTP Error]:", axiosErr.response?.data || axiosErr.message);
+        const respData = axiosErr.response?.data;
+        apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Gateway connection failed.";
+      }
       
 
       if (apiSuccess) {
@@ -2238,7 +2286,7 @@ async function startServer() {
           }).eq('id', resolvedUserId);
         } catch (e) {}
 
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || localReference;
+        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localReference;
 
         // Update transaction status to success
         try {
@@ -2305,63 +2353,78 @@ async function startServer() {
   // Admin Create Plan backend endpoint
   app.post("/api/admin/create-plan", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
-    const { network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id } = req.body;
-
     try {
+      const {
+        id, name, network, service, type,
+        price, cost_price, selling_price, retail_price,
+        plan_category, validity_days,
+        mozosubz_plan_id, mozosubz_service,
+        // legacy fields kept for backward compat
+        resellerPrice, agentPrice, duration, peyflex_variation_id,
+      } = req.body;
+
       const rawNet = String(network || 'MTN').trim().toUpperCase();
-      let finalNet = "MTN";
-      if (rawNet.includes("AIRTEL")) {
-        finalNet = "AIRTEL";
-      } else if (rawNet.includes("GLO")) {
-        finalNet = "GLO";
-      } else if (rawNet.includes("9MOBILE") || rawNet.includes("9MOB")) {
-        finalNet = "9MOBILE";
-      } else {
-        finalNet = "MTN";
-      }
+      let finalNet = rawNet.includes('AIRTEL') ? 'AIRTEL'
+        : rawNet.includes('GLO')               ? 'GLO'
+        : (rawNet.includes('9MOBILE') || rawNet.includes('ETISALAT')) ? '9MOBILE'
+        : 'MTN';
 
       const pNameUpper = String(name || '').toUpperCase();
-      let planCategory = "GIFTING";
-      if (pNameUpper.includes("SME")) {
-        planCategory = "SME";
-      } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-        planCategory = "CG";
+      let planCat = plan_category?.toUpperCase()
+        || (pNameUpper.includes('SME') ? 'SME' : pNameUpper.includes('CG') || pNameUpper.includes('CORPORATE') ? 'CG' : 'GIFTING');
+
+      const sellingPrice = Number(selling_price || price || 0);
+      const costPrice    = Number(cost_price || 0);
+      const planId       = String(mozosubz_plan_id || id || `plan_${Date.now()}`);
+
+      const record: any = {
+        // Core identifiers — upsert on mozosubs_plan_id when available, else bigisub_identifier_id
+        mozosubs_plan_id:     planId,
+        bigisub_identifier_id: planId,
+        mozosubz_service:     mozosubz_service || service || '',
+
+        // Names
+        name:                 String(name || '').trim(),
+        item_name:            String(name || '').trim(),
+        plan_name:            String(name || '').trim(),
+
+        // Pricing
+        selling_price:        sellingPrice,
+        retail_price:         sellingPrice,
+        cost_price:           costPrice,
+
+        // Classification
+        network:              finalNet,
+        network_type:         finalNet,
+        provider_or_network:  finalNet,
+        service_type:         String(type || 'data').toLowerCase(),
+        plan_category:        planCat,
+        type:                 String(type || 'data').toLowerCase(),
+        validity_days:        validity_days || duration || '30 Days',
+
+        // Legacy / compat
+        peyflex_variation_id: peyflex_variation_id || planId,
+
+        is_active:            true,
+        updated_at:           new Date().toISOString(),
+      };
+
+      // Upsert on mozosubs_plan_id (our canonical key for Mozosubz plans)
+      const { error } = await supabase
+        .from('services_config')
+        .upsert(record, { onConflict: 'mozosubs_plan_id' });
+
+      if (error) {
+        // Fallback upsert on bigisub_identifier_id if mozosubs_plan_id constraint fails
+        const { error: err2 } = await supabase
+          .from('services_config')
+          .upsert({ ...record, bigisub_identifier_id: planId }, { onConflict: 'bigisub_identifier_id' });
+        if (err2) throw new Error(err2.message);
       }
 
-      // Supabase: using services_config table instead of Firestore data_plans
-      const plansColl = { 
-        doc: (id: string) => ({ 
-          set: async (d: any) => supabase.from('services_config').upsert({ ...d, bigisub_identifier_id: id }, { onConflict: 'bigisub_identifier_id' }),
-          get: async () => { const { data } = await supabase.from('services_config').select('*').eq('bigisub_identifier_id', id).maybeSingle(); return { exists: !!data, data: () => data }; }
-        }),
-        where: () => ({ get: async () => { const { data } = await supabase.from('services_config').select('*'); return { docs: (data||[]).map((r:any) => ({ id: r.bigisub_identifier_id, data: () => r })) }; } }),
-        get: async () => { const { data } = await supabase.from('services_config').select('*'); return { docs: (data||[]).map((r:any) => ({ id: r.bigisub_identifier_id, data: () => r })) }; }
-      };
-      const docId = `plan_${Date.now()}`;
-      await plansColl.doc(docId).set({
-        network: finalNet,
-        type,
-        name: String(name).trim(),
-        price: Number(price),
-        resellerPrice: resellerPrice ? Number(resellerPrice) : null,
-        agentPrice: agentPrice ? Number(agentPrice) : null,
-        duration: type === 'data' ? duration : '',
-        
-        // Literal requested keys
-        plan_name: String(name).trim(),
-        retail_price: Number(price),
-        network_type: finalNet,
-        plan_category: planCategory,
-        planType: planCategory,
-        peyflex_variation_id: peyflex_variation_id || docId,
-
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      });
-
-      return res.json({ success: true, message: "Successfully created service plan!" });
+      return res.json({ success: true, message: "Plan published successfully!" });
     } catch (err: any) {
-      console.error("Error creating plan:", err);
+      console.error("[POST /api/admin/create-plan Exception]:", err);
       return res.status(500).json({ error: err.message });
     }
   });

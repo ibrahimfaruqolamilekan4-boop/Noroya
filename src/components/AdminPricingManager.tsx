@@ -1,101 +1,118 @@
 /**
  * AdminPricingManager.tsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Admin UI: Fetch live Mozosubs API prices → set selling price per plan →
- * publish to services_config (Supabase). Users see only the admin-set price.
+ * Live Plan Pricing Manager — fetches from Mozosubz API, lets admin
+ * set markup per plan or globally, then publishes to services_config.
  *
- * NOT WIRED TO LIVE BACKEND YET — all backend calls are stubbed with TODO markers.
- * Wire up by replacing the fetch() calls to the real /api/admin/* endpoints.
- * ─────────────────────────────────────────────────────────────────────────────
+ * Data flow:
+ *   Mozosubz API → backend /api/admin/fetch-mozosubz-plans
+ *     → admin sets markup → /api/admin/publish-plans
+ *       → services_config table → /api/services/data → user data page
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
-  RefreshCw, Save, DollarSign, Tag, Wifi, ChevronDown,
-  CheckCircle, AlertTriangle, Loader2, Search, Filter,
-  TrendingUp, Package, ArrowUpRight, Edit3, Eye, EyeOff
+  RefreshCw, Save, DollarSign, CheckCircle, AlertTriangle,
+  Loader2, Search, Eye, EyeOff, TrendingUp, Zap,
+  ChevronDown, BarChart2, Globe, Settings, Percent
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-interface MozosubsPlan {
-  id: number;
-  network: number;         // 1=MTN 2=GLO 3=Airtel 4=9mobile
-  name: string;
-  plan?: string;
-  price: number;           // Mozosubs cost price (₦)
-  validity?: string;
-  size?: string;
-  planType?: string;       // 'SME' | 'GIFTING' | 'CG' | 'CORPORATE'
-}
+const MOZOSUBZ_SERVICES = [
+  { id: 'mtn_sme',        label: 'MTN SME',        network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.2)'  },
+  { id: 'mtn_gifting',    label: 'MTN Gifting',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.2)'  },
+  { id: 'mtn_datashare',  label: 'MTN Datashare',  network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.2)'  },
+  { id: 'mtn_awoof',      label: 'MTN Awoof',      network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.08)', border: 'rgba(252,211,77,0.2)'  },
+  { id: 'glo_sme',        label: 'GLO SME',        network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.08)', border: 'rgba(74,222,128,0.2)'  },
+  { id: 'glo_data',       label: 'GLO Data',       network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.08)', border: 'rgba(74,222,128,0.2)'  },
+  { id: 'airtel_sme',     label: 'Airtel SME',     network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.2)' },
+  { id: 'airtel_gifting', label: 'Airtel Gifting', network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.2)' },
+  { id: 'etisalat_data',  label: '9mobile Data',   network: '9mobile', color: '#2DD4BF', bg: 'rgba(45,212,191,0.08)', border: 'rgba(45,212,191,0.2)'  },
+] as const;
+
+type ServiceID = typeof MOZOSUBZ_SERVICES[number]['id'];
+
+interface RawPlan { id: string; name: string; price: number; }
 
 interface PricingRow {
-  plan: MozosubsPlan;
-  sellingPrice: string;    // admin-editable
-  markup: number;          // derived: sellingPrice - plan.price
-  markupPct: number;       // derived: markup / plan.price * 100
-  saved: boolean;          // was this row published to DB?
-  saving: boolean;
+  planId:       string;
+  serviceId:    ServiceID;
+  network:      string;
+  name:         string;
+  costPrice:    number;    // Mozosubz wholesale price
+  markupPct:    number;    // % above cost
+  sellingPrice: number;    // costPrice * (1 + markupPct/100), rounded up
+  saved:        boolean;   // published to services_config?
+  saving:       boolean;
+  dirty:        boolean;   // edited since last publish
 }
-
-const NETWORKS: Record<number, { name: string; color: string }> = {
-  1: { name: 'MTN',     color: 'text-yellow-400' },
-  2: { name: 'GLO',     color: 'text-green-400'  },
-  3: { name: 'Airtel',  color: 'text-red-400'    },
-  4: { name: '9mobile', color: 'text-teal-400'   },
-};
-
-const PLAN_TYPE_OPTIONS = ['ALL', 'SME', 'GIFTING', 'CG', 'CORPORATE'] as const;
-type PlanTypeFilter = typeof PLAN_TYPE_OPTIONS[number];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(n);
 
-function applyBulkMarkup(rows: PricingRow[], pct: number): PricingRow[] {
-  return rows.map(r => {
-    const selling = Math.ceil(r.plan.price * (1 + pct / 100));
-    const markup  = selling - r.plan.price;
-    return { ...r, sellingPrice: String(selling), markup, markupPct: pct, saved: false };
-  });
+const calcSelling = (cost: number, pct: number) => Math.ceil(cost * (1 + pct / 100));
+
+function parseValidity(name: string): string {
+  const m = name.match(/(\d+)\s*(day|days|month|months|week|weeks|hr|hour|hours)/i);
+  return m ? `${m[1]} ${m[2]}` : '30 days';
 }
+
+function deriveCategory(serviceId: string): string {
+  if (serviceId.includes('sme'))       return 'SME';
+  if (serviceId.includes('gifting'))   return 'GIFTING';
+  if (serviceId.includes('datashare')) return 'DATASHARE';
+  if (serviceId.includes('awoof'))     return 'AWOOF';
+  return 'DATA';
+}
+
+const SERVICE_MAP = Object.fromEntries(MOZOSUBZ_SERVICES.map(s => [s.id, s]));
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AdminPricingManager() {
-  const [rows,        setRows]        = useState<PricingRow[]>([]);
-  const [loading,     setLoading]     = useState(false);
-  const [savingAll,   setSavingAll]   = useState(false);
-  const [fetched,     setFetched]     = useState(false);
-  const [search,      setSearch]      = useState('');
-  const [netFilter,   setNetFilter]   = useState<number | 'ALL'>('ALL');
-  const [typeFilter,  setTypeFilter]  = useState<PlanTypeFilter>('ALL');
-  const [bulkPct,     setBulkPct]     = useState('');
-  const [showCost,    setShowCost]    = useState(true);
+  const [rows,         setRows]         = useState<PricingRow[]>([]);
+  const [loading,      setLoading]      = useState(false);
+  const [publishing,   setPublishing]   = useState(false);
+  const [fetched,      setFetched]      = useState(false);
+  const [activeTab,    setActiveTab]    = useState<ServiceID | 'all'>('all');
+  const [search,       setSearch]       = useState('');
+  const [showCost,     setShowCost]     = useState(true);
+  const [globalMarkup, setGlobalMarkup] = useState('10');
+  const [lastFetched,  setLastFetched]  = useState<Date | null>(null);
 
-  // ── Fetch live plans from Mozosubs (via backend admin endpoint) ─────────────
+  // ── Load existing published prices from DB on mount ──────────────────────────
+  const loadExistingPrices = useCallback(async () => {
+    const { data } = await supabase
+      .from('services_config')
+      .select('mozosubs_plan_id, bigisub_identifier_id, selling_price, cost_price, is_active')
+      .eq('service_type', 'data');
+    const map: Record<string, { selling: number; cost: number; active: boolean }> = {};
+    (data || []).forEach((r: any) => {
+      const k = String(r.mozosubs_plan_id || r.bigisub_identifier_id || '');
+      if (k) map[k] = { selling: Number(r.selling_price || 0), cost: Number(r.cost_price || 0), active: !!r.is_active };
+    });
+    return map;
+  }, []);
+
+  // ── Fetch live plans from Mozosubz via backend ───────────────────────────────
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Not authenticated');
 
-      // ── TODO: wire to real backend endpoint ──────────────────────────────
-      // The backend endpoint /api/admin/generate-plans already fetches Mozosubs
-      // plans. We reuse it but only for reading — not publishing.
-      // Replace this fetch() with your actual API base URL in production.
-      // ────────────────────────────────────────────────────────────────────
-      const res = await fetch('/api/admin/generate-plans', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ fetchOnly: true }),   // fetch but don't auto-publish
-      });
+      const [res, existingPrices] = await Promise.all([
+        fetch('/api/admin/fetch-mozosubz-plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+          body: JSON.stringify({ fetchOnly: true }),
+        }),
+        loadExistingPrices(),
+      ]);
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -103,480 +120,569 @@ export default function AdminPricingManager() {
       }
 
       const data = await res.json();
+      const plans: Array<{ service: ServiceID; id: string; name: string; price: number }> =
+        (data.plans || []).filter((p: any) => p.id && p.name && p.price > 0);
 
-      // data may be { plans: [...] } or just an array
-      const rawPlans: MozosubsPlan[] = Array.isArray(data) ? data : (data.plans ?? []);
+      if (!plans.length) {
+        toast('No plans returned — make sure your MOZOSUBS_API_KEY is set and plans are priced in your Mozosubz dashboard.', { icon: '⚠️' });
+        setFetched(true);
+        setLoading(false);
+        return;
+      }
 
-      if (!rawPlans.length) throw new Error('No plans returned from Mozosubs API.');
+      const defaultMarkup = parseFloat(globalMarkup) || 10;
 
-      // Also pull any existing selling prices from services_config
-      const { data: existing } = await supabase
-        .from('services_config')
-        .select('bigisub_identifier_id, selling_price, retail_price');
-      const existingMap: Record<string, number> = {};
-      (existing || []).forEach((r: any) => {
-        const key = String(r.bigisub_identifier_id);
-        existingMap[key] = r.selling_price ?? r.retail_price ?? 0;
-      });
-
-      const newRows: PricingRow[] = rawPlans.map(plan => {
-        const key       = String(plan.id);
-        const existing  = existingMap[key] ?? 0;
-        const selling   = existing > 0 ? existing : Math.ceil(plan.price * 1.05);
-        const markup    = selling - plan.price;
-        const markupPct = plan.price > 0 ? (markup / plan.price) * 100 : 0;
+      const newRows: PricingRow[] = plans.map(p => {
+        const existing = existingPrices[p.id];
+        const cost     = p.price;
+        let markup     = defaultMarkup;
+        if (existing?.selling > 0 && existing.cost > 0) {
+          markup = ((existing.selling - existing.cost) / existing.cost) * 100;
+        }
+        const selling = existing?.selling || calcSelling(cost, markup);
+        const svc     = SERVICE_MAP[p.service] || { network: 'MTN' };
         return {
-          plan,
-          sellingPrice: String(selling),
-          markup,
-          markupPct,
-          saved: existing > 0,
-          saving: false,
+          planId:       p.id,
+          serviceId:    p.service,
+          network:      svc.network,
+          name:         p.name,
+          costPrice:    cost,
+          markupPct:    Math.round(markup * 10) / 10,
+          sellingPrice: selling,
+          saved:        !!existing?.selling,
+          saving:       false,
+          dirty:        false,
         };
       });
 
       setRows(newRows);
       setFetched(true);
-      toast.success(`Loaded ${newRows.length} plans from Mozosubs`);
+      setLastFetched(new Date());
+      toast.success(`Loaded ${newRows.length} plans from Mozosubz`);
     } catch (err: any) {
       toast.error(err.message || 'Failed to fetch plans');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [globalMarkup, loadExistingPrices]);
 
-  // ── Update a single row's selling price ─────────────────────────────────────
-  const updateSellingPrice = useCallback((planId: number, raw: string) => {
+  // ── Update markup for one row ─────────────────────────────────────────────────
+  const updateMarkup = useCallback((planId: string, pct: number) => {
     setRows(prev => prev.map(r => {
-      if (r.plan.id !== planId) return r;
-      const selling   = parseFloat(raw) || 0;
-      const markup    = selling - r.plan.price;
-      const markupPct = r.plan.price > 0 ? (markup / r.plan.price) * 100 : 0;
-      return { ...r, sellingPrice: raw, markup, markupPct, saved: false };
+      if (r.planId !== planId) return r;
+      const selling = calcSelling(r.costPrice, pct);
+      return { ...r, markupPct: pct, sellingPrice: selling, dirty: true };
     }));
   }, []);
 
-  // ── Save a single row ────────────────────────────────────────────────────────
-  const saveRow = useCallback(async (planId: number) => {
-    setRows(prev => prev.map(r => r.plan.id === planId ? { ...r, saving: true } : r));
-    try {
-      const row = rows.find(r => r.plan.id === planId);
-      if (!row) return;
-      const selling = parseFloat(row.sellingPrice);
-      if (isNaN(selling) || selling <= 0) throw new Error('Invalid selling price');
-      if (selling < row.plan.price) throw new Error('Selling price cannot be below cost price');
+  // ── Update selling price directly ─────────────────────────────────────────────
+  const updateSelling = useCallback((planId: string, val: number) => {
+    setRows(prev => prev.map(r => {
+      if (r.planId !== planId) return r;
+      const pct = r.costPrice > 0 ? ((val - r.costPrice) / r.costPrice) * 100 : 0;
+      return { ...r, sellingPrice: val, markupPct: Math.round(pct * 10) / 10, dirty: true };
+    }));
+  }, []);
 
-      // ── TODO: swap fetch() base URL to production API when ready ─────────
+  // ── Apply global markup to all visible rows ───────────────────────────────────
+  const applyGlobalMarkup = useCallback(() => {
+    const pct = parseFloat(globalMarkup);
+    if (isNaN(pct) || pct < 0) { toast.error('Enter a valid markup %'); return; }
+    const tabOk = (r: PricingRow) => activeTab === 'all' || r.serviceId === activeTab;
+    const q     = search.toLowerCase();
+    const txtOk = (r: PricingRow) => !q || r.name.toLowerCase().includes(q) || r.planId.includes(q);
+    let count = 0;
+    setRows(prev => prev.map(r => {
+      if (!tabOk(r) || !txtOk(r)) return r;
+      count++;
+      return { ...r, markupPct: pct, sellingPrice: calcSelling(r.costPrice, pct), dirty: true };
+    }));
+    toast.success(`Applied ${pct}% markup to visible plans`);
+  }, [globalMarkup, activeTab, search]);
+
+  // ── Publish single plan to services_config ────────────────────────────────────
+  const publishRow = useCallback(async (planId: string) => {
+    const row = rows.find(r => r.planId === planId);
+    if (!row) return;
+    if (row.sellingPrice < row.costPrice) { toast.error('Selling price below cost!'); return; }
+
+    setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
+    try {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const svc = SERVICE_MAP[row.serviceId];
       const payload = {
-        id:              String(row.plan.id),
-        name:            row.plan.name,
-        network:         NETWORKS[row.plan.network]?.name || String(row.plan.network),
-        type:            'data',
-        price:           selling,              // admin selling price = what users pay
-        cost_price:      row.plan.price,       // Mozosubs cost (stored for margin tracking)
-        retail_price:    selling,
-        selling_price:   selling,
-        plan_category:   row.plan.planType || 'GIFTING',
-        validity_days:   row.plan.validity || '',
-        peyflex_variation_id: String(row.plan.id),
+        id:               row.planId,
+        name:             row.name,
+        network:          row.network,
+        service:          row.serviceId,
+        type:             'data',
+        price:            row.sellingPrice,
+        cost_price:       row.costPrice,
+        selling_price:    row.sellingPrice,
+        retail_price:     row.sellingPrice,
+        plan_category:    deriveCategory(row.serviceId),
+        validity_days:    parseValidity(row.name),
+        mozosubz_plan_id: row.planId,
+        mozosubz_service: row.serviceId,
       };
 
       const res = await fetch('/api/admin/create-plan', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify(payload),
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err?.error || `Server error ${res.status}`);
+        throw new Error(err?.error || `Error ${res.status}`);
       }
-
-      setRows(prev => prev.map(r => r.plan.id === planId ? { ...r, saved: true, saving: false } : r));
-      toast.success(`Saved price for "${row.plan.name}"`);
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saved: true, saving: false, dirty: false } : r));
+      toast.success(`Published "${row.name}"`);
     } catch (err: any) {
-      setRows(prev => prev.map(r => r.plan.id === planId ? { ...r, saving: false } : r));
-      toast.error(err.message || 'Failed to save');
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
+      toast.error(err.message);
     }
   }, [rows]);
 
-  // ── Save ALL visible rows ────────────────────────────────────────────────────
-  const saveAll = useCallback(async () => {
-    setSavingAll(true);
+  // ── Publish ALL visible dirty rows ────────────────────────────────────────────
+  const publishAll = useCallback(async () => {
+    const tabOk2 = (r: PricingRow) => activeTab === 'all' || r.serviceId === activeTab;
+    const q2     = search.toLowerCase();
+    const txtOk2 = (r: PricingRow) => !q2 || r.name.toLowerCase().includes(q2) || r.planId.includes(q2);
+    const targets = rows.filter(r => (r.dirty || !r.saved) && tabOk2(r) && txtOk2(r));
+    if (!targets.length) { toast('Nothing new to publish'); return; }
+    setPublishing(true);
     let ok = 0, fail = 0;
-    for (const row of filtered) {
-      const selling = parseFloat(row.sellingPrice);
-      if (isNaN(selling) || selling <= 0 || selling < row.plan.price) { fail++; continue; }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { toast.error('Not authenticated'); setPublishing(false); return; }
+
+    for (const row of targets) {
+      if (row.sellingPrice < row.costPrice) { fail++; continue; }
       try {
-        const { data: { session } } = await supabase.auth.getSession();
         const payload = {
-          id:            String(row.plan.id),
-          name:          row.plan.name,
-          network:       NETWORKS[row.plan.network]?.name || String(row.plan.network),
-          type:          'data',
-          price:         selling,
-          cost_price:    row.plan.price,
-          retail_price:  selling,
-          selling_price: selling,
-          plan_category: row.plan.planType || 'GIFTING',
-          validity_days: row.plan.validity || '',
-          peyflex_variation_id: String(row.plan.id),
+          id: row.planId, name: row.name, network: row.network, service: row.serviceId, type: 'data',
+          price: row.sellingPrice, cost_price: row.costPrice, selling_price: row.sellingPrice,
+          retail_price: row.sellingPrice, plan_category: deriveCategory(row.serviceId),
+          validity_days: parseValidity(row.name), mozosubz_plan_id: row.planId, mozosubz_service: row.serviceId,
         };
         const res = await fetch('/api/admin/create-plan', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
           body: JSON.stringify(payload),
         });
-        if (res.ok) {
-          ok++;
-          setRows(prev => prev.map(r => r.plan.id === row.plan.id ? { ...r, saved: true } : r));
-        } else { fail++; }
+        if (res.ok) { ok++; setRows(prev => prev.map(r => r.planId === row.planId ? { ...r, saved: true, dirty: false } : r)); }
+        else fail++;
       } catch { fail++; }
     }
-    setSavingAll(false);
-    if (ok > 0) toast.success(`Published ${ok} plan${ok > 1 ? 's' : ''} to user store`);
-    if (fail > 0) toast.error(`${fail} plan${fail > 1 ? 's' : ''} failed`);
-  }, [rows]);  // filtered is derived below, passed in via saveAll closure
-
-  // ── Apply bulk markup ────────────────────────────────────────────────────────
-  const applyBulk = useCallback(() => {
-    const pct = parseFloat(bulkPct);
-    if (isNaN(pct) || pct < 0) { toast.error('Enter a valid markup %'); return; }
-    setRows(prev => applyBulkMarkup(prev, pct));
-    toast.success(`Applied ${pct}% markup to all plans`);
-  }, [bulkPct, rows]);
+    setPublishing(false);
+    if (ok) toast.success(`✅ Published ${ok} plan${ok > 1 ? 's' : ''} to your store`);
+    if (fail) toast.error(`${fail} failed — check selling prices are above cost`);
+  }, [rows, activeTab, search]);
 
   // ── Filtered view ─────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     return rows.filter(r => {
-      const matchNet  = netFilter === 'ALL' || r.plan.network === netFilter;
-      const matchType = typeFilter === 'ALL' || (r.plan.planType?.toUpperCase() === typeFilter);
-      const matchQ    = !search ||
-        r.plan.name.toLowerCase().includes(search.toLowerCase()) ||
-        (r.plan.validity || '').toLowerCase().includes(search.toLowerCase());
-      return matchNet && matchType && matchQ;
+      const tabMatch = activeTab === 'all' || r.serviceId === activeTab;
+      const q        = search.toLowerCase();
+      const txtMatch = !q || r.name.toLowerCase().includes(q) || r.planId.includes(q) || r.network.toLowerCase().includes(q);
+      return tabMatch && txtMatch;
     });
-  }, [rows, netFilter, typeFilter, search]);
+  }, [rows, activeTab, search]);
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
-  const stats = useMemo(() => ({
-    total:     rows.length,
-    saved:     rows.filter(r => r.saved).length,
-    unsaved:   rows.filter(r => !r.saved).length,
-    avgMarkup: rows.length
-      ? rows.reduce((a, r) => a + r.markupPct, 0) / rows.length
-      : 0,
-  }), [rows]);
+  // ── Stats ─────────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const src = activeTab === 'all' ? rows : rows.filter(r => r.serviceId === activeTab);
+    const published  = src.filter(r => r.saved && !r.dirty).length;
+    const unpublished = src.filter(r => !r.saved || r.dirty).length;
+    const avgMarkup  = src.length ? src.reduce((a, r) => a + r.markupPct, 0) / src.length : 0;
+    const revenue    = src.reduce((a, r) => a + r.sellingPrice, 0);
+    return { total: src.length, published, unpublished, avgMarkup, revenue };
+  }, [rows, activeTab]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Network group counts for tabs ─────────────────────────────────────────────
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: rows.length };
+    MOZOSUBZ_SERVICES.forEach(s => { counts[s.id] = rows.filter(r => r.serviceId === s.id).length; });
+    return counts;
+  }, [rows]);
+
   return (
-    <div className="space-y-6">
-      {/* ── Header ── */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <DollarSign size={22} className="text-emerald-400" />
-            Pricing Manager
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Pull live Mozosubs cost prices → set your selling prices → publish to user store.
-            <span className="ml-1 text-amber-400 font-medium">Not wired to live backend yet.</span>
-          </p>
+    <div className="space-y-6 text-slate-100">
+
+      {/* ── Hero Header ── */}
+      <div className="relative overflow-hidden rounded-2xl border border-slate-700/50 bg-gradient-to-br from-slate-900 via-indigo-950/30 to-slate-900 p-6">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(99,102,241,0.12),transparent_60%)]" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20 border border-indigo-500/30">
+                <DollarSign size={20} className="text-indigo-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-white">Plan Pricing Manager</h2>
+                <p className="text-xs text-slate-400">Mozosubz API → markup → publish to user store</p>
+              </div>
+            </div>
+            {lastFetched && (
+              <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Last synced: {lastFetched.toLocaleTimeString('en-NG')}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={fetchPlans}
+              disabled={loading}
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition
+                         bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+              {loading ? 'Fetching…' : fetched ? 'Sync Prices' : 'Fetch Plans'}
+            </button>
+            {fetched && stats.unpublished > 0 && (
+              <button
+                onClick={publishAll}
+                disabled={publishing}
+                className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition
+                           bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20
+                           disabled:opacity-50"
+              >
+                {publishing ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
+                {publishing ? 'Publishing…' : `Publish ${stats.unpublished}`}
+              </button>
+            )}
+          </div>
         </div>
-        <button
-          onClick={fetchPlans}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500
-                     text-white text-sm font-semibold transition disabled:opacity-50"
-        >
-          {loading
-            ? <Loader2 size={16} className="animate-spin" />
-            : <RefreshCw size={16} />}
-          {fetched ? 'Refresh from Mozosubs' : 'Load Mozosubs Prices'}
-        </button>
       </div>
 
-      {/* ── Stats bar ── */}
+      {/* ── Stat Cards ── */}
       {fetched && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Total Plans',    value: stats.total,                            icon: Package,    color: 'text-indigo-300' },
-            { label: 'Published',      value: stats.saved,                            icon: CheckCircle,color: 'text-emerald-400'},
-            { label: 'Unpublished',    value: stats.unsaved,                          icon: AlertTriangle, color: 'text-amber-400'},
-            { label: 'Avg Markup',     value: stats.avgMarkup.toFixed(1) + '%',       icon: TrendingUp, color: 'text-sky-400'    },
-          ].map(s => (
-            <div key={s.label}
-              className="bg-slate-800/60 rounded-xl p-3 border border-slate-700/40 flex items-center gap-3">
-              <s.icon size={18} className={s.color} />
-              <div>
-                <p className="text-xs text-slate-400">{s.label}</p>
-                <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
+            { label: 'Total Plans',    value: stats.total,                     icon: BarChart2,   color: 'text-indigo-400',  ring: 'ring-indigo-500/20' },
+            { label: 'Live in Store',  value: stats.published,                 icon: CheckCircle, color: 'text-emerald-400', ring: 'ring-emerald-500/20' },
+            { label: 'Pending Push',   value: stats.unpublished,               icon: AlertTriangle,color:'text-amber-400',   ring: 'ring-amber-500/20' },
+            { label: 'Avg Markup',     value: stats.avgMarkup.toFixed(1) + '%',icon: Percent,     color: 'text-sky-400',     ring: 'ring-sky-500/20' },
+          ].map(({ label, value, icon: Icon, color, ring }) => (
+            <div key={label} className={`rounded-xl border border-slate-700/50 bg-slate-900/60 p-4 ring-1 ${ring}`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-slate-400 font-medium">{label}</span>
+                <div className={`h-7 w-7 rounded-lg flex items-center justify-center bg-slate-800`}>
+                  <Icon size={13} className={color} />
+                </div>
               </div>
+              <span className={`text-2xl font-bold ${color}`}>{value}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* ── Bulk markup + filters ── */}
+      {/* ── Global Markup Bar ── */}
       {fetched && (
-        <div className="bg-slate-800/50 rounded-xl border border-slate-700/40 p-4 space-y-3">
-          {/* Bulk markup */}
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="text-xs text-slate-400 font-medium block mb-1">
-                Bulk Markup %
-              </label>
-              <div className="flex gap-2">
+        <div className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-700/50 bg-slate-900/50 p-4">
+          <div>
+            <label className="block text-xs text-slate-400 font-medium mb-1.5">Global Markup %</label>
+            <div className="flex items-center gap-2">
+              <div className="relative">
                 <input
                   type="number" min={0} step={0.5}
-                  value={bulkPct}
-                  onChange={e => setBulkPct(e.target.value)}
-                  placeholder="e.g. 5"
-                  className="w-28 bg-slate-700 text-white text-sm rounded-lg px-3 py-2
-                             border border-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  value={globalMarkup}
+                  onChange={e => setGlobalMarkup(e.target.value)}
+                  className="w-20 bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 pr-6 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <button
-                  onClick={applyBulk}
-                  className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm
-                             rounded-lg font-medium transition"
-                >
-                  Apply to All
-                </button>
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
+              </div>
+              <button
+                onClick={applyGlobalMarkup}
+                className="px-4 py-2 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-sm font-medium transition border border-indigo-500/30"
+              >
+                Apply to {filtered.length} plans
+              </button>
+              {/* Quick presets */}
+              <div className="hidden sm:flex items-center gap-1.5 ml-2">
+                <span className="text-xs text-slate-500 mr-1">Quick:</span>
+                {[5, 8, 10, 15, 20].map(p => (
+                  <button
+                    key={p}
+                    onClick={() => { setGlobalMarkup(String(p)); }}
+                    className={`px-2 py-1 rounded-md text-xs font-semibold border transition ${
+                      globalMarkup === String(p)
+                        ? 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {p}%
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="flex gap-2 items-end">
-              {[5, 8, 10, 15].map(p => (
-                <button key={p}
-                  onClick={() => { setBulkPct(String(p)); setRows(prev => applyBulkMarkup(prev, p)); }}
-                  className="px-3 py-2 bg-indigo-700/40 hover:bg-indigo-700/70 text-indigo-300
-                             text-xs rounded-lg font-medium transition"
-                >
-                  +{p}%
-                </button>
-              ))}
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onClick={() => setShowCost(v => !v)}
-                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition"
-              >
-                {showCost ? <EyeOff size={14} /> : <Eye size={14} />}
-                {showCost ? 'Hide' : 'Show'} cost price
-              </button>
-            </div>
           </div>
-
-          {/* Filters row */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-3 ml-auto">
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search plans…"
-                className="pl-8 pr-3 py-2 bg-slate-700 text-white text-sm rounded-lg
-                           border border-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-44"
+                className="pl-8 pr-3 py-2 bg-slate-800 border border-slate-600 text-white text-sm rounded-lg w-48 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:w-56 transition-all"
               />
             </div>
-            {/* Network filter */}
-            <div className="flex gap-1">
-              {(['ALL', 1, 2, 3, 4] as const).map(n => (
-                <button key={n}
-                  onClick={() => setNetFilter(n)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                    netFilter === n
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {n === 'ALL' ? 'All Networks' : NETWORKS[n]?.name}
-                </button>
-              ))}
-            </div>
-            {/* Plan type filter */}
-            <div className="flex gap-1">
-              {PLAN_TYPE_OPTIONS.map(t => (
-                <button key={t}
-                  onClick={() => setTypeFilter(t)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                    typeFilter === t
-                      ? 'bg-emerald-700 text-white'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => setShowCost(v => !v)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-slate-400 hover:text-white text-xs transition"
+            >
+              {showCost ? <EyeOff size={13} /> : <Eye size={13} />}
+              <span>{showCost ? 'Hide cost' : 'Show cost'}</span>
+            </button>
           </div>
         </div>
       )}
 
-      {/* ── Publish all button ── */}
-      {fetched && stats.unsaved > 0 && (
-        <div className="flex justify-end">
+      {/* ── Service Tabs ── */}
+      {fetched && (
+        <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 scrollbar-none">
+          {/* All tab */}
           <button
-            onClick={saveAll}
-            disabled={savingAll}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500
-                       text-white text-sm font-bold transition disabled:opacity-50"
+            onClick={() => setActiveTab('all')}
+            className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+              activeTab === 'all'
+                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/20'
+                : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500'
+            }`}
           >
-            {savingAll ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            Publish All ({stats.unsaved}) to User Store
+            <Globe size={12} />
+            All Services
+            <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-bold ${activeTab === 'all' ? 'bg-white/20 text-white' : 'bg-slate-700 text-slate-300'}`}>
+              {tabCounts.all}
+            </span>
           </button>
+          {MOZOSUBZ_SERVICES.map(svc => (
+            <button
+              key={svc.id}
+              onClick={() => setActiveTab(svc.id)}
+              className={`flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                activeTab === svc.id
+                  ? 'text-white shadow-lg'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-white'
+              }`}
+              style={activeTab === svc.id ? { background: svc.bg, borderColor: svc.border, color: svc.color, boxShadow: `0 4px 15px ${svc.color}20` } : { borderColor: 'rgba(51,65,85,0.6)' }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: activeTab === svc.id ? svc.color : '#475569' }} />
+              {svc.label}
+              {tabCounts[svc.id] > 0 && (
+                <span className="text-[10px] rounded-full px-1.5 py-0.5 font-bold bg-black/20">
+                  {tabCounts[svc.id]}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* ── Empty state ── */}
+      {/* ── Empty / Loading States ── */}
       {!fetched && !loading && (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <Package size={48} className="text-slate-600 mb-4" />
-          <p className="text-slate-400 text-sm max-w-xs">
-            Click <strong className="text-white">Load Mozosubs Prices</strong> to pull the latest
-            cost prices from the Mozosubs API. Then set your selling prices and publish.
+        <div className="flex flex-col items-center justify-center py-24 rounded-2xl border border-dashed border-slate-700/50">
+          <div className="h-16 w-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4">
+            <TrendingUp size={28} className="text-indigo-400" />
+          </div>
+          <h3 className="text-white font-semibold mb-1">No plans loaded yet</h3>
+          <p className="text-slate-400 text-sm text-center max-w-xs leading-relaxed">
+            Click <strong>Fetch Plans</strong> to pull live prices from Mozosubz, set your margins, and publish to your user store.
+          </p>
+          <p className="text-slate-500 text-xs mt-3 text-center max-w-xs">
+            Requires <code className="bg-slate-800 px-1 rounded text-slate-300">MOZOSUBS_API_KEY</code> in your environment and plans priced in your Mozosubz dashboard.
           </p>
         </div>
       )}
 
       {loading && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 size={32} className="animate-spin text-indigo-400" />
-          <span className="ml-3 text-slate-400">Fetching from Mozosubs API…</span>
+        <div className="flex flex-col items-center justify-center py-24 rounded-2xl border border-slate-700/50">
+          <div className="relative mb-4">
+            <div className="h-16 w-16 rounded-full border-2 border-indigo-600/30 border-t-indigo-500 animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Globe size={18} className="text-indigo-400" />
+            </div>
+          </div>
+          <p className="text-slate-300 font-medium">Fetching all 9 services from Mozosubz…</p>
+          <p className="text-slate-500 text-xs mt-1">MTN · GLO · Airtel · 9mobile</p>
         </div>
       )}
 
-      {/* ── Plans table ── */}
+      {/* ── Plan Table ── */}
       {fetched && !loading && (
-        <div className="overflow-x-auto rounded-xl border border-slate-700/40">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-800/80 text-slate-400 text-xs uppercase tracking-wide">
-                <th className="px-4 py-3 text-left">Plan</th>
-                <th className="px-4 py-3 text-left">Network</th>
-                <th className="px-4 py-3 text-left">Type</th>
-                <th className="px-4 py-3 text-left">Validity</th>
-                {showCost && <th className="px-4 py-3 text-right">Cost Price</th>}
-                <th className="px-4 py-3 text-right">Selling Price (₦)</th>
-                <th className="px-4 py-3 text-right">Markup</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-center">Save</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-700/30">
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="py-10 text-center text-slate-500">
-                    No plans match your filters.
-                  </td>
-                </tr>
-              )}
-              {filtered.map(row => {
-                const selling = parseFloat(row.sellingPrice) || 0;
-                const belowCost = selling > 0 && selling < row.plan.price;
-                const net = NETWORKS[row.plan.network];
+        <div className="rounded-2xl border border-slate-700/50 overflow-hidden">
+          {/* Table header */}
+          <div className="grid items-center bg-slate-900 border-b border-slate-700/50 px-5 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-semibold"
+               style={{ gridTemplateColumns: showCost ? '2fr 100px 80px 80px 110px 110px 80px 80px' : '2fr 100px 80px 110px 110px 80px 80px' }}>
+            <span>Plan</span>
+            <span>Network</span>
+            <span>Type</span>
+            {showCost && <span className="text-right">Cost ₦</span>}
+            <span className="text-right">Markup %</span>
+            <span className="text-right">Selling ₦</span>
+            <span className="text-center">Status</span>
+            <span className="text-center">Action</span>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="py-16 text-center text-slate-500 bg-slate-900/30">
+              No plans found for this selection. Try a different tab or check your Mozosubz dashboard.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800/50">
+              {filtered.map((row) => {
+                const svc         = SERVICE_MAP[row.serviceId];
+                const isBelowCost = row.sellingPrice < row.costPrice;
+                const profit      = row.sellingPrice - row.costPrice;
+                const isGood      = row.markupPct >= 5;
+
                 return (
-                  <tr key={row.plan.id}
-                    className="bg-slate-900/40 hover:bg-slate-800/60 transition">
-                    <td className="px-4 py-3 text-white font-medium">{row.plan.name}</td>
-                    <td className={`px-4 py-3 font-semibold ${net?.color || 'text-slate-300'}`}>
-                      {net?.name || row.plan.network}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        row.plan.planType === 'SME'       ? 'bg-blue-800/50 text-blue-300'    :
-                        row.plan.planType === 'GIFTING'   ? 'bg-purple-800/50 text-purple-300' :
-                        row.plan.planType === 'CG'        ? 'bg-orange-800/50 text-orange-300' :
-                        'bg-slate-700/50 text-slate-300'
-                      }`}>
-                        {row.plan.planType || 'GIFTING'}
+                  <div
+                    key={row.planId}
+                    className="grid items-center px-5 py-4 bg-slate-900/20 hover:bg-slate-900/60 transition group"
+                    style={{ gridTemplateColumns: showCost ? '2fr 100px 80px 80px 110px 110px 80px 80px' : '2fr 100px 80px 110px 110px 80px 80px' }}
+                  >
+                    {/* Plan name */}
+                    <div>
+                      <p className="text-sm font-medium text-white group-hover:text-indigo-200 transition">{row.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-slate-500">ID: {row.planId}</span>
+                        <span className="text-[10px] text-slate-600">·</span>
+                        <span className="text-[10px] text-slate-500">{parseValidity(row.name)}</span>
+                        {row.dirty && <span className="text-[9px] text-amber-400 font-semibold bg-amber-400/10 px-1.5 py-0.5 rounded">EDITED</span>}
+                      </div>
+                    </div>
+
+                    {/* Network badge */}
+                    <div>
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold uppercase border"
+                        style={{ color: svc?.color, backgroundColor: svc?.bg, borderColor: svc?.border }}
+                      >
+                        <span className="w-1 h-1 rounded-full" style={{ backgroundColor: svc?.color }} />
+                        {row.network}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300">{row.plan.validity || '—'}</td>
+                    </div>
+
+                    {/* Type */}
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-medium">{deriveCategory(row.serviceId)}</span>
+                    </div>
+
+                    {/* Cost price */}
                     {showCost && (
-                      <td className="px-4 py-3 text-right text-slate-400">
-                        {fmt(row.plan.price)}
-                      </td>
+                      <div className="text-right">
+                        <span className="text-sm font-mono text-slate-400">{fmt(row.costPrice)}</span>
+                      </div>
                     )}
-                    {/* Editable selling price */}
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="text-slate-400 text-xs">₦</span>
+
+                    {/* Markup % input */}
+                    <div className="text-right">
+                      <div className="relative inline-flex items-center">
                         <input
-                          type="number"
-                          min={row.plan.price}
-                          step={1}
-                          value={row.sellingPrice}
-                          onChange={e => updateSellingPrice(row.plan.id, e.target.value)}
-                          className={`w-24 text-right bg-slate-700 text-white text-sm rounded-lg px-2 py-1
-                                     border focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
-                            belowCost ? 'border-red-500' : 'border-slate-600'
+                          type="number" min={0} step={0.5}
+                          value={row.markupPct}
+                          onChange={e => updateMarkup(row.planId, parseFloat(e.target.value) || 0)}
+                          className={`w-16 text-right bg-slate-800 text-sm rounded-lg px-2 py-1.5 border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold ${
+                            isGood ? 'border-slate-600 text-emerald-400' : 'border-orange-500/50 text-orange-400'
                           }`}
                         />
+                        <span className="absolute -right-4 text-slate-500 text-xs">%</span>
                       </div>
-                      {belowCost && (
-                        <p className="text-red-400 text-xs mt-0.5 text-right">Below cost!</p>
-                      )}
-                    </td>
-                    {/* Markup */}
-                    <td className="px-4 py-3 text-right">
-                      <span className={`font-semibold ${
-                        row.markup >= 0 ? 'text-emerald-400' : 'text-red-400'
-                      }`}>
-                        {row.markupPct.toFixed(1)}%
-                      </span>
-                      <p className="text-slate-500 text-xs">{fmt(row.markup)}</p>
-                    </td>
+                    </div>
+
+                    {/* Selling price input */}
+                    <div className="text-right">
+                      <div className="flex flex-col items-end">
+                        <div className="relative inline-flex items-center">
+                          <span className="absolute left-2 text-slate-500 text-xs">₦</span>
+                          <input
+                            type="number" min={row.costPrice}
+                            value={row.sellingPrice}
+                            onChange={e => updateSelling(row.planId, parseInt(e.target.value) || 0)}
+                            className={`w-20 text-right pl-5 pr-2 py-1.5 bg-slate-800 text-sm rounded-lg border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold ${
+                              isBelowCost ? 'border-red-500 text-red-400' : 'border-slate-600 text-white'
+                            }`}
+                          />
+                        </div>
+                        {!isBelowCost && profit > 0 && (
+                          <span className="text-[10px] text-emerald-500 mt-0.5">+{fmt(profit)}</span>
+                        )}
+                        {isBelowCost && (
+                          <span className="text-[10px] text-red-400 font-semibold mt-0.5">Below cost!</span>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Status */}
-                    <td className="px-4 py-3 text-center">
-                      {row.saved
-                        ? <CheckCircle size={16} className="text-emerald-400 inline" />
-                        : <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />}
-                    </td>
-                    {/* Save button */}
-                    <td className="px-4 py-3 text-center">
+                    <div className="text-center">
+                      {row.saving ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-indigo-400">
+                          <Loader2 size={10} className="animate-spin" /> Saving
+                        </span>
+                      ) : row.saved && !row.dirty ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                          <CheckCircle size={9} /> Live
+                        </span>
+                      ) : row.dirty ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold">
+                          Edited
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-700/50 border border-slate-600 text-slate-400 text-[10px]">
+                          Draft
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Action */}
+                    <div className="text-center">
                       <button
-                        onClick={() => saveRow(row.plan.id)}
-                        disabled={row.saving || belowCost}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500
-                                   text-white text-xs font-semibold transition disabled:opacity-40
-                                   flex items-center gap-1 mx-auto"
+                        onClick={() => publishRow(row.planId)}
+                        disabled={row.saving || isBelowCost}
+                        className={`flex items-center gap-1 mx-auto px-3 py-1.5 rounded-lg text-xs font-semibold transition disabled:opacity-40 ${
+                          row.saved && !row.dirty
+                            ? 'bg-slate-800 border border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-white'
+                            : 'bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500/30'
+                        }`}
                       >
-                        {row.saving
-                          ? <Loader2 size={12} className="animate-spin" />
-                          : <Save size={12} />}
-                        Save
+                        {row.saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                        {row.saved && !row.dirty ? 'Re-save' : 'Publish'}
                       </button>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          {/* Table footer summary */}
+          {filtered.length > 0 && (
+            <div className="flex items-center justify-between px-5 py-3 bg-slate-900 border-t border-slate-700/50 text-xs text-slate-500">
+              <span>Showing {filtered.length} of {rows.length} plans</span>
+              <span>
+                {stats.published} live · {stats.unpublished} pending · avg {stats.avgMarkup.toFixed(1)}% margin
+              </span>
+            </div>
+          )}
         </div>
       )}
 
-      {/* ── Wire-up reminder ── */}
-      <div className="flex items-start gap-3 bg-amber-900/20 border border-amber-700/30
-                      rounded-xl p-4 text-xs text-amber-300">
-        <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-        <div>
-          <p className="font-semibold mb-1">Backend wiring pending</p>
-          <p className="text-amber-400/80">
-            This UI posts to <code>/api/admin/generate-plans</code> (fetch) and{' '}
-            <code>/api/admin/create-plan</code> (save). The fetch endpoint returns the full
-            Mozosubs plan list. The save endpoint writes to <code>services_config</code> in
-            Supabase — users then see only the <strong>selling_price</strong> column from
-            that table, never the cost_price.
-          </p>
+      {/* ── Info banner ── */}
+      {fetched && (
+        <div className="flex items-start gap-3 rounded-xl border border-slate-700/40 bg-slate-900/30 p-4 text-xs text-slate-400">
+          <Settings size={15} className="shrink-0 mt-0.5 text-slate-500" />
+          <div>
+            <span className="font-semibold text-slate-300">How this works: </span>
+            Plans are fetched live from Mozosubz. Set your markup % per plan (or apply globally), then click
+            {' '}<strong className="text-white">Publish</strong> — the plan goes into <code className="bg-slate-800 px-1 rounded">services_config</code> and
+            instantly appears in your user data store at your set price. Users always see the selling price, never the cost.
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
