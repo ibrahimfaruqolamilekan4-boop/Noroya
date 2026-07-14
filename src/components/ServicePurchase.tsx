@@ -313,9 +313,9 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         }
       } else {
         const payload = {
-          network: network.toUpperCase(),
+          network:      network.toUpperCase(),
           phone_number: phoneNumber,
-          amount: Number(airtimeAmount),
+          amount:       Number(airtimeAmount),
         };
 
         const response = await fetch('/api/buy-airtime', {
@@ -325,13 +325,16 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         });
 
         const resData = await response.json();
-        if (response.ok && resData.status === 'success') {
-          setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
+        if (response.ok && (resData.status === 'success' || resData.success === true)) {
+          setCreatedTransaction(resData.transaction || {
+            amount:    Number(airtimeAmount),
+            reference: resData.reference || 'N/A',
+          });
           setPurchaseStatus('success');
-          toast.success('Airtime purchase initiated successfully!');
+          toast.success(`₦${airtimeAmount} airtime sent successfully!`);
         } else {
           setPurchaseStatus('failed');
-          toast.error(resData.message || 'Airtime purchase failed. Please try again.');
+          toast.error(resData.error || resData.message || 'Airtime purchase failed. Please try again.');
         }
       }
     } catch (err: any) {

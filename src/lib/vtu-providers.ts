@@ -83,7 +83,14 @@ function bigiNetworkId(network: string): number {
 const mozosubzProvider: VtuProvider = {
   name: 'mozosubz',
 
-  resolveApiKey: () => resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_api_key'),
+  resolveApiKey: async () => {
+    // Support all env var names the project has historically used
+    return process.env.MOZOSUBS_CONNECT_KEY
+        || process.env.MOZOSUBZ_CONNECT_KEY
+        || process.env.MOZOSUBZ_API_KEY
+        || await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_api_key')
+        || '';
+  },
 
   async purchase(p: PurchaseParams): Promise<PurchaseResult> {
     const base = process.env.MOZOSUBZ_BASE_URL || 'https://mozosubz.xyz/api/v1';

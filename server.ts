@@ -2171,220 +2171,135 @@ async function startServer() {
   // POST route specifically for handling Airtime VTU Purchases via Bigisub
   app.post("/api/buy-airtime", async (req, res) => {
     try {
-      const { network, phone_number, amount } = req.body;
-
-      if (!network || !phone_number || !amount) {
-        return res.status(400).json({ error: "Missing required parameters: network, phone_number, and amount are required." });
-      }
-
+      const { network, phone_number, phone, amount } = req.body;
+      const finalPhone  = phone_number || phone;
       const parsedAmount = Number(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        return res.status(400).json({ error: "Amount must be a positive number." });
+
+      if (!network || !finalPhone || !parsedAmount) {
+        return res.status(400).json({ error: "Missing required fields: network, phone_number, amount." });
+      }
+      if (isNaN(parsedAmount) || parsedAmount < 50) {
+        return res.status(400).json({ error: "Amount must be a number and at least ₦50." });
       }
 
-      // Securely fetch user context and profile wallet balance
-      const { userId: resolvedUserId, pgUuid, balance: currentBalance, profile } = await getAuthenticatedUserBalance(req);
+      // ── Auth: require a real verified session ──────────────────
+      let verifiedUserId: string;
+      let currentBalance: number;
+      let pgUuid: string;
+      try {
+        const auth = await getAuthenticatedUserBalance(req);
+        verifiedUserId = auth.userId;
+        currentBalance = auth.balance;
+        pgUuid = auth.pgUuid || (verifiedUserId ? ensureUUID(verifiedUserId) : '');
+      } catch (authErr: any) {
+        return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
+      }
 
-      // Fetch matching airtime service config from services_config
-      const { data: service, error: serviceErr } = await supabase
+      if (!pgUuid) return res.status(400).json({ error: "Invalid user ID." });
+
+      // ── Pricing: look up airtime config from services_config ──
+      const { data: service } = await supabase
         .from('services_config')
-        .select('*')
+        .select('selling_price, cost_price, provider')
         .eq('service_type', 'airtime')
         .ilike('provider_or_network', String(network).trim())
         .maybeSingle();
 
-      if (serviceErr) {
-        console.error("[Buy Airtime Service Query Error]:", serviceErr);
-        return res.status(500).json({ error: `Database error lookup: ${serviceErr.message}` });
-      }
-
-      // Mozosubz charges face value for airtime (no markup ratio)
-      // service config lookup is optional — used only if admin has set a custom ratio
-      const sellingPercent = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
-      const costPercent    = service?.cost_price    && service.cost_price > 1    ? Number(service.cost_price)    : 100;
-      const chargeAmount   = parsedAmount * (sellingPercent / 100);
-      const ratio          = sellingPercent / (costPercent || 100);
+      // selling_price stored as percentage (e.g. 98 = charge 98% of face value)
+      const sellingPct  = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
+      const chargeAmount = parseFloat((parsedAmount * (sellingPct / 100)).toFixed(2));
 
       if (currentBalance < chargeAmount) {
         return res.status(400).json({
-          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but currently have ₦${currentBalance.toFixed(2)}.`
+          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but have ₦${currentBalance.toFixed(2)}.`
         });
       }
 
-      const transactionId = `mozo_airtime_${Date.now()}`;
-      const localReference = `TRX-AIRTIME-${Date.now()}`;
+      // ── Pick provider (from services_config or fallback mozosubz) ──
+      const chosenProvider = service?.provider || 'mozosubz';
+      const provider = getProvider(chosenProvider);
+      if (!provider) {
+        return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
+      }
+      const apiKey = await provider.resolveApiKey();
+      if (!apiKey || apiKey.length < 6) {
+        return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured.` });
+      }
 
-      // Insert a 'pending' transaction into the 'transactions' table in Supabase and Firestore
+      // ── Log pending transaction (single insert) ───────────────
+      const localRef = `TRX-AIRTIME-${Date.now()}`;
+      const txId     = `airtime_${Date.now()}`;
       try {
         await supabase.from('transactions').insert({
-          id: transactionId,
-          userId: pgUuid,
-          user_id: pgUuid,
+          id: txId, user_id: pgUuid, userId: pgUuid,
+          type: 'airtime', amount: chargeAmount, status: 'pending',
+          description: `Airtime VTU: ₦${parsedAmount} ${network} → ${finalPhone}`,
+          reference: localRef, createdAt: new Date().toISOString()
+        });
+      } catch (_) { /* non-fatal */ }
+
+      // ── Call the provider ─────────────────────────────────────
+      let purchaseResult;
+      try {
+        purchaseResult = await provider.purchase({
           type: 'airtime',
-          amount: chargeAmount,
-          status: 'pending',
-          description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
-          reference: localReference,
-          createdAt: new Date().toISOString()
+          network,
+          phone: finalPhone,
+          amount: parsedAmount,   // face value — provider charges what they charge
+          planId: 'airtime',
+          apiKey,
         });
-      } catch (txErr: any) {
-        console.warn("[Supabase Airtime pending transaction logging skipped]:", txErr.message || txErr);
+      } catch (provErr: any) {
+        const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
+        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data });
+        await supabase.from('transactions').update({ status: 'failed' }).eq('id', txId);
+        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}` });
       }
 
+      if (!purchaseResult.success) {
+        const errMsg = purchaseResult.error || 'Gateway rejected the transaction.';
+        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw });
+        await supabase.from('transactions').update({ status: 'failed' }).eq('id', txId);
+        return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. No funds were deducted.` });
+      }
+
+      // ── Deduct balance (only on success) ─────────────────────
+      const newBalance = parseFloat((currentBalance - chargeAmount).toFixed(2));
+      const { error: balErr } = await supabase
+        .from('profiles')
+        .update({ wallet_balance: newBalance, balance: newBalance, available_balance: newBalance })
+        .eq('id', pgUuid);
+
+      if (balErr) {
+        console.error("[Airtime balance deduct error]:", balErr);
+        return res.status(500).json({
+          error: "Purchase succeeded at gateway but balance update failed. Please contact support.",
+          reference: purchaseResult.reference
+        });
+      }
+
+      const refCode = purchaseResult.reference || purchaseResult.raw?.transaction_id || localRef;
+
+      // ── Mark transaction success ──────────────────────────────
       try {
-          await supabase.from('transactions').insert({
-              id: transactionId,
-              userId: resolvedUserId,
-              type: 'airtime',
-              amount: chargeAmount,
-              status: 'pending',
-              description: `Airtime VTU: ₦${parsedAmount} ${network} to ${phone_number}`,
-              reference: localReference,
-              createdAt: new Date().toISOString()
-            });
-      } catch (e) {}
+        await supabase.from('transactions').update({
+          status: 'success', reference: refCode, api_reference: refCode
+        }).eq('id', txId);
+      } catch (_) { /* non-fatal */ }
 
-      const CONNECT_KEY = await resolveMozosubzApiKey();
-      const MOZO_BASE   = "https://mozosubz.xyz/api/v1";
+      return res.status(200).json({
+        status:  "success",
+        success: true,
+        message: `₦${parsedAmount} airtime sent to ${finalPhone} successfully.`,
+        provider:     chosenProvider,
+        chargeAmount,
+        newBalance,
+        reference:    refCode,
+      });
 
-      if (!CONNECT_KEY || CONNECT_KEY.length < 10) {
-        return res.status(503).json({ error: "Airtime provider not configured. Please contact support." });
-      }
-
-      // Map network to Mozosubz format
-      const netLower = String(service?.provider_or_network || network).toLowerCase().trim();
-      let mozoNetwork = "mtn";
-      if (netLower.includes("glo")) mozoNetwork = "glo";
-      else if (netLower.includes("airtel")) mozoNetwork = "airtel";
-      else if (netLower.includes("9mobile") || netLower.includes("etisalat") || netLower.includes("9mob")) mozoNetwork = "etisalat";
-
-      const payload = {
-        network: mozoNetwork,
-        amount: parsedAmount,
-        phone: phone_number,
-      };
-
-      let apiSuccess = false;
-      let apiResponseData: any = null;
-      let apiErrorMsg = "";
-
-      try {
-        const mozoUrl = `${MOZO_BASE}/airtime/purchase`;
-        console.log(`[Mozosubz Airtime Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
-
-        const response = await axios.post(mozoUrl, payload, {
-          headers: {
-            "Content-Type": "application/json",
-            "X-Connect-Key": CONNECT_KEY,
-          },
-          timeout: 12000,
-        });
-
-        apiResponseData = response.data;
-        console.log("[Mozosubz Airtime Response]:", apiResponseData);
-
-        if (apiResponseData?.success === true) {
-          apiSuccess = true;
-        } else {
-          apiErrorMsg = apiResponseData?.error || apiResponseData?.message || "Gateway transaction rejected.";
-        }
-      } catch (axiosErr: any) {
-        console.error("[Mozosubz Airtime HTTP Error]:", axiosErr.response?.data || axiosErr.message);
-        const respData = axiosErr.response?.data;
-        apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Gateway connection failed.";
-      }
-      
-
-      if (apiSuccess) {
-        const deductedBalance = currentBalance - chargeAmount;
-        const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
-
-        // Atomically update balance in Supabase profiles (safely updating both wallet_balance and balance if present)
-        const { error: updateErr } = await supabase
-          .from('profiles')
-          .update({ 
-            wallet_balance: deductedBalance,
-            balance: deductedBalance
-          })
-          .eq('id', pgUuid);
-
-        if (updateErr) {
-          console.error("[Supabase Wallet Deduct Error]:", updateErr);
-          return res.status(500).json({ 
-            error: "Purchase succeeded at gateway, but database balance update failed. Please contact support.",
-            reference: apiResponseData?.reference || apiResponseData?.id 
-          });
-        }
-
-        // Sync wallet balance in profiles
-        try {
-          await supabase.from('profiles').update({
-            wallet_balance: deductedBalance,
-            available_balance: deductedBalance,
-            balance: deductedBalance
-          }).eq('id', resolvedUserId);
-        } catch (e) {}
-
-        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localReference;
-
-        // Update transaction status to success
-        try {
-          await supabase
-            .from('transactions')
-            .update({
-              status: 'success',
-              reference: referenceCode,
-              api_reference: referenceCode
-            })
-            .eq('id', transactionId);
-        } catch (txErr: any) {
-          console.warn("[Supabase Airtime success transaction update failed]:", txErr.message || txErr);
-        }
-
-        try {
-            await supabase.from('transactions').update({
-              status: 'success',
-              reference: referenceCode
-            }).eq('id', transactionId);
-        } catch (e) {}
-
-        return res.status(200).json({
-          status: "success",
-          success: true,
-          message: `Airtime purchase of ₦${parsedAmount} for ${phone_number} was successful!`,
-          ratio: ratio,
-          chargeAmount: chargeAmount,
-          reference: referenceCode,
-          newBalance: deductedBalance
-        });
-      } else {
-        // Mark transaction as failed
-        try {
-          await supabase
-            .from('transactions')
-            .update({
-              status: 'failed',
-              api_response_message: apiErrorMsg || "Gateway transaction rejected."
-            })
-            .eq('id', transactionId);
-        } catch (txErr: any) {
-          console.warn("[Supabase Airtime failed transaction update failed]:", txErr.message || txErr);
-        }
-
-        try {
-            await supabase.from('transactions').update({
-              status: 'failed',
-              description: `FAILED: Airtime VTU ₦${parsedAmount} to ${phone_number} (${apiErrorMsg || "Gateway transaction rejected."})`
-            }).eq('id', transactionId);
-        } catch (e) {}
-
-        return res.status(400).json({
-          error: `Airtime purchase failed: ${apiErrorMsg}. No funds were deducted from your wallet.`
-        });
-      }
     } catch (err: any) {
       console.error("[POST /api/buy-airtime Exception]:", err);
-      return res.status(500).json({ error: `Internal processing exception: ${err.message}` });
+      return res.status(500).json({ error: `Internal error: ${err.message}` });
     }
   });
 
