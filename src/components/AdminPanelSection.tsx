@@ -141,10 +141,18 @@ export default function AdminPanelSection() {
     toast.loading("Synchronizing plans from Mozosubs API...", { id: 'mozo-sync' });
     try {
       const response = await fetch('/api/admin/data-plans');
-      const resData = await response.json();
       if (!response.ok) {
-        throw new Error(resData.error || "Failed to sync plans from Mozosubs.");
+        const text = await response.text();
+        let errorMessage = "Failed to sync plans from Mozosubs.";
+        try {
+          const resData = JSON.parse(text);
+          errorMessage = resData.error || errorMessage;
+        } catch (e) {
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
+      const resData = await response.json();
       toast.success(`Successfully synchronized ${resData.count || 0} plans!`, { id: 'mozo-sync' });
       await fetchMozoPlans();
     } catch (err: any) {
@@ -343,8 +351,15 @@ export default function AdminPanelSection() {
       });
 
       if (!response.ok) {
-        const errObj = await response.json().catch(() => ({}));
-        throw new Error(errObj.error || "Failed to update service config.");
+        const text = await response.text();
+        let errorMessage = "Failed to update service config.";
+        try {
+          const errObj = JSON.parse(text);
+          errorMessage = errObj.error || errorMessage;
+        } catch (e) {
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const resData = await response.json();
