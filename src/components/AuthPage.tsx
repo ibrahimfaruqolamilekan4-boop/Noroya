@@ -281,14 +281,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     }
   };
 
-    const cleanEmail = email.trim() || 'user@example.com';
-    const cleanName = fullName.trim() || 'Faruq Ibrahim';
-    const generatedCode = "N-" + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const isOwnerEmail = cleanEmail.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
-    
-    
-  };
-
   const handleForgotPassword = async (resetEmail: string) => {
     const redirectUrl = `${window.location.origin}/recovery`;
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
