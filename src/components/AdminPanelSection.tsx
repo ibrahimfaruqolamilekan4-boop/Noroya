@@ -25,6 +25,12 @@ import {
 import { cn, formatCurrency } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
+
+const getSession = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated. Please log in again.');
+  return session;
+};
 import { useSupabaseError } from '../hooks/useSupabaseError';
 import { 
   collection, 
@@ -337,9 +343,10 @@ export default function AdminPanelSection() {
   const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
     setIsUpdatingService(id);
     try {
+      const session = await getSession();
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category })
       });
 
