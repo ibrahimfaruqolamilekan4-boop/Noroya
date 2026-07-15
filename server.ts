@@ -10,6 +10,35 @@ import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
 import { supabase } from "./src/lib/supabase.js";
+
+// Verifies the caller is an authenticated Supabase user with role='admin' in profiles.
+// Applies to every /api/admin/* route per standing security requirement.
+async function requireAdmin(req: any, res: any, next: any) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ error: "Missing Authorization bearer token." });
+    }
+    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !userData?.user) {
+      return res.status(401).json({ error: "Invalid or expired session token." });
+    }
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+    if (profileErr || !profile || profile.role !== "admin") {
+      return res.status(403).json({ error: "Admin privileges required." });
+    }
+    req.adminUser = userData.user;
+    next();
+  } catch (err: any) {
+    console.error("[requireAdmin Error]:", err.message);
+    return res.status(401).json({ error: "Authorization check failed." });
+  }
+}
 import axios from "axios";
 
 const ensureUUID = (strId: string): string => {
@@ -1065,7 +1094,7 @@ async function startServer() {
   });
 
   // GET /api/sync-mozosubs-plans and GET /api/data/plans/sync: Sync data plans from Mozosubs API into Postgres & Firestore
-  app.get(["/api/sync-mozosubs-plans", "/api/sync/mozosubs-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], async (req, res) => {
+  app.get(["/api/sync-mozosubs-plans", "/api/sync/mozosubs-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], requireAdmin, async (req, res) => {
     console.log(`[Sync Plans Route] Request received: ${req.url}`);
     try {
       const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
@@ -1808,7 +1837,7 @@ async function startServer() {
   // ============================================================================
 
   // 1. Automated Plan Generator: Processes and maps/upserts plans directly from Bigisub API payload
-  app.post("/api/admin/generate-plans", async (req, res) => {
+  app.post("/api/admin/generate-plans", requireAdmin, async (req, res) => {
     try {
       const { plans } = req.body;
       if (!plans || !Array.isArray(plans)) {
@@ -2048,8 +2077,46 @@ async function startServer() {
     }
   });
 
+  // POST Admin Control Route: Creates a new services_config row (companion to PUT above)
+  app.post("/api/admin/services", requireAdmin, async (req, res) => {
+    try {
+      const { service_type, provider_or_network, item_name, cost_price, selling_price, bigisub_plan_id, is_active, validity_days, plan_category } = req.body;
+      if (!service_type || !item_name || cost_price === undefined || selling_price === undefined || !bigisub_plan_id) {
+        return res.status(400).json({ error: "Missing required fields: service_type, item_name, cost_price, selling_price, bigisub_plan_id." });
+      }
+      const payload: any = {
+        service_type,
+        provider_or_network: String(provider_or_network || '').toUpperCase().trim(),
+        item_name: String(item_name).trim(),
+        cost_price: Number(cost_price),
+        selling_price: Number(selling_price),
+        bigisub_plan_id: String(bigisub_plan_id).trim(),
+        is_active: is_active !== undefined ? Boolean(is_active) : true,
+      };
+      if (validity_days !== undefined) payload.validity_days = String(validity_days).trim();
+      if (plan_category !== undefined) payload.plan_category = String(plan_category).trim();
+
+      let { data, error } = await supabase.from('services_config').insert(payload).select().single();
+
+      if (error && (error.message?.includes('column "validity_days"') || error.code === '42703')) {
+        delete payload.validity_days;
+        const retry = await supabase.from('services_config').insert(payload).select().single();
+        data = retry.data;
+        error = retry.error;
+      }
+      if (error) {
+        console.error("[POST /api/admin/services Error]:", error);
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json({ success: true, message: "Service configuration created successfully!", service: data });
+    } catch (err: any) {
+      console.error("[POST /api/admin/services Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
   // 3. PUT Admin Control Route: Allows instant modifications of plan parameters
-  app.put("/api/admin/services/:id", async (req, res) => {
+  app.put("/api/admin/services/:id", requireAdmin, async (req, res) => {
     console.log(`[Update Service Route] Request received: ${req.url}, ID: ${req.params.id}, Body:`, JSON.stringify(req.body));
     try {
       const rawId = req.params.id;
@@ -2070,9 +2137,6 @@ async function startServer() {
       if (Object.keys(updateData).length <= 1) {
         return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, validity_days, is_active, or item_name." });
       }
-
-      let updatedRecord = null;
-      let updateErr = null;
 
       const result = await supabase
         .from('services_config')
@@ -2841,7 +2905,7 @@ async function startServer() {
   });
 
   // Admin Create Plan backend endpoint
-  app.post("/api/admin/create-plan", async (req, res) => {
+  app.post("/api/admin/create-plan", requireAdmin, async (req, res) => {
     const { triggeredBy, network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -2899,7 +2963,7 @@ async function startServer() {
   });
 
   // Admin Peyflex Fetch & Sync Utility backend endpoint
-  app.post("/api/admin/fetch-peyflex-products", async (req, res) => {
+  app.post("/api/admin/fetch-peyflex-products", requireAdmin, async (req, res) => {
     const { triggeredBy } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3011,7 +3075,7 @@ async function startServer() {
   });
 
   // Admin Publish Peyflex Plans to Firestore collections and Supabase data_plans
-  app.post("/api/admin/publish-peyflex-plans", async (req, res) => {
+  app.post("/api/admin/publish-peyflex-plans", requireAdmin, async (req, res) => {
     const { triggeredBy, plans } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3161,7 +3225,7 @@ async function startServer() {
   });
 
   // Admin Edit Plan backend endpoint
-  app.post("/api/admin/edit-plan", async (req, res) => {
+  app.post("/api/admin/edit-plan", requireAdmin, async (req, res) => {
     const { triggeredBy, id, network, type, name, price, resellerPrice, agentPrice, duration, peyflex_variation_id, collectionName } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3218,7 +3282,7 @@ async function startServer() {
   });
 
   // Admin Delete Plan backend endpoint
-  app.post("/api/admin/delete-plan", async (req, res) => {
+  app.post("/api/admin/delete-plan", requireAdmin, async (req, res) => {
     const { triggeredBy, id, collectionName } = req.body;
     if (!triggeredBy || triggeredBy !== 'ibrahimfaruqolamilekan4@gmail.com') {
       return res.status(403).json({ error: "Access denied." });
@@ -3326,7 +3390,11 @@ async function startServer() {
         return res.status(401).send("Unauthorized: Signature header missing.");
       }
 
-      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY || "sk_test_6722fa7c94e8d9d5a736e";
+      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+      console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY not configured");
+      return res.status(500).send("Server configuration error");
+    }
       
       let rawBody = "";
       if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
@@ -3348,7 +3416,7 @@ async function startServer() {
         .update(rawBody)
         .digest("hex");
 
-      if (signature !== computedHash && signature !== "local-bypass") {
+      if (signature !== computedHash) {
         console.warn("[Paystack Webhook] Calculated signature mismatch.");
         return res.status(401).send("Unauthorized: Invalid signature hash verification.");
       }
@@ -6031,7 +6099,7 @@ async function startServer() {
   });
 
   // Support administrative revenue audit via direct Supabase query
-  app.get("/api/admin/opay-revenue", async (req, res) => {
+  app.get("/api/admin/opay-revenue", requireAdmin, async (req, res) => {
     try {
       console.log("[Admin Revenue Audit] Processing audit records via direct Supabase query.");
       const { data: txs, error: txError } = await supabase

@@ -25,6 +25,13 @@ import {
 import { cn, formatCurrency } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
+
+// Returns { Authorization: 'Bearer <token>' } for the current session, or {} if none.
+async function authHeader(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 import { useSupabaseError } from '../hooks/useSupabaseError';
 import { 
   collection, 
@@ -140,7 +147,7 @@ export default function AdminPanelSection() {
     setMozoSyncing(true);
     toast.loading("Synchronizing plans from Mozosubs API...", { id: 'mozo-sync' });
     try {
-      const response = await fetch('/api/admin/data-plans');
+      const response = await fetch('/api/admin/data-plans', { headers: await authHeader() });
       if (!response.ok) {
         const text = await response.text();
         let errorMessage = "Failed to sync plans from Mozosubs.";
@@ -346,7 +353,7 @@ export default function AdminPanelSection() {
     try {
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category })
       });
 
@@ -414,36 +421,18 @@ export default function AdminPanelSection() {
         validity_days: newValidityDays.trim()
       };
 
-      let { data, error } = await supabase
-        .from('services_config')
-        .insert(payload)
-        .select()
-        .single();
+      const res = await fetch('/api/admin/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+        body: JSON.stringify(payload)
+      });
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resData?.error || `Server error ${res.status}`);
 
-      // Resilience Fallback: If column "validity_days" does not exist in Supabase
-      if (error && (error.message?.includes('column "validity_days"') || error.code === '42703')) {
-        console.warn("[handleAddServiceConfig] 'validity_days' column missing. Retrying without it...");
-        delete payload.validity_days;
-        const retryResult = await supabase
-          .from('services_config')
-          .insert(payload)
-          .select()
-          .single();
-        
-        data = retryResult.data;
-        error = retryResult.error;
+      toast.success(resData.message || "New Mozosubs Service Configuration created successfully!");
 
-        if (!error) {
-          toast.success("Service created! Note: validity_days column is missing in 'services_config' Supabase table. Validity is defaulted to 30 Days.");
-        }
-      } else if (!error) {
-        toast.success("New Mozosubs Service Configuration created successfully with validity!");
-      }
-
-      if (error) throw error;
-
-      if (data) {
-        setServicesConfig(prev => [data, ...prev]);
+      if (resData.service) {
+        setServicesConfig(prev => [resData.service, ...prev]);
       }
       
       // Reset form fields
@@ -809,7 +798,7 @@ export default function AdminPanelSection() {
   const fetchOpayRevenueStats = async () => {
     setLoadingOpayStats(true);
     try {
-      const res = await fetch('/api/admin/opay-revenue');
+      const res = await fetch('/api/admin/opay-revenue', { headers: await authHeader() });
       if (res.ok) {
         const data = await res.json();
         setOpayRevenueStats(data);
