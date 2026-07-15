@@ -1,21 +1,75 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Smartphone, Zap, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react';
-import { cn, formatCurrency } from '../lib/utils';
-import type { NetworkType, ServicePlan, UserProfile } from '../types';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
-import { db } from '../lib/firebase';
-import { supabase } from '../lib/supabase';
-import { collection, onSnapshot, query } from 'firebase/firestore';
 import SuccessFeedback from './SuccessFeedback';
+import { cn, formatCurrency } from '../lib/utils';
+import type { NetworkType, ServicePlan, UserProfile } from '../types';
 
-const NETWORKS: { id: NetworkType, name: string, color: string }[] = [
-  { id: 'MTN', name: 'MTN Nigeria', color: 'bg-yellow-400 text-slate-900' },
-  { id: 'Airtel', name: 'Airtel Africa', color: 'bg-red-650 text-white' },
-  { id: 'Glo', name: 'Glo World', color: 'bg-green-600 text-white' },
-  { id: '9mobile', name: '9mobile', color: 'bg-emerald-900 text-white' },
-];
+const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
+  MTN: [
+    { id: 'mtn_sme',       label: 'SME' },
+    { id: 'mtn_gifting',   label: 'Gifting' },
+    { id: 'mtn_datashare', label: 'Datashare' },
+    { id: 'mtn_awoof',     label: 'Awoof' },
+  ],
+  GLO: [
+    { id: 'glo_sme',  label: 'SME' },
+    { id: 'glo_data', label: 'Data' },
+  ],
+  Airtel: [
+    { id: 'airtel_sme',     label: 'SME' },
+    { id: 'airtel_gifting', label: 'Gifting' },
+  ],
+  '9mobile': [
+    { id: 'etisalat_data', label: 'Data' },
+  ],
+};
+
+const BRAND_THEMES: Record<string, { bg: string; text: string; ring: string; border: string; activeText: string }> = {
+  MTN: {
+    bg: 'bg-yellow-400',
+    text: 'text-yellow-400',
+    ring: 'ring-yellow-400',
+    border: 'border-yellow-400/30',
+    activeText: 'text-slate-900',
+  },
+  GLO: {
+    bg: 'bg-green-500',
+    text: 'text-green-500',
+    ring: 'ring-green-500',
+    border: 'border-green-500/30',
+    activeText: 'text-slate-900',
+  },
+  Airtel: {
+    bg: 'bg-red-500',
+    text: 'text-red-500',
+    ring: 'ring-red-500',
+    border: 'border-red-500/30',
+    activeText: 'text-white',
+  },
+  '9mobile': {
+    bg: 'bg-teal-500',
+    text: 'text-teal-400',
+    ring: 'ring-teal-500',
+    border: 'border-teal-500/30',
+    activeText: 'text-slate-900',
+  },
+};
+
+const BALANCE_CODES: Record<string, { label: string; code: string }[]> = {
+  mtn_sme: [{ label: 'SME Balance', code: '*461*4#' }],
+  mtn_gifting: [{ label: 'Gifting Balance', code: '*131*4#' }, { label: 'Alternative Gifting Balance', code: '*460*260#' }],
+  mtn_datashare: [{ label: 'Datashare Balance', code: '*461*4#' }],
+  mtn_awoof: [{ label: 'Awoof Balance', code: '*461*4#' }],
+  glo_sme: [{ label: 'SME Balance', code: '*127*0#' }],
+  glo_data: [{ label: 'Data Balance', code: '*127*0#' }],
+  airtel_sme: [{ label: 'SME Balance', code: '*140#' }],
+  airtel_gifting: [{ label: 'Gifting Balance', code: '*140#' }],
+  etisalat_data: [{ label: 'Data Balance', code: '*228#' }],
+};
 
 export function getPlanPriceForUser(plan: ServicePlan | null | undefined, user: UserProfile | null | undefined): number {
   if (!plan) return 0;
@@ -38,7 +92,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   // Form states
   const [network, setNetwork] = React.useState<NetworkType | ''>('');
   const [planType, setPlanType] = React.useState<string>('');
-  const [selectedPlan, setSelectedPlan] = React.useState<any | null>(null);
+  const [selectedPlan, setSelectedPlan] = React.useState<ServicePlan | null>(null);
   const [phoneNumber, setPhoneNumber] = React.useState('');
   const [airtimeAmount, setAirtimeAmount] = React.useState('');
   
@@ -70,740 +124,601 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         if (network !== '9mobile') setNetwork('9mobile');
       }
     }
-  }, [phoneNumber]);
+  }, [phoneNumber, network]);
 
-  // Load plans from Supabase (PostgreSQL) and Firestore on page mount using real-time sync / Supabase Realtime Subscriptions
+  // Load plans from Supabase API endpoint only
   React.useEffect(() => {
-    console.log("Connecting to Supabase and Firestore real-time streams for: 'data_plans'...");
-    setFetchingPlans(true);
-    let fallbackLoaded = false;
-
-    // Helper helper to format standard schema models nicely
-    const normalizeSupabasePlans = (rawList: any[]) => {
-      const now = new Date();
-      return rawList
-        .filter((p: any) => {
-          const expAt = p.expires_at || p.expiresAt;
-          if (!expAt) return true;
-          return new Date(expAt) > now;
-        })
-        .map((p: any) => {
-          const pName = p.plan_name || p.name || p.planName || `${p.network_type || p.network || ''} Plan`;
-          const pPrice = Number(p.retail_price || p.price || p.amount || 0);
-          const rPrice = Number(p.reseller_price || p.resellerPrice || pPrice);
-          const net = String(p.network_type || p.network || 'MTN').toUpperCase();
-          const pType = p.type || 'data';
-          const pVarId = p.peyflex_id || p.peyflex_variation_id || p.apiPlanId || p.id;
-          const pValidity = p.validity_days || p.duration || p.validity || '30 Days';
-          
-          const pt = String(p.planType || p.plan_category || '').toUpperCase();
-          const pNameUpper = String(pName).toUpperCase();
-          let planCategory = "GIFTING";
-          if (pt.includes("SME") || pNameUpper.includes("SME")) {
-            planCategory = "SME";
-          } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-            planCategory = "CG";
-          }
-
-          return {
-            id: p.id,
-            ...p,
-            name: pName,
-            plan_name: pName,
-            planName: pName,
-            price: pPrice,
-            retail_price: pPrice,
-            resellerPrice: rPrice,
-            reseller_price: rPrice,
-            amount: pPrice,
-            network_type: net,
-            network: net,
-            type: pType,
-            peyflex_id: pVarId,
-            peyflex_variation_id: pVarId,
-            apiPlanId: pVarId,
-            duration: pValidity,
-            validity_days: pValidity,
-            plan_category: planCategory,
-            planType: planCategory
-          };
-        });
-    };
-
-    const fetchBackupPlans = async () => {
+    const loadPlans = async () => {
+      setFetchingPlans(true);
       try {
         const response = await fetch('/api/services/data');
         if (response.ok) {
           const resData = await response.json();
-          const plansList = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
-          if (plansList && plansList.length > 0) {
-            console.log("Successfully loaded plans via clean API /api/services/data:", plansList);
-            const mapped = normalizeSupabasePlans(plansList);
-            setAllPlans(mapped);
-            fallbackLoaded = true;
-          }
+          const plansList: ServicePlan[] = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
+          
+          // Helper to normalize plans
+          const normalized = plansList.map((p: any) => {
+            const pName = p.plan_name || p.name || p.planName || `${p.network_type || p.network || ''} Plan`;
+            const pPrice = Number(p.retail_price || p.price || p.amount || 0);
+            const rPrice = Number(p.reseller_price || p.resellerPrice || pPrice);
+            const net = String(p.network_type || p.network || 'MTN');
+            
+            // Normalize network name casing for compatibility
+            let finalNet = 'MTN';
+            if (net.toLowerCase().includes('airtel')) finalNet = 'Airtel';
+            else if (net.toLowerCase().includes('glo')) finalNet = 'Glo';
+            else if (net.toLowerCase().includes('9mobile') || net.toLowerCase().includes('etisalat')) finalNet = '9mobile';
+
+            const pType = p.type || 'data';
+            const pVarId = p.peyflex_variation_id || p.peyflex_id || p.apiPlanId || p.id;
+            const pValidity = p.validity_days || p.duration || p.validity || '30 days';
+
+            // Determine mozosubz_service group
+            let mozosubz_service = p.mozosubz_service;
+            if (!mozosubz_service) {
+              const category = String(p.plan_category || '').toLowerCase();
+              const nameLower = String(pName).toLowerCase();
+              if (finalNet === 'MTN') {
+                if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'mtn_sme';
+                else if (category.includes('gifting') || nameLower.includes('gifting')) mozosubz_service = 'mtn_gifting';
+                else if (category.includes('share') || nameLower.includes('share') || category.includes('cg')) mozosubz_service = 'mtn_datashare';
+                else if (category.includes('awoof') || nameLower.includes('awoof')) mozosubz_service = 'mtn_awoof';
+                else mozosubz_service = 'mtn_sme';
+              } else if (finalNet === 'Glo') {
+                if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'glo_sme';
+                else mozosubz_service = 'glo_data';
+              } else if (finalNet === 'Airtel') {
+                if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'airtel_sme';
+                else mozosubz_service = 'airtel_gifting';
+              } else if (finalNet === '9mobile') {
+                mozosubz_service = 'etisalat_data';
+              }
+            }
+
+            return {
+              ...p,
+              id: p.id,
+              name: pName,
+              plan_name: pName,
+              price: pPrice,
+              retail_price: pPrice,
+              reseller_price: rPrice,
+              network: finalNet,
+              type: pType,
+              peyflex_variation_id: pVarId,
+              validity_days: pValidity,
+              mozosubz_service
+            };
+          });
+
+          setAllPlans(normalized);
+        } else {
+          toast.error("Failed to fetch available plans");
         }
       } catch (err) {
-        console.warn("Could not read backup plans from /api/services/data API:", err);
+        console.error("Error loading plans:", err);
+        toast.error("Could not load data plans. Please try again later.");
       } finally {
         setFetchingPlans(false);
       }
     };
 
-    // 1. Initial Load and Realtime Subscription using official Supabase Client
-    const initSupabaseSync = async () => {
-      try {
-        const response = await fetch('/api/services/data');
-        if (response.ok) {
-          const resData = await response.json();
-          const initialPlans = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
-          if (initialPlans && initialPlans.length > 0) {
-            console.log("[Supabase Sync] Ingested raw services live structures:", initialPlans.length);
-            setAllPlans(normalizeSupabasePlans(initialPlans));
-            setFetchingPlans(false);
-          } else {
-            fetchBackupPlans();
-          }
-        } else {
-          fetchBackupPlans();
-        }
-      } catch (err: any) {
-        console.warn("[Supabase Realtime Initial Fetch] Falling back to traditional load strategy:", err.message);
-        fetchBackupPlans();
-      }
-    };
-
-    initSupabaseSync();
-
-    // Subscribe to pg realtime events on services_config
-    const supabaseChannel = supabase
-      .channel('realtime:services_config')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'services_config' },
-        async () => {
-          console.log("[Supabase Realtime] Change detected in postgres services_config, reloading list...");
-          try {
-            const response = await fetch('/api/services/data');
-            if (response.ok) {
-              const resData = await response.json();
-              const updatedPlans = Array.isArray(resData) ? resData : (resData.plans || resData.services || []);
-              if (updatedPlans) {
-                setAllPlans(normalizeSupabasePlans(updatedPlans));
-              }
-            }
-          } catch (e) {
-            console.error("Failed to update plans on real-time event:", e);
-          }
-        }
-      )
-      .subscribe();
-
-    // 2. Fallback Firebase Realtime onSnapshot connection to preserve continuous operability
-    const q = query(collection(db, "data_plans"));
-    const unsubscribeFirebase = onSnapshot(q, (querySnapshot) => {
-      const plansList: any[] = [];
-      const now = new Date();
-      
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        let expiresAtDate: Date | null = null;
-        if (data.expiresAt) {
-          if (typeof data.expiresAt.toDate === 'function') {
-            expiresAtDate = data.expiresAt.toDate();
-          } else {
-            expiresAtDate = new Date(data.expiresAt);
-          }
-        } else if (data.expires_at) {
-          expiresAtDate = new Date(data.expires_at);
-        }
-        
-        if (!expiresAtDate || expiresAtDate > now) {
-          const pName = data.plan_name || data.name || data.planName || `${data.network_type || data.network || ''} Plan`;
-          const pPrice = Number(data.retail_price || data.price || data.amount || 0);
-          const rPrice = Number(data.reseller_price || data.resellerPrice || pPrice);
-          const network = String(data.network_type || data.network || 'MTN').toUpperCase();
-          const pType = data.type || 'data';
-          const pVarId = data.peyflex_id || data.peyflex_variation_id || data.apiPlanId || doc.id;
-          const pValidity = data.validity_days || data.duration || data.validity || '30 Days';
-          
-          const pt = String(data.planType || data.plan_category || '').toUpperCase();
-          const pNameUpper = String(pName).toUpperCase();
-          let planCategory = "GIFTING";
-          if (pt.includes("SME") || pNameUpper.includes("SME")) {
-            planCategory = "SME";
-          } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-            planCategory = "CG";
-          }
-
-          plansList.push({
-            id: doc.id,
-            ...data,
-            name: pName,
-            plan_name: pName,
-            planName: pName,
-            price: pPrice,
-            retail_price: pPrice,
-            resellerPrice: rPrice,
-            reseller_price: rPrice,
-            amount: pPrice,
-            network_type: network,
-            network: network,
-            type: pType,
-            peyflex_id: pVarId,
-            peyflex_variation_id: pVarId,
-            apiPlanId: pVarId,
-            duration: pValidity,
-            validity_days: pValidity,
-            plan_category: planCategory,
-            planType: planCategory
-          });
-        }
-      });
-      
-      if (plansList.length > 0) {
-        console.log(`[Firebase Fallback Sync] Activated with ${plansList.length} un-expired records`);
-        setAllPlans(plansList);
-        setFetchingPlans(false);
-      }
-    }, (error) => {
-      console.warn("Alternative fallback listener passive error:", error.message);
-      if (!fallbackLoaded && allPlans.length === 0) {
-        fetchBackupPlans();
-      }
-    });
-
-    return () => {
-      supabase.removeChannel(supabaseChannel);
-      unsubscribeFirebase();
-    };
+    loadPlans();
   }, []);
 
-  // Filter plans based on selected network with precise case-insensitive matching & 7-day lifespans
-  const plans = React.useMemo(() => {
+  // Filter plans based on selection
+  const availablePlans = React.useMemo(() => {
     if (!network) return [];
-    return allPlans.filter(plan => {
-      const isMatch = plan.network_type?.toUpperCase() === network?.toUpperCase();
-      
-      let isExpired = false;
-      if (plan.expiresAt) {
-        let expiryTime: number;
-        if (plan.expiresAt && plan.expiresAt.seconds) {
-          expiryTime = plan.expiresAt.seconds * 1000;
-        } else {
-          expiryTime = new Date(plan.expiresAt).getTime();
-        }
-        if (!isNaN(expiryTime) && expiryTime < Date.now()) {
-          isExpired = true;
-        }
-      }
+    return allPlans.filter(p => p.network === network && p.mozosubz_service === planType);
+  }, [allPlans, network, planType]);
 
-      return isMatch && !isExpired;
-    });
-  }, [allPlans, network]);
-
-  // Helper helper to filter categories perfectly
-  const checkCategoryMatch = React.useCallback((p: ServicePlan) => {
-    const ptSelected = String(planType || '').toUpperCase();
-    if (ptSelected === 'ALL' || ptSelected === '') return true;
-    const itemCategory = String(p.plan_category || p.planType || 'GIFTING').toUpperCase();
-    if (ptSelected === 'SME') return itemCategory === 'SME';
-    if (ptSelected === 'CG' || ptSelected === 'CORPORATE' || ptSelected === 'CORPORATE GIFTING') return itemCategory === 'CG';
-    if (ptSelected === 'GIFTING') return itemCategory === 'GIFTING';
-    return itemCategory === ptSelected;
-  }, [planType]);
-
-  // Handle plan auto selection
+  // Set default plan type tab when network changes
   React.useEffect(() => {
-    if (plans.length > 0) {
-      const activeCategoryPlans = plans.filter(p => checkCategoryMatch(p));
-      if (activeCategoryPlans.length > 0) {
-        setSelectedPlan(activeCategoryPlans[0]);
-      } else {
-        setSelectedPlan(plans[0]);
-      }
-    } else {
+    if (!network) {
+      setPlanType('');
       setSelectedPlan(null);
-    }
-  }, [plans, network, planType, checkCategoryMatch]);
-
-  const handlePurchaseSubmit = async () => {
-    if (!user) {
-      toast.error("Please sign in to place transaction orders.");
       return;
     }
 
-    setLoading(true);
-    setPurchaseStatus('idle');
+    const netKey = network === 'Glo' ? 'GLO' : network;
+    const types = NETWORK_SERVICES[netKey] || [];
+    
+    // Find the first plan type that has available plans
+    const firstAvailable = types.find(t => 
+      allPlans.some(p => p.network === network && p.mozosubz_service === t.id)
+    );
 
-    const amount = type === 'data' 
-      ? getPlanPriceForUser(selectedPlan, user) 
-      : Number(airtimeAmount);
+    if (firstAvailable) {
+      setPlanType(firstAvailable.id);
+    } else if (types.length > 0) {
+      setPlanType(types[0].id);
+    } else {
+      setPlanType('');
+    }
+    setSelectedPlan(null);
+  }, [network, allPlans]);
+
+  // Get service count for each network card
+  const getNetworkPlanCount = (netName: NetworkType) => {
+    return allPlans.filter(p => p.network === netName).length;
+  };
+
+  const activeTheme = network ? BRAND_THEMES[network === 'Glo' ? 'GLO' : network] : null;
+
+  const handlePurchase = async () => {
+    if (!network) {
+      toast.error('Please select a network provider');
+      return;
+    }
+    if (!phoneNumber || phoneNumber.length < 11) {
+      toast.error('Please enter a valid 11-digit phone number');
+      return;
+    }
+    if (type === 'data' && !selectedPlan) {
+      toast.error('Please select a data plan');
+      return;
+    }
+    if (type === 'airtime' && (!airtimeAmount || Number(airtimeAmount) < 50)) {
+      toast.error('Please enter a valid amount (minimum ₦50)');
+      return;
+    }
+
+    setShowConfirmModal(true);
+  };
+
+  const executePurchase = async () => {
+    setLoading(true);
+    setShowConfirmModal(false);
 
     try {
-      const endpoint = type === 'data' ? '/api/v1/data/purchase' : '/api/vtu/buy-data';
-      const requestBody = type === 'data' 
-        ? {
-            userId: user.uid,
-            phone_number: phoneNumber,
-            network,
-            peyflex_variation_id: selectedPlan?.peyflex_variation_id || selectedPlan?.peyflex_id || selectedPlan?.apiPlanId || selectedPlan?.id || '',
-            retail_price: amount,
-            plan_name: selectedPlan?.plan_name || selectedPlan?.planName || selectedPlan?.name || ''
-          }
-        : {
-            userId: user.uid,
-            network,
-            planName: `${network} Airtime`,
-            amount,
-            phoneNumber,
-            planType: 'Airtime',
-            apiPlanId: 'airtime_top_up'
-          };
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error('Session expired. Please sign in again.');
+        setLoading(false);
+        return;
+      }
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      });
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      };
 
-      const result = await response.json();
+      if (type === 'data') {
+        const finalPrice = getPlanPriceForUser(selectedPlan, user);
+        const payload = {
+          userId: user?.uid,
+          phone_number: phoneNumber,
+          network: network.toUpperCase(),
+          peyflex_variation_id: selectedPlan?.peyflex_variation_id || selectedPlan?.mozosubs_plan_id,
+          mozosubz_service: (selectedPlan as any)?.mozosubz_service || planType,
+          service: (selectedPlan as any)?.mozosubz_service || planType,
+          retail_price: finalPrice,
+          plan_name: selectedPlan?.name,
+        };
 
-      if (response.ok && result.success) {
-        setPurchaseStatus('success');
-        setCreatedTransaction(result.transaction);
-        toast.success(result.message || "VTU transaction dispatched successfully!");
+        const response = await fetch('/api/v1/data/purchase', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        const resData = await response.json();
+        if (response.ok && resData.status === 'success') {
+          setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
+          setPurchaseStatus('success');
+          toast.success('Data purchase initiated successfully!');
+        } else {
+          setPurchaseStatus('failed');
+          toast.error(resData.message || 'Data purchase failed. Please check your balance.');
+        }
       } else {
-        setPurchaseStatus('failed');
-        toast.error(result.error || "Transaction declined by peer network gateway.");
+        const payload = {
+          network:      network.toUpperCase(),
+          phone_number: phoneNumber,
+          amount:       Number(airtimeAmount),
+        };
+
+        const response = await fetch('/api/buy-airtime', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        const resData = await response.json();
+        if (response.ok && (resData.status === 'success' || resData.success === true)) {
+          setCreatedTransaction(resData.transaction || {
+            amount:    Number(airtimeAmount),
+            reference: resData.reference || 'N/A',
+          });
+          setPurchaseStatus('success');
+          toast.success(`₦${airtimeAmount} airtime sent successfully!`);
+        } else {
+          setPurchaseStatus('failed');
+          toast.error(resData.error || resData.message || 'Airtime purchase failed. Please try again.');
+        }
       }
     } catch (err: any) {
-      console.error(err);
+      console.error('Purchase error:', err);
       setPurchaseStatus('failed');
-      toast.error("An outbound communication error occurred. Check connectivity.");
+      toast.error(err.message || 'An unexpected network error occurred.');
     } finally {
       setLoading(false);
     }
   };
 
-  const currentNetworkObject = NETWORKS.find(n => n.id === network);
+  const resetForm = () => {
+    setPhoneNumber('');
+    setAirtimeAmount('');
+    setSelectedPlan(null);
+    setPurchaseStatus('idle');
+    setCreatedTransaction(null);
+  };
+
+  if (purchaseStatus === 'success') {
+    return (
+      <div className="max-w-2xl mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl text-center">
+        <SuccessFeedback size={100} showConfetti={true} />
+        <h2 className="text-2xl font-bold text-white mt-6 mb-2">Purchase Successful!</h2>
+        <p className="text-slate-400 text-sm max-w-md mx-auto mb-8">
+          Your transaction has been queued and is processing. The recipient's number will be credited shortly.
+        </p>
+        
+        <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50 max-w-md mx-auto text-left space-y-3 mb-8">
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-400 font-medium">Recipient Number</span>
+            <span className="text-white font-semibold">{phoneNumber}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-400 font-medium">Network</span>
+            <span className="text-white font-semibold">{network}</span>
+          </div>
+          {type === 'data' && selectedPlan && (
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400 font-medium">Plan</span>
+              <span className="text-white font-semibold">{selectedPlan.name}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-400 font-medium">Amount Charged</span>
+            <span className="text-emerald-400 font-bold">
+              {formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount))}
+            </span>
+          </div>
+          {createdTransaction?.reference && (
+            <div className="flex justify-between text-sm pt-2 border-t border-slate-700/50">
+              <span className="text-slate-400 font-medium">Reference</span>
+              <span className="text-slate-300 font-mono text-xs">{createdTransaction.reference}</span>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={resetForm}
+          className="w-full max-w-md bg-slate-800 hover:bg-slate-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all duration-200"
+        >
+          Buy Again
+        </button>
+      </div>
+    );
+  }
+
+  const selectedNetworkKey = network === 'Glo' ? 'GLO' : network;
+  const availableTabs = selectedNetworkKey ? (NETWORK_SERVICES[selectedNetworkKey] || []).filter(tab => 
+    allPlans.some(p => p.network === network && p.mozosubz_service === tab.id)
+  ) : [];
 
   return (
-    <div className="bg-[#F8F9FA] rounded-[2rem] border border-slate-200 overflow-hidden shadow-xl max-w-xl mx-auto font-sans" id="vtu_purchase_panel">
-      
-      {/* Visual Header */}
-      <div className="bg-[#1E293B] p-6 text-white text-center relative">
-        <h3 className="font-extrabold text-xl tracking-tight uppercase">
-          {type === 'data' ? 'Buy Data Plan' : 'Buy Airtime Recharge'}
-        </h3>
-        <p className="text-xs text-slate-300 mt-1 uppercase font-semibold">
-          {type === 'data' ? 'Get Cheap High-Speed Internet Bundles' : 'Instant Automatic Airtime Delivery'}
-        </p>
-      </div>
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Network Selector Cards */}
+      <div className="space-y-3">
+        <label className="text-sm font-semibold text-slate-300 block">Select Network Provider</label>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {(['MTN', 'Glo', 'Airtel', '9mobile'] as NetworkType[]).map((net) => {
+            const theme = BRAND_THEMES[net === 'Glo' ? 'GLO' : net];
+            const isSelected = network === net;
+            const count = getNetworkPlanCount(net);
 
-      <div className="p-6 sm:p-8 bg-white">
-        
-        {purchaseStatus === 'idle' && (
-          <form onSubmit={(e) => { e.preventDefault(); setShowConfirmModal(true); }} className="space-y-6">
-            
-            {/* Field 0: Codes for Data Balance Banner (Only for Data) */}
-            {type === 'data' && (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-                <h4 className="text-xs font-black uppercase text-slate-500 tracking-wider">
-                  Codes for Data Balance:
-                </h4>
-                <div className="grid grid-cols-1 gap-2 text-xs font-bold font-mono">
-                  <div className="bg-[#FEF9C3] text-yellow-800 border border-yellow-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
-                    MTN [SME] *461*4#
-                  </div>
-                  <div className="bg-[#FEF3C7] text-amber-800 border border-amber-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
-                    MTN [Gifting] *131*4# or *460*260#
-                  </div>
-                  <div className="bg-[#F3E8FF] text-purple-850 border border-purple-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
-                    9mobile [Gifting] *228#
-                  </div>
-                  <div className="bg-[#FEE2E2] text-red-800 border border-red-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
-                    Airtel *140#
-                  </div>
-                  <div className="bg-[#DCFCE7] text-green-800 border border-green-200 rounded-xl px-4 py-2.5 text-center shadow-sm">
-                    Glo *127*0#
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Field 1: Select Network Dropdown */}
-            <div className="space-y-2">
-              <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                Network *
-              </label>
-              <select
-                required
-                value={network || ''}
-                onChange={(e) => {
-                  setNetwork(e.target.value as NetworkType);
-                  toast.success(`Active Carrier: ${e.target.value}`);
-                }}
-                className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
+            return (
+              <button
+                key={net}
+                type="button"
+                onClick={() => setNetwork(net)}
+                className={cn(
+                  "relative flex flex-col items-center justify-center p-4 rounded-2xl border transition-all duration-300 text-center overflow-hidden h-28 group bg-slate-800/50",
+                  isSelected 
+                    ? `ring-2 ${theme.ring} ${theme.border} bg-slate-800/80` 
+                    : "border-slate-800 hover:border-slate-700/50 hover:bg-slate-800/30"
+                )}
               >
-                <option value="">---------- Select Network ----------</option>
-                {NETWORKS.map((nw) => (
-                  <option key={nw.id} value={nw.id}>{nw.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Field 2: Select Data Type (Only for Data) */}
-            {type === 'data' && (
-              <div className="space-y-2">
-                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                  Data type *
-                </label>
-                <select
-                  required
-                  value={planType}
-                  onChange={(e) => {
-                    setPlanType(e.target.value);
-                  }}
-                  className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
-                >
-                  <option value="">---------- Choose Data Type ----------</option>
-                  <option value="SME">SME1</option>
-                  <option value="CG">CORPORATE GIFTING</option>
-                  <option value="SME">SME</option>
-                  <option value="SME">SME2</option>
-                  <option value="GIFTING">GIFTING</option>
-                  <option value="GIFTING">AWOOF DATA</option>
-                  <option value="ALL">ALL TYPES</option>
-                </select>
-                <p className="text-[10px] text-slate-500 font-bold tracking-tight">
-                  Select Plan Type SME or GIFTING or CORPORATE GIFTING
-                </p>
-              </div>
-            )}
-
-            {/* Field 3: Recipient Phone Number */}
-            <div className="space-y-2">
-              <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                Mobile number *
-              </label>
-              <input
-                id="phone_number_input"
-                required
-                type="tel"
-                placeholder="e.g. 08031234567"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').substring(0, 11))}
-                className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono shadow-sm tracking-wider"
-              />
-            </div>
-
-            {/* Field 4: Select Dynamic Bundle Plan Option (Only for Data) */}
-            {type === 'data' && (
-              <div className="space-y-2">
-                <div className="flex justify-between items-center bg-white pr-1">
-                  <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                    Plan *
-                  </label>
-                  {plans.length > 0 && (
-                    <span className="text-[9px] text-slate-400 font-extrabold font-mono uppercase bg-slate-50 px-2 py-0.5 rounded-md">
-                      {plans.filter(p => checkCategoryMatch(p)).length} available
-                    </span>
-                  )}
-                </div>
-
-                {fetchingPlans ? (
-                  <div className="w-full bg-slate-50 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 border border-dashed border-slate-200">
-                    <Loader2 className="animate-spin text-blue-600" size={20} />
-                    <span className="text-xs text-slate-500 font-bold">Querying available plans from database...</span>
-                  </div>
-                ) : !network ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-slate-400 text-xs font-bold">
-                    📶 Choose network operator above to load products
-                  </div>
-                ) : plans.filter(p => checkCategoryMatch(p)).length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-red-200 bg-rose-50/20 p-6 text-center text-rose-650 text-xs font-bold">
-                    ⚠️ No compatible {planType || 'matching'} products found for {network} network.
-                  </div>
-                ) : (
-                  <select
-                    required
-                    value={selectedPlan ? (selectedPlan.peyflex_variation_id || selectedPlan.id) : ''}
-                    onChange={(e) => {
-                      const matchedPlan = plans.find(p => (p.peyflex_variation_id || p.id) === e.target.value);
-                      if (matchedPlan) {
-                        setSelectedPlan(matchedPlan);
-                        toast.success(`Chosen Pack: ${matchedPlan.plan_name || matchedPlan.name}`);
-                      }
-                    }}
-                    className="w-full bg-white border border-slate-350 rounded-2xl px-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all shadow-sm"
-                  >
-                    <option value="">---------- Select Data Bundle ----------</option>
-                    {plans
-                      .filter(p => checkCategoryMatch(p))
-                      .map((p) => {
-                        const name = p.plan_name || p.planName || p.name || '';
-                        const price = getPlanPriceForUser(p, user);
-                        const duration = p.validity_days || p.validity || p.duration || '30 Days';
-                        return (
-                          <option key={p.id} value={p.peyflex_variation_id || p.id}>
-                            {name} = N {price} {duration}
-                          </option>
-                        );
-                      })}
-                  </select>
+                {isSelected && (
+                  <span className={cn("absolute top-3 right-3 rounded-full p-0.5", theme.bg, theme.activeText)}>
+                    <CheckCircle2 size={12} className="stroke-[3]" />
+                  </span>
                 )}
-              </div>
-            )}
-
-            {/* Field 5: Airtime Amount (If airtime type is chosen) */}
-            {type === 'airtime' && (
-              <div className="space-y-2">
-                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                  Amount *
-                </label>
-                <div className="relative">
-                  <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-900 text-sm">₦</span>
-                  <input
-                    id="airtime_amount_input"
-                    required
-                    type="number"
-                    placeholder="Enter Airtime Amount. e.g. 500"
-                    min="50"
-                    max="50000"
-                    value={airtimeAmount}
-                    onChange={(e) => setAirtimeAmount(e.target.value)}
-                    className="w-full bg-white border border-slate-350 rounded-2xl pl-10 pr-5 py-4 font-bold text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono shadow-sm"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Field 6: Editable preview field for amount (If data type is chosen) */}
-            {type === 'data' && selectedPlan && (
-              <div className="space-y-2">
-                <label className="block text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                  Amount
-                </label>
-                <div className="relative">
-                  <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-400 text-sm">₦</span>
-                  <input
-                    type="text"
-                    readOnly
-                    disabled
-                    value={getPlanPriceForUser(selectedPlan, user)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-5 py-4 font-bold text-sm text-slate-500 font-mono"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Field 7: Bypass Validator Checkbox */}
-            <div className="flex items-center gap-3 py-1 bg-white select-none">
-              <input
-                type="checkbox"
-                id="bypass_number_validator"
-                className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <label htmlFor="bypass_number_validator" className="text-xs font-black text-slate-500 uppercase tracking-wider cursor-pointer">
-                Bypass number validator
-              </label>
-            </div>
-
-            {/* Balance Forecast Overlay / Validation Panel */}
-            {user && (
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                <div className="flex flex-col items-center justify-center space-y-2 py-1 text-center font-mono">
-                  <div className="text-[9px] uppercase font-black text-slate-450 tracking-widest font-sans">
-                    WALLET BALANCE INTEGRITY
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] sm:text-xs text-black font-semibold overflow-x-auto max-w-full">
-                    <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-700">
-                      Bal: {formatCurrency(user.balance)}
-                    </span>
-                    <span className="text-slate-405">➔</span>
-                    <span className="bg-red-50 border border-red-200 px-2 py-0.5 rounded text-red-700">
-                      Cost: -{formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))}
-                    </span>
-                    <span className="text-slate-405">➔</span>
-                    <span className={cn(
-                      "px-2 py-0.5 border rounded-lg",
-                      user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))
-                        ? "bg-red-100 border-red-300 text-red-900 animate-pulse"
-                        : "bg-emerald-50 border-emerald-300 text-emerald-900"
-                    )}>
-                      Next: {formatCurrency(user.balance - (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)))}
-                    </span>
-                  </div>
-                </div>
-                
-                {user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)) && (
-                  <p className="text-[10px] text-center text-red-650 font-bold font-sans mt-2.5 border-t border-slate-200 pt-2 flex items-center justify-center gap-1 leading-tight">
-                    ⚠️ INSUFFICIENT BALANCE. Please fund your wallet first.
-                  </p>
+                <span className={cn("text-lg font-black tracking-wider transition-colors duration-200", isSelected ? theme.text : "text-slate-400 group-hover:text-slate-300")}>
+                  {net}
+                </span>
+                {type === 'data' && (
+                  <span className="text-[10px] text-slate-500 font-medium mt-1">
+                    {fetchingPlans ? 'loading...' : `${count} plans`}
+                  </span>
                 )}
-              </div>
-            )}
-
-            {/* Submit Button */}
-            <button
-              id="buy_vtu_submit_btn"
-              type="submit"
-              disabled={
-                !network || 
-                phoneNumber.length < 10 || 
-                (type === 'data' && !selectedPlan) || 
-                (type === 'airtime' && (!airtimeAmount || Number(airtimeAmount) <= 0)) ||
-                (user && user.balance < (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0)))
-              }
-              className="w-full bg-[#1e3a8a] hover:bg-[#1e40af] disabled:bg-[#94a3b8] disabled:cursor-not-allowed text-white font-extrabold rounded-2xl py-4 flex items-center justify-center gap-2 transition-all disabled:opacity-50 font-sans text-sm uppercase tracking-widest cursor-pointer shadow-lg shadow-blue-900/10"
-            >
-              🚀 Buy Now
-            </button>
-
-            {/* Direct WhatsApp client support floating button */}
-            <a
-              href="https://wa.me/2348143889102?text=Hello%20Ridamsub%20Support,%20I%20need%20help%20with..."
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-2xl py-4 flex items-center justify-center gap-2 transition-all font-black text-xs uppercase tracking-widest cursor-pointer select-none text-center font-sans no-underline inline-flex justify-center items-center"
-            >
-              💬 Chat support on whatsapp
-            </a>
-
-          </form>
-        )}
-
-        {/* Dynamic Success Screens */}
-        {purchaseStatus === 'success' && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="py-8 text-center space-y-6">
-            <SuccessFeedback size={80} showConfetti={true} />
-            <div>
-              <h4 className="text-2xl font-black text-slate-900 mt-2">Purchase Successful!</h4>
-              <p className="text-slate-500 text-sm mt-2">
-                Your order has been filled. The value has been credited to <strong className="font-mono text-slate-800">{phoneNumber}</strong>.
-              </p>
-            </div>
-            {createdTransaction && (
-              <div className="max-w-xs mx-auto bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs space-y-2 text-left font-mono">
-                <div className="flex justify-between"><span className="text-slate-400">Reference:</span> <span className="font-bold text-slate-700 select-all">{createdTransaction.reference}</span></div>
-                <div className="flex justify-between"><span className="text-slate-450">Recipient:</span> <span className="font-bold text-slate-700">{createdTransaction.phoneNumber || phoneNumber}</span></div>
-                <div className="flex justify-between"><span className="text-slate-455">Amount:</span> <span className="font-bold text-slate-700">₦{createdTransaction.amount || (type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount || 0))}</span></div>
-              </div>
-            )}
-            <button
-               onClick={() => { setPurchaseStatus('idle'); setPhoneNumber(''); setAirtimeAmount(''); setSelectedPlan(null); }}
-              className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-extrabold shadow-lg transition-all"
-            >
-              🔄 Order Another
-            </button>
-          </motion.div>
-        )}
-
-        {/* Dynamic Failed Screen */}
-        {purchaseStatus === 'failed' && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="py-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto border border-rose-100">
-              <AlertTriangle size={44} />
-            </div>
-            <div>
-              <h4 className="text-2xl font-black text-slate-900">Transaction Failed</h4>
-              <p className="text-slate-500 text-sm mt-2">
-                The transaction request was returned as rejected by the operator network center or local limits.
-              </p>
-            </div>
-            <button
-              onClick={() => { setPurchaseStatus('idle'); }}
-              className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all"
-            >
-              👈 Try Again
-            </button>
-          </motion.div>
-        )}
-
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Confirmation Modal overlay */}
+      {/* Dynamic Plan Type Pills/Tabs for Data */}
+      {type === 'data' && network && availableTabs.length > 0 && (
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-slate-300 block">Select Plan Category</label>
+          <div className="flex flex-wrap gap-2">
+            {availableTabs.map((tab) => {
+              const isActive = planType === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setPlanType(tab.id);
+                    setSelectedPlan(null);
+                  }}
+                  className={cn(
+                    "px-5 py-2.5 rounded-xl text-xs font-bold tracking-wide transition-all duration-200",
+                    isActive
+                      ? `${activeTheme?.bg} ${activeTheme?.activeText} shadow-lg shadow-black/20 scale-102`
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-800/70 hover:text-slate-300 border border-slate-800/80"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Plans List Grid for Data / Amount Input for Airtime */}
+      {type === 'data' ? (
+        network && (
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-slate-300 block">Select Data Bundle</label>
+            {fetchingPlans ? (
+              <div className="flex flex-col items-center justify-center py-12 space-y-3 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
+                <Loader2 className="animate-spin text-slate-500" size={32} />
+                <span className="text-sm text-slate-500 font-medium">Fetching best-priced plans...</span>
+              </div>
+            ) : availablePlans.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 px-4 border border-slate-800/80 bg-slate-900/40 rounded-2xl text-center space-y-2">
+                <AlertTriangle className="text-slate-600" size={36} />
+                <h3 className="text-sm font-semibold text-slate-400">No active plans found</h3>
+                <p className="text-xs text-slate-500 max-w-xs">We currently do not have active plans under this category. Please check other options.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {availablePlans.map((plan) => {
+                  const finalPrice = getPlanPriceForUser(plan, user);
+                  const isSelected = selectedPlan?.id === plan.id;
+                  
+                  return (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      onClick={() => setSelectedPlan(plan)}
+                      className={cn(
+                        "relative flex flex-col justify-between p-4 rounded-2xl border text-left transition-all duration-200 min-h-[110px] bg-slate-800/40 hover:bg-slate-800/60",
+                        isSelected 
+                          ? `ring-2 ${activeTheme?.ring} ${activeTheme?.border} bg-slate-800/80` 
+                          : "border-slate-800 hover:border-slate-700/50"
+                      )}
+                    >
+                      {isSelected && (
+                        <span className={cn("absolute top-3 right-3 rounded-full p-0.5", activeTheme?.bg, activeTheme?.activeText)}>
+                          <CheckCircle2 size={10} className="stroke-[3]" />
+                        </span>
+                      )}
+                      
+                      <div className="space-y-1 pr-4">
+                        <span className="text-sm font-bold text-white line-clamp-2 block leading-snug">
+                          {plan.name}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-medium block">
+                          {plan.validity_days || '30 days'} validity
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <span className={cn("text-base font-extrabold block", isSelected ? activeTheme?.text : "text-emerald-400")}>
+                          {formatCurrency(finalPrice)}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )
+      ) : (
+        network && (
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-300 block">Enter Amount (₦)</label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-lg">₦</span>
+              <input
+                type="number"
+                placeholder="0.00"
+                value={airtimeAmount}
+                onChange={(e) => setAirtimeAmount(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-800 focus:border-slate-700 rounded-2xl py-4 pl-10 pr-4 text-white placeholder-slate-500 font-bold text-lg focus:outline-none focus:ring-1 focus:ring-slate-700 transition-all duration-150"
+              />
+            </div>
+            <span className="text-[10px] text-slate-500 font-medium block px-1">
+              Minimum airtime value of ₦50 allowed per transaction.
+            </span>
+          </div>
+        )
+      )}
+
+      {/* Phone Number Input */}
+      {network && (
+        <div className="space-y-2">
+          <label className="text-sm font-semibold text-slate-300 block">Recipient Phone Number</label>
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
+              <Smartphone size={20} />
+            </span>
+            <input
+              type="tel"
+              maxLength={11}
+              placeholder="08012345678"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+              className="w-full bg-slate-800 border border-slate-800 focus:border-slate-700 rounded-2xl py-4 pl-12 pr-4 text-white placeholder-slate-500 font-bold tracking-wider text-base focus:outline-none focus:ring-1 focus:ring-slate-700 transition-all duration-150"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* USSD Codes Display Panel */}
+      {network && (
+        <div className="bg-slate-800/30 border border-slate-800/80 rounded-2xl p-4 space-y-2">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Useful USSD Balance Codes</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {type === 'data' ? (
+              (BALANCE_CODES[planType] || []).map((b, idx) => (
+                <div key={idx} className="flex justify-between items-center text-xs bg-slate-900/40 border border-slate-800/40 rounded-xl p-3">
+                  <span className="text-slate-400 font-medium">{b.label}</span>
+                  <span className={cn("font-bold font-mono px-2 py-0.5 rounded", activeTheme?.bg, activeTheme?.activeText)}>
+                    {b.code}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="flex justify-between items-center text-xs bg-slate-900/40 border border-slate-800/40 rounded-xl p-3">
+                <span className="text-slate-400 font-medium">Airtime Balance</span>
+                <span className={cn("font-bold font-mono px-2 py-0.5 rounded", activeTheme?.bg, activeTheme?.activeText)}>
+                  {network === 'MTN' ? '*310#' : network === 'Airtel' ? '*310#' : network === '9mobile' ? '*310#' : '*124#'}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Proceed Purchase Button */}
+      {network && (
+        <button
+          type="button"
+          disabled={loading || (type === 'data' && !selectedPlan) || (type === 'airtime' && !airtimeAmount)}
+          onClick={handlePurchase}
+          className={cn(
+            "w-full flex items-center justify-center space-x-2 py-4.5 px-6 rounded-2xl font-bold text-white tracking-wide transition-all duration-200 mt-6 shadow-xl",
+            loading 
+              ? "bg-slate-800 text-slate-400 cursor-not-allowed" 
+              : activeTheme 
+                ? `${activeTheme.bg} ${activeTheme.activeText} hover:brightness-110 active:scale-[0.99]`
+                : "bg-emerald-500 hover:bg-emerald-600 active:scale-[0.99]"
+          )}
+        >
+          {loading ? (
+            <Loader2 className="animate-spin" size={20} />
+          ) : (
+            <>
+              <Zap size={18} className="fill-current" />
+              <span>Proceed to Purchase</span>
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Confirmation Modal */}
       <AnimatePresence>
         {showConfirmModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowConfirmModal(false)}
-              className="absolute inset-0 bg-slate-950/45 backdrop-blur-xs"
+              className="absolute inset-0 bg-black/75 backdrop-blur-xs"
             />
 
+            {/* Content Container */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-sm overflow-hidden border border-slate-100 shadow-2xl z-10 p-6 space-y-6 text-left relative"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl overflow-hidden"
             >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 border border-blue-100">
-                  <AlertTriangle size={24} />
-                </div>
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-900 text-lg">Confirm Order</h4>
-                  <p className="text-xs text-slate-400 font-bold">Please verify the details before billing.</p>
-                </div>
+              <div className="flex justify-between items-center mb-5">
+                <h3 className="text-lg font-extrabold text-white">Confirm Purchase</h3>
                 <button
                   onClick={() => setShowConfirmModal(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors ml-auto"
+                  className="text-slate-400 hover:text-white bg-slate-800 p-1.5 rounded-lg transition-colors duration-150"
                 >
-                  <X size={18} />
+                  <X size={16} />
                 </button>
               </div>
 
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4.5 space-y-3 font-mono text-xs">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold uppercase text-[9px]">TYPE:</span>
-                  <span className="font-extrabold text-slate-800 capitalize">{type} order</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold uppercase text-[9px]">CARRIER:</span>
-                  <span className="font-extrabold text-slate-800 uppercase">{network}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold uppercase text-[9px]">MOBILE:</span>
-                  <span className="font-bold text-slate-800">{phoneNumber}</span>
-                </div>
-                {type === 'data' && selectedPlan && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 font-bold uppercase text-[9px]">BUNDLE:</span>
-                    <span className="font-extrabold text-slate-800 text-right">{selectedPlan.plan_name || selectedPlan.planName || selectedPlan.name}</span>
-                  </div>
-                )}
-                <div className="pt-3 border-t border-slate-200/55 flex justify-between items-center text-sm font-sans">
-                  <span className="text-slate-500 font-bold text-xs uppercase tracking-wider">Total Due:</span>
-                  <span className="text-lg font-black text-blue-600 tracking-tight">
+              <div className="space-y-4">
+                <div className="bg-slate-800/50 border border-slate-800 rounded-2xl p-4 text-center">
+                  <span className="text-xs font-semibold text-slate-400 block mb-1">Total Due</span>
+                  <span className="text-3xl font-black text-white">
                     {formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount))}
                   </span>
                 </div>
+
+                <div className="space-y-3 bg-slate-800/30 rounded-2xl p-4 border border-slate-800/50">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400 font-medium">Service Type</span>
+                    <span className="text-white font-bold capitalize">{type} Purchase</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400 font-medium">Network Provider</span>
+                    <span className={cn("font-bold px-2 py-0.5 rounded text-xs", activeTheme?.bg, activeTheme?.activeText)}>
+                      {network}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400 font-medium">Recipient Phone</span>
+                    <span className="text-white font-mono font-bold">{phoneNumber}</span>
+                  </div>
+                  {type === 'data' && selectedPlan && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-400 font-medium">Selected Package</span>
+                      <span className="text-white font-bold text-right max-w-[200px] truncate">{selectedPlan.name}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center space-x-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 rounded-xl p-3.5 text-xs">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  <p className="font-medium leading-relaxed">
+                    Verify the recipient's phone number carefully. Airtime and data purchases are final and cannot be refunded.
+                  </p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2">
+              <div className="flex space-x-3 mt-6">
                 <button
+                  type="button"
                   onClick={() => setShowConfirmModal(false)}
-                  className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold rounded-xl py-3 text-xs transition-all"
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-3.5 px-4 rounded-xl transition-colors duration-150 text-sm"
                 >
-                  Back
+                  Cancel
                 </button>
                 <button
-                  disabled={loading}
-                  onClick={() => {
-                    setShowConfirmModal(false);
-                    handlePurchaseSubmit();
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3 text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-500/10"
-                >
-                  {loading ? (
-                    <Loader2 className="animate-spin" size={14} />
-                  ) : (
-                    'Confirm & Pay'
+                  type="button"
+                  onClick={executePurchase}
+                  className={cn(
+                    "flex-1 font-bold py-3.5 px-4 rounded-xl transition-all duration-150 text-sm",
+                    activeTheme ? `${activeTheme.bg} ${activeTheme.activeText} hover:brightness-110` : "bg-emerald-500 hover:bg-emerald-600 text-white"
                   )}
+                >
+                  Pay Now
                 </button>
               </div>
             </motion.div>

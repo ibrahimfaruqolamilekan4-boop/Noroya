@@ -19,15 +19,13 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
 type AuthMode = 'login' | 'signup' | 'reset';
 
 export default function AuthPage({ onBack }: { onBack: () => void }) {
-  const { signInWithGoogle, setSimulatedUser } = useAuth();
+  const { signInWithGoogle } = useAuth();
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -88,11 +86,15 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     const checkCode = async () => {
       try {
         const cleanCode = referralCodeInput.trim().toUpperCase();
-        const codeSnap = await getDoc(doc(db, 'referralCodes', cleanCode));
-        if (codeSnap.exists()) {
+        const { data: refData } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('referral_code', cleanCode)
+          .maybeSingle();
+        if (refData) {
           setReferralStatus({
             status: 'valid',
-            ownerName: codeSnap.data()?.ownerName || 'User'
+            ownerName: refData.full_name || 'User'
           });
         } else {
           setReferralStatus({ status: 'invalid' });
@@ -124,187 +126,49 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   const strength = getPasswordStrength(password);
 
   const initializeUserProfile = async (
-    uid: string, 
-    email: string, 
-    name: string, 
-    referredByUid?: string, 
+    uid: string,
+    email: string,
+    name: string,
+    referredByUid?: string,
     userPhone?: string,
     transactionPin?: string,
     userUsername?: string
   ) => {
-    const userRef = doc(db, 'users', uid);
-    const userSnap = await getDoc(userRef);
-    const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
-    const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    
-    if (!userSnap.exists()) {
-      const payload: any = {
-        uid,
-        email: email.toLowerCase().trim(),
-        fullName: name,
-        balance: 0,
-        role: isAdminEmail ? 'admin' : 'user',
-        referralCode: generatedCode,
-        createdAt: serverTimestamp()
-      };
-
-      if (userUsername) {
-        payload.username = userUsername;
-      }
-
-      if (referredByUid) {
-        payload.referredBy = referredByUid;
-      }
-
-      if (userPhone) {
-        payload.phoneNumber = userPhone;
-      }
-
-      if (transactionPin) {
-        payload.transactionPin = transactionPin;
-      }
-
-      await setDoc(userRef, payload);
-
-      // Create a discoverable public referral code document
-      await setDoc(doc(db, 'referralCodes', generatedCode), {
-        ownerUid: uid,
-        ownerName: name
-      });
-
-      // Write to the referrer's referrals subcollection
-      if (referredByUid) {
-        await setDoc(doc(db, 'users', referredByUid, 'referrals', uid), {
-          uid,
-          fullName: name,
-          email: email.toLowerCase().trim(),
-          createdAt: serverTimestamp()
-        });
-      }
-    } else {
-      if (isAdminEmail && userSnap.data()?.role !== 'admin') {
-        await setDoc(userRef, { role: 'admin' }, { merge: true });
-      }
-
-      // Ensure old users registering or logging in have code mappings too
-      const currentCode = userSnap.data()?.referralCode;
-      if (currentCode) {
-        await setDoc(doc(db, 'referralCodes', currentCode), {
-          ownerUid: uid,
-          ownerName: userSnap.data()?.fullName || name
-        }, { merge: true });
-      }
-    }
-
-    // Always ensure Supabase profiles is synchronized too
     try {
-      const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
-      
-      // Fetch existing profile to prevent accidental balance overrides/resets to 0
-      let existingBalance = 0;
-      try {
-        const { data: existingProfile } = await supabase
-          .from('profiles')
-          .select('wallet_balance, balance')
-          .eq('id', uid)
-          .maybeSingle();
-        if (existingProfile) {
-          existingBalance = Number(existingProfile.wallet_balance !== undefined ? existingProfile.wallet_balance : (existingProfile.balance || 0));
-        }
-      } catch (e) {
-        console.warn("Could not fetch existing profile balance from Supabase profiles:", e);
-      }
+      const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
+      const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-      const targetBalance = userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0;
-      // THE FIX: If the new state balance is 0/empty, but we have an existing balance in DB, block overwriting it!
-      const finalBalance = (targetBalance === 0 && existingBalance > 0) ? existingBalance : targetBalance;
+      // Fetch existing profile to avoid overwriting balance
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('wallet_balance, balance, referral_code, full_name')
+        .eq('id', uid)
+        .maybeSingle();
 
-      const sbPayloadProfiles = {
-        id: uid,
-        name: name || userSnap.data()?.fullName || 'User',
-        username: userUsername || userSnap.data()?.username || email.split('@')[0],
-        phone_number: userPhone || userSnap.data()?.phoneNumber || '',
-        referral_code: sbCode,
-        transaction_pin: transactionPin || userSnap.data()?.transactionPin || '',
-        wallet_balance: finalBalance
-      };
+      const existingBalance = existing
+        ? Number(existing.wallet_balance ?? existing.balance ?? 0)
+        : 0;
+      const referralCode = existing?.referral_code || generatedCode;
 
-      await supabase.from('profiles').upsert(sbPayloadProfiles, { onConflict: 'id' });
-    } catch (sbErr: any) {
-      console.warn("Could not upsert into Supabase profiles:", sbErr.message);
-    }
-
-    try {
-      const sbCode = userSnap.exists() ? (userSnap.data()?.referralCode || generatedCode) : generatedCode;
-      
-      // Fetch existing user row to prevent accidental balance overrides/resets to 0
-      let existingBalanceUsers = 0;
-      try {
-        const { data: existingUserRow } = await supabase
-          .from('users')
-          .select('wallet_balance, balance, available_balance')
-          .eq('id', uid)
-          .maybeSingle();
-        if (existingUserRow) {
-          existingBalanceUsers = Number(existingUserRow.wallet_balance !== undefined ? existingUserRow.wallet_balance : (existingUserRow.balance !== undefined ? existingUserRow.balance : (existingUserRow.available_balance || 0)));
-        }
-      } catch (e) {
-        console.warn("Could not fetch existing user balance from Supabase users:", e);
-      }
-
-      const targetBalance = userSnap.exists() ? (userSnap.data()?.balance ?? 0) : 0;
-      // THE FIX: If the new state balance is 0/empty, but we have an existing balance in DB, block overwriting it!
-      const finalBalanceUsers = (targetBalance === 0 && existingBalanceUsers > 0) ? existingBalanceUsers : targetBalance;
-
-      const sbPayload = {
+      await supabase.from('profiles').upsert({
         id: uid,
         email: email.toLowerCase().trim(),
-        fullName: name,
-        full_name: name,
-        username: userUsername || userSnap.data()?.username || '',
-        balance: finalBalanceUsers,
-        wallet_balance: finalBalanceUsers,
-        available_balance: finalBalanceUsers,
+        full_name: name || existing?.full_name || 'User',
+        username: userUsername || email.split('@')[0],
+        phone_number: userPhone || '',
         role: isAdminEmail ? 'admin' : 'user',
-        user_role: isAdminEmail ? 'admin' : 'user',
-        referralCode: sbCode,
-        referral_code: sbCode,
-        phoneNumber: userPhone || userSnap.data()?.phoneNumber || '',
-        phone_number: userPhone || userSnap.data()?.phoneNumber || '',
-        transactionPin: transactionPin || userSnap.data()?.transactionPin || '',
-        transaction_pin: transactionPin || userSnap.data()?.transactionPin || ''
-      };
+        referral_code: referralCode,
+        transaction_pin: transactionPin || '0000',
+        wallet_balance: existingBalance,
+        balance: existingBalance,
+        available_balance: existingBalance,
+        referred_by: referredByUid || null,
+      }, { onConflict: 'id' });
 
-      await supabase.from('users').upsert(sbPayload, { onConflict: 'id' });
     } catch (sbErr: any) {
-      console.warn("Could not upsert into Supabase users:", sbErr.message);
+      console.warn('initializeUserProfile error:', sbErr.message);
     }
-  };
-
-  const handleSimulatedAuthBypass = () => {
-    const cleanEmail = email.trim() || 'user@example.com';
-    const cleanName = fullName.trim() || 'Faruq Ibrahim';
-    const generatedId = "simulated_" + Math.random().toString(36).substring(2, 11);
-    const generatedCode = "N-" + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const isOwnerEmail = cleanEmail.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
-    
-    const simulatedProfile = {
-      uid: isOwnerEmail ? 'admin_ibrahim_vtu_uid' : generatedId,
-      email: cleanEmail.toLowerCase(),
-      fullName: isOwnerEmail ? 'Faruq Ibrahim (Admin)' : cleanName,
-      balance: 0,
-      role: (isOwnerEmail ? 'admin' : 'user') as any,
-      referralCode: isOwnerEmail ? 'NOROYA-ADMIN-99' : generatedCode,
-      is_reseller: false,
-      phoneNumber: phone || '08000000000',
-      transactionPin: pin || '1234',
-      createdAt: new Date().toISOString()
     };
-    
-    setSimulatedUser(simulatedProfile);
-    toast.success("Welcome! Your local Sandbox Session is fully authenticated and unblocked. ✨", { duration: 5000 });
-    onBack();
-  };
 
   const handleForgotPassword = async (resetEmail: string) => {
     const redirectUrl = `${window.location.origin}/recovery`;
@@ -360,11 +224,15 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         let verifiedReferrerUid: string | undefined = undefined;
         if (referralCodeInput.trim()) {
           const cleanCode = referralCodeInput.trim().toUpperCase();
-          const codeSnap = await getDoc(doc(db, 'referralCodes', cleanCode));
-          if (!codeSnap.exists()) {
+          const { data: refProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('referral_code', cleanCode)
+            .maybeSingle();
+          if (!refProfile) {
             throw new Error(`The referral code "${cleanCode}" was not found. Please verify or input a valid code.`);
           }
-          verifiedReferrerUid = codeSnap.data()?.ownerUid;
+          verifiedReferrerUid = refProfile.id;
         }
 
         toast.loading("Provisioning secure wallet infrastructure...", { id: "loading-signup" });
@@ -481,18 +349,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
               <AlertCircle size={18} className="mt-0.5 shrink-0 text-rose-600 animate-bounce" />
               <div className="flex-1 leading-relaxed">
                 <div>{error}</div>
-                <div className="mt-4 pt-4 border-t border-rose-200">
-                  <p className="text-[10px] text-rose-700 uppercase tracking-widest font-black mb-2 flex items-center gap-1.5">
-                    <Smartphone size={12} /> Live Deployed Simulator Access
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleSimulatedAuthBypass}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold uppercase text-[10px] tracking-wider py-2.5 px-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    ⚡ Bypass: Continue in local Sandbox Mode
-                  </button>
-                </div>
               </div>
             </div>
           )}

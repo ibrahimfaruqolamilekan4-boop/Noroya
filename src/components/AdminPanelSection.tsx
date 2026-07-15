@@ -25,6 +25,12 @@ import {
 import { cn, formatCurrency } from '../lib/utils';
 import { db, auth } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
+
+const getSession = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated. Please log in again.');
+  return session;
+};
 import { useSupabaseError } from '../hooks/useSupabaseError';
 import { 
   collection, 
@@ -44,6 +50,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { toast } from 'react-hot-toast';
+import AdminPricingManager from './AdminPricingManager';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
 
 // Pure deterministic UUID mapper to prevent PostgreSQL id column type conflicts (UUID vs text)
@@ -109,9 +116,9 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubs-plans'>('overview');
+  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager'>('overview');
 
-  // Mozosubs Data Plans States & Functions
+  // Mozosubz Data Plans States & Functions
   const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
   const [mozoLoading, setMozoLoading] = React.useState(false);
   const [mozoSyncing, setMozoSyncing] = React.useState(false);
@@ -129,8 +136,8 @@ export default function AdminPanelSection() {
       if (error) throw error;
       setMozoPlans(data || []);
     } catch (err: any) {
-      console.error("Error fetching Mozosubs plans:", err);
-      toast.error(`Failed to load Mozosubs plans: ${err.message}`);
+      console.error("Error fetching Mozosubz plans:", err);
+      toast.error(`Failed to load Mozosubz plans: ${err.message}`);
     } finally {
       setMozoLoading(false);
     }
@@ -138,9 +145,12 @@ export default function AdminPanelSection() {
 
   const handleSyncMozoPlans = async () => {
     setMozoSyncing(true);
-    toast.loading("Synchronizing plans from Mozosubs API...", { id: 'mozo-sync' });
+    toast.loading("Synchronizing plans from Mozosubz API...", { id: 'mozo-sync' });
     try {
-      const response = await fetch('/api/admin/data-plans');
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/admin/data-plans', {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      });
       if (!response.ok) {
         const text = await response.text();
         let errorMessage = "Failed to sync plans from Mozosubs.";
@@ -156,7 +166,7 @@ export default function AdminPanelSection() {
       toast.success(`Successfully synchronized ${resData.count || 0} plans!`, { id: 'mozo-sync' });
       await fetchMozoPlans();
     } catch (err: any) {
-      console.error("Error syncing Mozosubs plans:", err);
+      console.error("Error syncing Mozosubz plans:", err);
       toast.error(`Sync failed: ${err.message}`, { id: 'mozo-sync' });
     } finally {
       setMozoSyncing(false);
@@ -173,7 +183,7 @@ export default function AdminPanelSection() {
       toast.success("Plan price updated successfully!");
       setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, custom_price: newPrice } : p));
     } catch (err: any) {
-      console.error("Error updating Mozosubs custom price:", err);
+      console.error("Error updating Mozosubz custom price:", err);
       toast.error(`Failed to save price: ${err.message}`);
     }
   };
@@ -194,7 +204,7 @@ export default function AdminPanelSection() {
   };
 
   React.useEffect(() => {
-    if (adminSubTab === 'mozosubs-plans') {
+    if (adminSubTab === 'mozosubz-plans') {
       fetchMozoPlans();
     }
   }, [adminSubTab]);
@@ -344,9 +354,10 @@ export default function AdminPanelSection() {
   const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
     setIsUpdatingService(id);
     try {
+      const session = await getSession();
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
         body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category })
       });
 
@@ -414,36 +425,34 @@ export default function AdminPanelSection() {
         validity_days: newValidityDays.trim()
       };
 
-      let { data, error } = await supabase
-        .from('services_config')
-        .insert(payload)
-        .select()
-        .single();
+      // Route through server API (uses service_role key, bypasses RLS)
+      const session = await getSession();
+      const res = await fetch('/api/admin/create-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          name: payload.item_name,
+          network: payload.provider_or_network,
+          service: payload.service_type,
+          type: payload.service_type,
+          price: payload.selling_price,
+          cost_price: payload.cost_price,
+          selling_price: payload.selling_price,
+          plan_category: newPlanCategory,
+          validity_days: payload.validity_days,
+          mozosubz_plan_id: payload.bigisub_plan_id,
+          mozosubz_service: payload.service_type,
+          is_active: true,
+        }),
+      });
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
 
-      // Resilience Fallback: If column "validity_days" does not exist in Supabase
-      if (error && (error.message?.includes('column "validity_days"') || error.code === '42703')) {
-        console.warn("[handleAddServiceConfig] 'validity_days' column missing. Retrying without it...");
-        delete payload.validity_days;
-        const retryResult = await supabase
-          .from('services_config')
-          .insert(payload)
-          .select()
-          .single();
-        
-        data = retryResult.data;
-        error = retryResult.error;
-
-        if (!error) {
-          toast.success("Service created! Note: validity_days column is missing in 'services_config' Supabase table. Validity is defaulted to 30 Days.");
-        }
-      } else if (!error) {
-        toast.success("New Mozosubs Service Configuration created successfully with validity!");
-      }
-
-      if (error) throw error;
-
-      if (data) {
-        setServicesConfig(prev => [data, ...prev]);
+      toast.success('New service created and activated successfully!');
+      // Refresh list from server
+      const refreshRes = await supabase.from('services_config').select('*').order('created_at', { ascending: false }).limit(1);
+      if (refreshRes.data && refreshRes.data[0]) {
+        setServicesConfig(prev => [refreshRes.data![0], ...prev]);
       }
       
       // Reset form fields
@@ -480,29 +489,29 @@ export default function AdminPanelSection() {
   };
 
   // API config state
-  const [providerUrl, setProviderUrl] = React.useState('https://mozosubs.com/api');
+  const [providerUrl, setProviderUrl] = React.useState('https://mozosubz.xyz/api');
   const [providerKey, setProviderKey] = React.useState('');
   const [isSavingKey, setIsSavingKey] = React.useState(false);
 
   React.useEffect(() => {
-    const fetchMozosubsKey = async () => {
+    const fetchMozosubzKey = async () => {
       try {
         const { data, error } = await supabase
           .from('services_config')
           .select('item_name')
-          .eq('bigisub_identifier_id', 'mozosubs_api_key')
+          .eq('bigisub_identifier_id', 'mozosubz_api_key')
           .maybeSingle();
         if (!error && data?.item_name) {
           setProviderKey(data.item_name);
         }
       } catch (err) {
-        console.warn("Could not fetch Mozosubs API key from Supabase services_config on load:", err);
+        console.warn("Could not fetch Mozosubz API key from Supabase services_config on load:", err);
       }
     };
-    fetchMozosubsKey();
+    fetchMozosubzKey();
   }, []);
 
-  const handleSaveMozosubsKey = async () => {
+  const handleSaveMozosubzKey = async () => {
     if (!providerKey.trim()) {
       toast.error("Please enter a valid API key.");
       return;
@@ -513,7 +522,7 @@ export default function AdminPanelSection() {
         service_type: 'airtime',
         network_or_provider: 'SYSTEM_CONFIG',
         item_name: providerKey.trim(),
-        bigisub_identifier_id: 'mozosubs_api_key',
+        bigisub_identifier_id: 'mozosubz_api_key',
         cost_price: 0,
         selling_price: 0,
         is_active: true,
@@ -523,10 +532,10 @@ export default function AdminPanelSection() {
         .from('services_config')
         .upsert(payload, { onConflict: 'bigisub_identifier_id' });
       if (error) throw error;
-      toast.success("Mozosubs API token linked and saved to Supabase successfully!");
+      toast.success("Mozosubz API token linked and saved to Supabase successfully!");
     } catch (err: any) {
-      console.error("Error saving Mozosubs API token:", err);
-      toast.error(`Failed to link Mozosubs API token: ${err.message || err}`);
+      console.error("Error saving Mozosubz API token:", err);
+      toast.error(`Failed to link Mozosubz API token: ${err.message || err}`);
     } finally {
       setIsSavingKey(false);
     }
@@ -809,7 +818,10 @@ export default function AdminPanelSection() {
   const fetchOpayRevenueStats = async () => {
     setLoadingOpayStats(true);
     try {
-      const res = await fetch('/api/admin/opay-revenue');
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/opay-revenue', {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setOpayRevenueStats(data);
@@ -1057,15 +1069,15 @@ export default function AdminPanelSection() {
         </button>
         <button
           type="button"
-          onClick={() => setAdminSubTab('mozosubs-plans')}
+          onClick={() => setAdminSubTab('mozosubz-plans')}
           className={cn(
             "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
-            adminSubTab === 'mozosubs-plans'
+            adminSubTab === 'mozosubz-plans'
               ? "bg-white text-slate-900 shadow-md font-extrabold"
               : "text-slate-500 hover:text-slate-850"
           )}
         >
-          Mozosubs Plans
+          Mozosubz Plans
         </button>
         <button
           type="button"
@@ -1079,6 +1091,16 @@ export default function AdminPanelSection() {
         >
           Bank Deposits Audit
         </button>
+          <button
+            onClick={() => setAdminSubTab('pricing-manager')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'pricing-manager'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            💰 Pricing Manager
+          </button>
         {/* Monnify config option completely deleted */}
       </div>
 
@@ -1091,14 +1113,14 @@ export default function AdminPanelSection() {
                 <span className="h-2 w-2 rounded-full bg-green-400 animate-ping"></span>
                 <span className="text-[10px] uppercase font-black tracking-widest text-blue-200 font-sans">Active VTU Integration Module</span>
               </div>
-              <h5 className="font-extrabold text-white text-lg font-sans">Mozosubs Core Database Controller</h5>
+              <h5 className="font-extrabold text-white text-lg font-sans">Mozosubz Core Database Controller</h5>
               <p className="text-xs text-blue-100 font-bold max-w-2xl leading-relaxed font-sans">
-                Quickly view, sync, and override prices of live Mozosubs data packages in your PostgreSQL & Firestore catalog.
+                Quickly view, sync, and override prices of live Mozosubz data packages in your PostgreSQL & Firestore catalog.
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setAdminSubTab('mozosubs-plans')}
+              onClick={() => setAdminSubTab('mozosubz-plans')}
               className="z-10 bg-white text-blue-900 hover:bg-slate-100 font-black uppercase text-[11px] tracking-wider py-3.5 px-6 rounded-xl shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2.5 font-sans whitespace-nowrap self-start md:self-auto"
             >
               📱 Manage Data Plans
@@ -1331,14 +1353,14 @@ export default function AdminPanelSection() {
                     <div className="flex gap-2">
                       <input 
                         type="text" 
-                        placeholder="Paste your Mozosubs API Token here..."
+                        placeholder="Paste your Mozosubz API Token here..."
                         value={providerKey} 
                         onChange={(e) => setProviderKey(e.target.value)}
                         className="flex-1 bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
                       />
                       <button 
                         type="button"
-                        onClick={handleSaveMozosubsKey}
+                        onClick={handleSaveMozosubzKey}
                         disabled={isSavingKey}
                         className="bg-slate-900 hover:bg-black text-white text-[11px] font-extrabold py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm whitespace-nowrap"
                       >
@@ -1408,7 +1430,7 @@ export default function AdminPanelSection() {
                 <span className="h-2.5 w-2.5 rounded-full bg-black animate-pulse"></span>
                 <span className="text-[10px] uppercase font-black tracking-wider text-black font-sans">Option C Neo-Brutalism Design Panel</span>
               </div>
-              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubs VTU Integration Console</h4>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubz VTU Integration Console</h4>
               <p className="text-xs text-black/80 font-bold max-w-2xl font-sans">
                 Real-time synchronized control. Keep your published digital packages perfectly calibrated. 7-day physical lifespan rules apply automatically on database write transactions.
               </p>
@@ -1506,7 +1528,7 @@ export default function AdminPanelSection() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Mozosubs Plan/Identifier ID</label>
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Mozosubz Plan/Identifier ID</label>
                     <input
                       required
                       type="text"
@@ -1765,7 +1787,7 @@ export default function AdminPanelSection() {
 
                             {/* Bigisub Plan ID */}
                             <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
-                              <span className="font-bold w-20">Mozosubs ID:</span>
+                              <span className="font-bold w-20">Mozosubz ID:</span>
                               <input
                                 type="text"
                                 value={item.bigisub_plan_id || ''}
@@ -2178,18 +2200,18 @@ export default function AdminPanelSection() {
         </div>
       )}
 
-      {adminSubTab === 'mozosubs-plans' && (
+      {adminSubTab === 'mozosubz-plans' && (
         <div className="space-y-6 pb-12">
           {/* Header Action Dashboard */}
           <div className="bg-blue-50 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse"></span>
-                <span className="text-[10px] uppercase font-black tracking-wider text-blue-800 font-sans">Premium Mozosubs Sync Console</span>
+                <span className="text-[10px] uppercase font-black tracking-wider text-blue-800 font-sans">Premium Mozosubz Sync Console</span>
               </div>
-              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Manage Mozosubs Data Plans</h4>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Manage Mozosubz Data Plans</h4>
               <p className="text-xs text-slate-650 font-semibold max-w-2xl font-sans">
-                Sync live data packages from Mozosubs VTU API. Customize user-facing prices and toggle package active/inactive status.
+                Sync live data packages from Mozosubz VTU API. Customize user-facing prices and toggle package active/inactive status.
               </p>
             </div>
             <button
@@ -2205,7 +2227,7 @@ export default function AdminPanelSection() {
               ) : (
                 <>
                   <RefreshCw size={14} className="text-white" />
-                  Sync Plans from Mozosubs
+                  Sync Plans from Mozosubz
                 </>
               )}
             </button>
@@ -2250,7 +2272,7 @@ export default function AdminPanelSection() {
             <div className="relative text-left">
               <input
                 type="text"
-                placeholder="Search Mozosubs plans (e.g. SME 1GB, GLO 1.35GB)..."
+                placeholder="Search Mozosubz plans (e.g. SME 1GB, GLO 1.35GB)..."
                 value={mozoSearch}
                 onChange={(e) => setMozoSearch(e.target.value)}
                 className="w-full bg-slate-50 text-slate-800 border-2 border-black rounded-xl p-3 text-xs font-bold focus:outline-none placeholder-slate-400 font-sans"
@@ -2270,14 +2292,14 @@ export default function AdminPanelSection() {
                     const matchesNetwork = mozoNetworkFilter === 'All' || String(plan.network || '') === mozoNetworkFilter;
                     const matchesSearch = !mozoSearch.trim() ||
                       String(plan.plan_name || '').toLowerCase().includes(mozoSearch.toLowerCase()) ||
-                      String(plan.mozosubs_plan_id || '').toLowerCase().includes(mozoSearch.toLowerCase());
+                      String(plan.mozosubz_plan_id || '').toLowerCase().includes(mozoSearch.toLowerCase());
                     return matchesNetwork && matchesSearch;
                   });
 
                   if (filtered.length === 0) {
                     return (
                       <div className="py-16 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
-                        No Mozosubs data plans found in local cache. Click the Sync button to fetch latest rates.
+                        No Mozosubz data plans found in local cache. Click the Sync button to fetch latest rates.
                       </div>
                     );
                   }
@@ -2308,7 +2330,7 @@ export default function AdminPanelSection() {
                                     {netLabel}
                                   </span>
                                   <span className="text-[9px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase font-mono">
-                                    ID: {plan.mozosubs_plan_id}
+                                    ID: {plan.mozosubz_plan_id}
                                   </span>
                                 </div>
                                 <h6 className="font-extrabold text-slate-950 text-sm tracking-tight pt-1">
@@ -2670,6 +2692,12 @@ export default function AdminPanelSection() {
           </div>
         )}
       </AnimatePresence>
+
+      {adminSubTab === 'pricing-manager' && (
+        <div className="p-4 sm:p-6">
+          <AdminPricingManager />
+        </div>
+      )}
 
     </div>
   );
