@@ -27,7 +27,7 @@ import { toast } from 'react-hot-toast';
 type AuthMode = 'login' | 'signup' | 'reset';
 
 export default function AuthPage({ onBack }: { onBack: () => void }) {
-  const { signInWithGoogle, setSimulatedUser } = useAuth();
+  const { signInWithGoogle } = useAuth();
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -281,29 +281,12 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const handleSimulatedAuthBypass = () => {
     const cleanEmail = email.trim() || 'user@example.com';
     const cleanName = fullName.trim() || 'Faruq Ibrahim';
-    const generatedId = "simulated_" + Math.random().toString(36).substring(2, 11);
     const generatedCode = "N-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     const isOwnerEmail = cleanEmail.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
     
-    const simulatedProfile = {
-      uid: isOwnerEmail ? 'admin_ibrahim_vtu_uid' : generatedId,
-      email: cleanEmail.toLowerCase(),
-      fullName: isOwnerEmail ? 'Faruq Ibrahim (Admin)' : cleanName,
-      balance: 0,
-      role: (isOwnerEmail ? 'admin' : 'user') as any,
-      referralCode: isOwnerEmail ? 'NOROYA-ADMIN-99' : generatedCode,
-      is_reseller: false,
-      phoneNumber: phone || '08000000000',
-      transactionPin: pin || '1234',
-      createdAt: new Date().toISOString()
-    };
     
-    setSimulatedUser(simulatedProfile);
-    toast.success("Welcome! Your local Sandbox Session is fully authenticated and unblocked. ✨", { duration: 5000 });
-    onBack();
   };
 
   const handleForgotPassword = async (resetEmail: string) => {
@@ -481,18 +464,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
               <AlertCircle size={18} className="mt-0.5 shrink-0 text-rose-600 animate-bounce" />
               <div className="flex-1 leading-relaxed">
                 <div>{error}</div>
-                <div className="mt-4 pt-4 border-t border-rose-200">
-                  <p className="text-[10px] text-rose-700 uppercase tracking-widest font-black mb-2 flex items-center gap-1.5">
-                    <Smartphone size={12} /> Live Deployed Simulator Access
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleSimulatedAuthBypass}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold uppercase text-[10px] tracking-wider py-2.5 px-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                  >
-                    ⚡ Bypass: Continue in local Sandbox Mode
-                  </button>
-                </div>
               </div>
             </div>
           )}
