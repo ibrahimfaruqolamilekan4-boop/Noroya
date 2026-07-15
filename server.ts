@@ -1066,6 +1066,7 @@ async function startServer() {
 
   // GET /api/sync-mozosubs-plans and GET /api/data/plans/sync: Sync data plans from Mozosubs API into Postgres & Firestore
   app.get(["/api/sync-mozosubs-plans", "/api/sync/mozosubs-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], async (req, res) => {
+    console.log(`[Sync Plans Route] Request received: ${req.url}`);
     try {
       const localStore = loadLocalDb();
       const MOZOSUBS_API_KEY = await resolveMozosubsApiKey();
@@ -2148,8 +2149,11 @@ async function startServer() {
 
   // 3. PUT Admin Control Route: Allows instant modifications of plan parameters
   app.put("/api/admin/services/:id", async (req, res) => {
+    console.log(`[Update Service Route] Request received: ${req.url}, ID: ${req.params.id}, Body:`, JSON.stringify(req.body));
     try {
-      const { id } = req.params;
+      const rawId = req.params.id;
+      // Sanitize: Decode, then replace en-dash (–) with hyphen (-)
+      const id = decodeURIComponent(rawId).replace(/–/g, '-');
       const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
 
       const updateData: any = {};
