@@ -407,36 +407,34 @@ export default function AdminPanelSection() {
         validity_days: newValidityDays.trim()
       };
 
-      let { data, error } = await supabase
-        .from('services_config')
-        .insert(payload)
-        .select()
-        .single();
+      // Route through server API (uses service_role key, bypasses RLS)
+      const session = await getSession();
+      const res = await fetch('/api/admin/create-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          name: payload.item_name,
+          network: payload.provider_or_network,
+          service: payload.service_type,
+          type: payload.service_type,
+          price: payload.selling_price,
+          cost_price: payload.cost_price,
+          selling_price: payload.selling_price,
+          plan_category: newPlanCategory,
+          validity_days: payload.validity_days,
+          mozosubz_plan_id: payload.bigisub_plan_id,
+          mozosubz_service: payload.service_type,
+          is_active: true,
+        }),
+      });
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
 
-      // Resilience Fallback: If column "validity_days" does not exist in Supabase
-      if (error && (error.message?.includes('column "validity_days"') || error.code === '42703')) {
-        console.warn("[handleAddServiceConfig] 'validity_days' column missing. Retrying without it...");
-        delete payload.validity_days;
-        const retryResult = await supabase
-          .from('services_config')
-          .insert(payload)
-          .select()
-          .single();
-        
-        data = retryResult.data;
-        error = retryResult.error;
-
-        if (!error) {
-          toast.success("Service created! Note: validity_days column is missing in 'services_config' Supabase table. Validity is defaulted to 30 Days.");
-        }
-      } else if (!error) {
-        toast.success("New Mozosubz Service Configuration created successfully with validity!");
-      }
-
-      if (error) throw error;
-
-      if (data) {
-        setServicesConfig(prev => [data, ...prev]);
+      toast.success('New service created and activated successfully!');
+      // Refresh list from server
+      const refreshRes = await supabase.from('services_config').select('*').order('created_at', { ascending: false }).limit(1);
+      if (refreshRes.data && refreshRes.data[0]) {
+        setServicesConfig(prev => [refreshRes.data![0], ...prev]);
       }
       
       // Reset form fields

@@ -4481,9 +4481,28 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  // In production on Vercel, we export the app; locally we listen
+  if (process.env.VERCEL !== '1') {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
+
+  return app;
 }
 
-startServer();
+// Export for Vercel serverless (module.exports / export default)
+let _appInstance: any = null;
+const getExpressApp = async () => {
+  if (!_appInstance) {
+    _appInstance = await startServer();
+  }
+  return _appInstance;
+};
+
+export default getExpressApp;
+
+// Also start listening if running directly (not on Vercel)
+if (process.env.VERCEL !== '1') {
+  startServer().catch(console.error);
+}
