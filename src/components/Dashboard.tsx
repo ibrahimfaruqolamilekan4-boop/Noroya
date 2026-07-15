@@ -2604,6 +2604,41 @@ function DashboardOverview({
                       )}
                     </button>
 
+                    {/* High-fidelity simulation trigger button when in sandbox environment */}
+                    {(typeof process === 'undefined' || !process?.env || !process.env.FLUTTERWAVE_SECRET_KEY || String(process.env.FLUTTERWAVE_SECRET_KEY).includes("PASTE_YOUR")) && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setFwLoading(true);
+                          const mockReference = `NOR-FW-SIM-${Date.now()}`;
+                          try {
+                            const res = await fetch('/api/payments/verify-flutterwave', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                transactionId: "simulated",
+                                reference: mockReference,
+                                amount: Number(opayAmount || 2000),
+                                email: user.email
+                              })
+                            });
+                            if (res.ok) {
+                              toast.success(`[SANDBOX BYPASS] Successfully credited ₦${Number(opayAmount || 2000).toLocaleString()} to wallet!`, { icon: '🤖' });
+                              setShowFundModal(false);
+                            } else {
+                              toast.error("Sandbox simulated trigger failed.");
+                            }
+                          } catch(e: any) {
+                            toast.error("Sandbox simulation exception: " + e.message);
+                          } finally {
+                            setFwLoading(false);
+                          }
+                        }}
+                        className="w-full text-center py-2.5 px-4 rounded-xl border-2 border-black border-dashed bg-slate-50 hover:bg-slate-100 font-extrabold text-[10px] text-slate-600 uppercase tracking-wider cursor-pointer active:translate-y-0.5 transition-all"
+                      >
+                        🤖 Run High-Fidelity Sandbox Funding Simulation
+                      </button>
+                    )}
 
                     <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-[#DBE2EF] border-2 border-black text-slate-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                       <AlertCircle size={18} className="text-[#5B21B6] flex-shrink-0" />

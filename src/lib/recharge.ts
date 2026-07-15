@@ -118,7 +118,7 @@ export function useLoadBalance() {
 
 /**
  * 💸 ATOMIC PURCHASE AIRTIME (RPC BACKEND/CLIENT HELPER)
- * Handles double-entry ledger security with atomic balance operations using Mozosubz API.
+ * Handles double-entry ledger security with atomic balance operations using Mozosubs API.
  */
 export async function purchaseAirtime(
   userId: string,
@@ -161,18 +161,18 @@ export async function purchaseAirtime(
   }
 
   try {
-    // 2. Call Mozosubz API proxy or direct to execute direct telecom dispatching
+    // 2. Call Mozosubs API proxy or direct to execute direct telecom dispatching
     const isServer = typeof process !== "undefined" && process?.env;
     let result: any;
 
-    if (isServer && process.env.MOZOSUBZ_API_KEY) {
+    if (isServer && process.env.MOZOSUBS_API_KEY) {
       // Direct call if running on server-side
-      const mozoBaseUrl = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
+      const mozoBaseUrl = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
       const res = await fetch(`${mozoBaseUrl}/airtime/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${process.env.MOZOSUBZ_API_KEY}`
+          'Authorization': `Token ${process.env.MOZOSUBS_API_KEY}`
         },
         body: JSON.stringify({
           network,
@@ -244,7 +244,7 @@ export async function purchaseAirtime(
 
 /**
  * ⚡ ATOMIC PURCHASE DATA BUNDLE
- * Validates, debits balance atomically, executes transaction via Mozosubz API, and logs transaction.
+ * Validates, debits balance atomically, executes transaction via Mozosubs API, and logs transaction.
  */
 export async function purchaseDataBundle(
   userId: string,
@@ -274,18 +274,18 @@ export async function purchaseDataBundle(
   }
 
   try {
-    // 2. Call Mozosubz API or Proxy
+    // 2. Call Mozosubs API or Proxy
     const isServer = typeof process !== "undefined" && process?.env;
     let result: any;
 
-    if (isServer && process.env.MOZOSUBZ_API_KEY) {
+    if (isServer && process.env.MOZOSUBS_API_KEY) {
       // Direct call if running on server-side
-      const mozoBaseUrl = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
+      const mozoBaseUrl = process.env.MOZOSUBS_BASE_URL || "https://mozosubs.com/api";
       const res = await fetch(`${mozoBaseUrl}/data/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${process.env.MOZOSUBZ_API_KEY}`
+          'Authorization': `Token ${process.env.MOZOSUBS_API_KEY}`
         },
         body: JSON.stringify({
           network,

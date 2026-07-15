@@ -68,8 +68,5 @@ export interface ServicePlan {
   badge?: string;
   expiresAt?: any;
   createdAt?: string;
-  mozosubz_service?: string;
-  mozosubs_plan_id?: string;
-  mozosubz_plan_id?: string;
   created_at?: string;
 }
