@@ -2337,17 +2337,29 @@ async function startServer() {
         updated_at:           new Date().toISOString(),
       };
 
-      // Upsert on mozosubz_plan_id (our canonical key for Mozosubz plans)
-      const { error } = await supabase
+      // Manual select-then-update/insert instead of .upsert() with onConflict —
+      // onConflict requires an actual unique index on that column in Postgres, and we
+      // can't guarantee mozosubz_plan_id has one on every environment. This works regardless.
+      record.bigisub_identifier_id = planId;
+      const { data: existing, error: findErr } = await supabase
         .from('services_config')
-        .upsert(record, { onConflict: 'mozosubz_plan_id' });
+        .select('id')
+        .or(`mozosubz_plan_id.eq.${planId},bigisub_identifier_id.eq.${planId}`)
+        .maybeSingle();
 
-      if (error) {
-        // Fallback upsert on bigisub_identifier_id if mozosubz_plan_id constraint fails
-        const { error: err2 } = await supabase
+      if (findErr) throw new Error(findErr.message);
+
+      if (existing) {
+        const { error: updErr } = await supabase
           .from('services_config')
-          .upsert({ ...record, bigisub_identifier_id: planId }, { onConflict: 'bigisub_identifier_id' });
-        if (err2) throw new Error(err2.message);
+          .update(record)
+          .eq('id', existing.id);
+        if (updErr) throw new Error(updErr.message);
+      } else {
+        const { error: insErr } = await supabase
+          .from('services_config')
+          .insert(record);
+        if (insErr) throw new Error(insErr.message);
       }
 
       return res.json({ success: true, message: "Plan published successfully!" });
