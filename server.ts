@@ -2176,38 +2176,12 @@ async function startServer() {
         .select()
         .maybeSingle();
 
-      updatedRecord = result.data;
-      updateErr = result.error;
-
-      // Resilience Fallback: If column "validity_days" or "plan_category" does not exist in Supabase services_config
-      if (updateErr && (updateErr.message?.includes('column "validity_days"') || updateErr.message?.includes('column "plan_category"') || updateErr.code === '42703')) {
-        console.warn("[PUT Admin Service Config] Extra columns missing. Retrying without validity_days/plan_category...");
-        delete updateData.validity_days;
-        delete updateData.plan_category;
-        const retryResult = await supabase
-          .from('services_config')
-          .update(updateData)
-          .eq('id', id)
-          .select()
-          .maybeSingle();
-        
-        updatedRecord = retryResult.data;
-        updateErr = retryResult.error;
-
-        if (!updateErr && updatedRecord) {
-          return res.json({
-            success: true,
-            message: "Service configuration updated successfully! (Note: validity_days/plan_category columns are missing in your 'services_config' Supabase table, but the updated details were saved in item_name).",
-            service: updatedRecord
-          });
-        }
+      if (result.error) {
+        console.error("[Supabase PUT Service Error]:", result.error);
+        return res.status(500).json({ error: `Database update error: ${result.error.message}` });
       }
 
-      if (updateErr) {
-        console.error("[Supabase PUT Service Error]:", updateErr);
-        return res.status(500).json({ error: `Database update error: ${updateErr.message}` });
-      }
-
+      const updatedRecord = result.data;
       if (!updatedRecord) {
         return res.status(404).json({ error: "Service configuration item not found." });
       }
