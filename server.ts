@@ -3326,7 +3326,11 @@ async function startServer() {
         return res.status(401).send("Unauthorized: Signature header missing.");
       }
 
-      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY || "sk_test_6722fa7c94e8d9d5a736e";
+      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
+    if (!secretKey) {
+      console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY not configured");
+      return res.status(500).send("Server configuration error");
+    }
       
       let rawBody = "";
       if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
@@ -3348,7 +3352,7 @@ async function startServer() {
         .update(rawBody)
         .digest("hex");
 
-      if (signature !== computedHash && signature !== "local-bypass") {
+      if (signature !== computedHash) {
         console.warn("[Paystack Webhook] Calculated signature mismatch.");
         return res.status(401).send("Unauthorized: Invalid signature hash verification.");
       }
