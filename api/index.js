@@ -14,7 +14,7 @@ async function getHandler() {
   return appPromise;
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   try {
     const app = await getHandler();
     // Patch the URL to include /api prefix context if needed
@@ -23,4 +23,4 @@ module.exports = async (req, res) => {
     console.error('[API Handler Error]:', err);
     res.status(500).json({ error: 'Server initialization failed', details: err.message });
   }
-};
+}
