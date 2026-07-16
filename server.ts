@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
@@ -4454,6 +4453,12 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    // Dynamic import so 'vite' (a devDependency, correctly excluded from the
+    // production serverless bundle) is never loaded/required in production.
+    // A top-level static import would execute unconditionally at module load
+    // time regardless of this NODE_ENV check, pulling in vite -> rollup and
+    // crashing every request before this branch is even reached.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
