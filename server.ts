@@ -56,7 +56,7 @@ const resolveBigisubApiKey = async (): Promise<string> => {
 // ─── VTU Provider Plugin System ─────────────────────────────────────────────
 // Providers live in src/lib/vtu-providers.ts
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders } from './src/lib/vtu-providers';
+import { getProvider, initProviders, listProviders } from './src/lib/vtu-providers.js';
 
 // ─── Failure logger ───────────────────────────────────────────────────────────
 const logVtuFailure = async (opts: {
