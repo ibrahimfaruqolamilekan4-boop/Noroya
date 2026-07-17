@@ -98,7 +98,7 @@ const mozosubzProvider: VtuProvider = {
 
     const url     = p.type === 'data' ? `${base}/data/purchase` : `${base}/airtime/purchase`;
     const payload = p.type === 'data'
-      ? { service: p.mozosubzService || `${net}_sme`, id: String(p.planId), phone: p.phone }
+      ? { service: p.mozosubzService || `${net}_sme`, plan_id: String(p.planId), phone: p.phone }
       : { network: net, amount: p.amount, phone: p.phone };
 
     console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
