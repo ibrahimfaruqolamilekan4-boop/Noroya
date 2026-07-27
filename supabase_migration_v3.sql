@@ -407,3 +407,11 @@ CREATE TRIGGER trg_guard_role_update
 -- ── DONE ─────────────────────────────────────────────────────────────────────
 -- Run supabase_migration_v2.sql first if upgrading from v2.
 -- This v3 migration is safe to run on a fresh or existing Supabase project.
+
+-- Fix: mozosubz_plan_id and mozosubz_service were referenced throughout server.ts
+-- but never actually created by any migration (only mozosubs_plan_id, with an 's',
+-- existed) -- caused "column services_config.mozosubz_plan_id does not exist" on
+-- every create-plan call AND every data purchase (both select this column).
+ALTER TABLE services_config ADD COLUMN IF NOT EXISTS mozosubz_plan_id TEXT;
+ALTER TABLE services_config ADD COLUMN IF NOT EXISTS mozosubz_service TEXT;
+UPDATE services_config SET mozosubz_plan_id = mozosubs_plan_id WHERE mozosubz_plan_id IS NULL AND mozosubs_plan_id IS NOT NULL;
