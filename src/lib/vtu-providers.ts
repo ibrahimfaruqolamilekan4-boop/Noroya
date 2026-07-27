@@ -97,8 +97,17 @@ const mozosubzProvider: VtuProvider = {
     const net  = normNetwork(p.network);
 
     const url     = p.type === 'data' ? `${base}/data/purchase` : `${base}/airtime/purchase`;
+    const service = p.mozosubzService || `${net}_sme`;
+    // Plan IDs are stored composite as `${service}_${rawId}` because Mozosubz reuses the
+    // same raw numeric id across different services (e.g. id "166" exists in mtn_sme,
+    // mtn_datashare AND mtn_gifting with different prices) -- strip the prefix back off
+    // before calling the real API, which only wants the raw id.
+    const rawPlanIdStr = String(p.planId);
+    const rawPlanId = rawPlanIdStr.startsWith(`${service}_`)
+      ? rawPlanIdStr.slice(service.length + 1)
+      : rawPlanIdStr;
     const payload = p.type === 'data'
-      ? { service: p.mozosubzService || `${net}_sme`, plan_id: String(p.planId), phone: p.phone }
+      ? { service, plan_id: rawPlanId, phone: p.phone }
       : { network: net, amount: p.amount, phone: p.phone };
 
     console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
