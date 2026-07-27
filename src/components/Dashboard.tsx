@@ -942,6 +942,14 @@ function DashboardOverview({
   const [currentBalance, setCurrentBalance] = React.useState(0);
   const [isUpdating, setIsUpdating] = React.useState(false);
 
+  // ── WALLET TRANSFER STATE ──────────────────────────────────────────────
+  const [showTransferModal, setShowTransferModal] = React.useState(false);
+  const [transferUid, setTransferUid] = React.useState('');
+  const [transferAmount, setTransferAmount] = React.useState('');
+  const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
+  const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
+  const [transferLoading, setTransferLoading] = React.useState(false);
+
   React.useEffect(() => {
     setCurrentBalance(user?.wallet_balance || user?.balance || 0);
   }, [user?.wallet_balance, user?.balance]);
@@ -1037,6 +1045,68 @@ function DashboardOverview({
     } finally {
       setIsUpdating(false);
       setTimeout(refreshBalance, 1200); // final server sync
+    }
+  };
+
+  // ── WALLET TRANSFER HANDLERS ───────────────────────────────────────────
+  const handleLookupRecipient = async () => {
+    if (!transferUid.trim()) {
+      toast.error("Please enter a recipient UID");
+      return;
+    }
+    setTransferLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('lookup_recipient', {
+        target_uid: transferUid.trim()
+      });
+      if (error) throw error;
+      if (data.status === 'error') {
+        toast.error(data.message);
+        return;
+      }
+      setTransferRecipient(data.data);
+      setTransferStep('confirm');
+    } catch (err: any) {
+      toast.error(err.message || "Failed to find recipient");
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  const handleConfirmTransfer = async () => {
+    const amt = Number(transferAmount);
+    if (!amt || amt <= 0) {
+      toast.error("Please enter a valid amount");
+      return;
+    }
+    setTransferLoading(true);
+    const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    try {
+      const { data, error } = await supabase.rpc('transfer_funds', {
+        recipient_uid: transferUid.trim(),
+        p_amount: amt,
+        p_reference: reference
+      });
+      if (error) throw error;
+
+      if (data.status === 'success') {
+        toast.success(`₦${amt.toLocaleString()} sent to ${data.recipient_email}!`);
+        setShowTransferModal(false);
+        setTransferStep('input');
+        setTransferUid('');
+        setTransferAmount('');
+        setTransferRecipient(null);
+        refreshBalance();
+      } else if (data.status === 'insufficient_funds') {
+        toast.error(`Insufficient balance. You have ₦${data.balance}, need ₦${data.required}.`);
+      } else {
+        toast.error(data.message || "Transfer failed");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Transfer failed");
+    } finally {
+      setTransferLoading(false);
     }
   };
 
@@ -1856,7 +1926,7 @@ function DashboardOverview({
               <ArrowDownLeft size={16} /> Fund Wallet
             </button>
             <button 
-              onClick={() => toast("Wallet transfer triggers are active under user settings.", { icon: 'ℹ️', duration: 3000 })} 
+              onClick={() => setShowTransferModal(true)} 
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
             >
               Transfer
@@ -1897,6 +1967,26 @@ function DashboardOverview({
                   navigator.clipboard.writeText(user.referralCode);
                   toast.success("Referral code copied to clipboard!");
                 }} 
+                className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+
+          {/* Your Transfer UID */}
+          <div className="mt-4">
+            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Your Transfer UID</p>
+            <div className="flex gap-2">
+              <div className="flex-1 bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl text-xs font-mono font-black text-slate-800 select-all tracking-wider text-center flex items-center justify-center">
+                {(user as any).uid_code || 'Loading...'}
+              </div>
+              <button
+                onClick={() => {
+                  if (!(user as any).uid_code) return;
+                  navigator.clipboard.writeText((user as any).uid_code);
+                  toast.success("UID copied!");
+                }}
                 className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
               >
                 Copy
@@ -2616,6 +2706,85 @@ function DashboardOverview({
                     </div>
                   </form>
               </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Wallet Transfer Modal */}
+        {showTransferModal && (
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => { setShowTransferModal(false); setTransferStep('input'); }}
+              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-8 space-y-6"
+            >
+              <div className="flex justify-between items-center">
+                <h4 className="font-extrabold text-slate-900 text-xl">Transfer Funds</h4>
+                <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="p-2 text-slate-400 hover:bg-slate-50 rounded-full">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {transferStep === 'input' && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient UID</label>
+                    <input
+                      value={transferUid}
+                      onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
+                      placeholder="e.g. NR1A2B3C"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Amount (₦)</label>
+                    <input
+                      type="number"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600"
+                    />
+                  </div>
+                  <button
+                    onClick={handleLookupRecipient}
+                    disabled={transferLoading || !transferUid || !transferAmount}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
+                  >
+                    {transferLoading ? "Checking..." : "Continue"}
+                  </button>
+                </div>
+              )}
+
+              {transferStep === 'confirm' && transferRecipient && (
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-2">
+                    <p className="text-xs text-slate-400 font-bold uppercase">Sending to</p>
+                    <p className="font-extrabold text-slate-900">{transferRecipient.full_name || transferRecipient.email}</p>
+                    <p className="text-xs text-slate-500">{transferRecipient.uid}</p>
+                    <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
+                      <span className="text-xs text-slate-400 font-bold uppercase">Amount</span>
+                      <span className="text-xl font-black text-blue-600">₦{Number(transferAmount).toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => setTransferStep('input')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5">
+                      Back
+                    </button>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
+                      {transferLoading ? "Sending..." : "Confirm"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </div>
         )}
