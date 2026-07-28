@@ -351,14 +351,14 @@ export default function AdminPanelSection() {
   };
 
   // Update a Bigisub service configuration dynamically
-  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, bigisub_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
+  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, mozosubz_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
     setIsUpdatingService(id);
     try {
       const session = await getSession();
       const response = await fetch(`/api/admin/services/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({ cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category })
+        body: JSON.stringify({ cost_price, selling_price, is_active, mozosubz_plan_id, validity_days, item_name, plan_category })
       });
 
       if (!response.ok) {
@@ -384,7 +384,7 @@ export default function AdminPanelSection() {
             cost_price, 
             selling_price, 
             is_active, 
-            bigisub_plan_id: bigisub_plan_id !== undefined ? bigisub_plan_id : item.bigisub_plan_id,
+            mozosubz_plan_id: mozosubz_plan_id !== undefined ? mozosubz_plan_id : item.mozosubz_plan_id,
             validity_days: validity_days !== undefined ? validity_days : item.validity_days,
             item_name: item_name !== undefined ? item_name : item.item_name,
             plan_category: plan_category !== undefined ? plan_category : item.plan_category
@@ -1706,7 +1706,7 @@ export default function AdminPanelSection() {
                             <input
                               type="checkbox"
                               checked={item.is_active}
-                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.bigisub_plan_id, itemValidity, item.item_name, itemCategory)}
+                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
                               className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
                             />
                             <span className="text-[10px] font-black uppercase font-sans">
@@ -1785,18 +1785,18 @@ export default function AdminPanelSection() {
                               </div>
                             )}
 
-                            {/* Bigisub Plan ID */}
+                            {/* Mozosubz Plan ID -- the actual id used for real purchases, was wrongly bound to bigisub_plan_id (legacy, unused) before */}
                             <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
                               <span className="font-bold w-20">Mozosubz ID:</span>
                               <input
                                 type="text"
-                                value={item.bigisub_plan_id || ''}
+                                value={item.mozosubz_plan_id || ''}
                                 onChange={(e) => {
                                   const val = e.target.value;
-                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, bigisub_plan_id: val } : p));
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, mozosubz_plan_id: val } : p));
                                 }}
                                 className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-full max-w-[140px]"
-                                placeholder="Plan ID"
+                                placeholder="e.g. mtn_sme_166"
                               />
                             </div>
 
@@ -1866,7 +1866,7 @@ export default function AdminPanelSection() {
 
                           <button
                             type="button"
-                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.bigisub_plan_id, itemValidity, item.item_name, itemCategory)}
+                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
                             disabled={isUpdatingService === item.id}
                             className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
                           >
