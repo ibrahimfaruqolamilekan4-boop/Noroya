@@ -23,6 +23,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
+import { DashboardOverviewTab, TransactionsTab, UserManagementTab, ProviderStatusTab } from './AdminExtraTabs';
 import { db, auth } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
 
@@ -116,7 +117,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager'>('overview');
+  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>('overview');
 
   // Mozosubz Data Plans States & Functions
   const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
@@ -1101,8 +1102,53 @@ export default function AdminPanelSection() {
           >
             💰 Pricing Manager
           </button>
+          <button
+            onClick={() => setAdminSubTab('dashboard')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'dashboard'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            📊 Dashboard
+          </button>
+          <button
+            onClick={() => setAdminSubTab('transactions')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'transactions'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            🧾 Transactions
+          </button>
+          <button
+            onClick={() => setAdminSubTab('user-mgmt')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'user-mgmt'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            👤 User Management
+          </button>
+          <button
+            onClick={() => setAdminSubTab('provider-status')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'provider-status'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            🛰️ Provider Status
+          </button>
         {/* Monnify config option completely deleted */}
       </div>
+
+      {adminSubTab === 'dashboard' && <DashboardOverviewTab />}
+      {adminSubTab === 'transactions' && <TransactionsTab />}
+      {adminSubTab === 'user-mgmt' && <UserManagementTab />}
+      {adminSubTab === 'provider-status' && <ProviderStatusTab />}
 
       {adminSubTab === 'overview' && (
         <>
