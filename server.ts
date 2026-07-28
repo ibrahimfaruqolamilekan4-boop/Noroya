@@ -641,151 +641,114 @@ async function startServer() {
     }
   });
 
-  // GET /api/sync-mozosubz-plans and GET /api/data/plans/sync: Sync data plans from Mozosubz API into Postgres & Firestore
+  // GET /api/sync-mozosubz-plans and aliases: Sync data plans from the REAL Mozosubz V1 API into services_config.
+  // Mozosubz has NO bulk "all plans" endpoint -- GET /api/v1/data/plans requires a single `service` id per call,
+  // auth is via X-Connect-Key header (not Authorization: Token), base URL is https://mozosubz.xyz/api/v1.
   app.get(["/api/sync-mozosubz-plans", "/api/sync/mozosubz-plans", "/api/data/plans/sync", "/api/admin/data-plans", "/api/admin/data-plans/sync"], async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const localStore = loadLocalDb();
       const MOZOSUBZ_API_KEY = await resolveMozosubzApiKey();
-      const MOZOSUBZ_BASE_URL = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
-
-      let mozosubzPlans: any[] = [];
-      let isFallbackNeeded = false;
+      const MOZOSUBZ_BASE_URL = "https://mozosubz.xyz/api/v1";
 
       if (!MOZOSUBZ_API_KEY || MOZOSUBZ_API_KEY.includes("dummy") || MOZOSUBZ_API_KEY.includes("test")) {
         return res.status(503).json({ error: "Mozosubz provider not configured. Please set MOZOSUBZ_API_KEY." });
       }
-      {  // live fetch
-        const mozoPlansUrl = `${MOZOSUBZ_BASE_URL}/data/plans/`;
-        console.log(`[Mozosubz API] Fetching plans from: ${mozoPlansUrl}`);
-        
+
+      // Every real Mozosubz data service, mapped to its display network + category for our schema.
+      const DATA_SERVICES: { service: string; network: string; category: string }[] = [
+        { service: "mtn_sme",        network: "MTN",     category: "SME" },
+        { service: "mtn_datashare",  network: "MTN",     category: "DATASHARE" },
+        { service: "mtn_gifting",    network: "MTN",     category: "GIFTING" },
+        { service: "mtn_awoof",      network: "MTN",     category: "AWOOF" },
+        { service: "glo_data",       network: "GLO",     category: "GIFTING" },
+        { service: "glo_sme",        network: "GLO",     category: "SME" },
+        { service: "airtel_sme",     network: "AIRTEL",  category: "SME" },
+        { service: "airtel_gifting", network: "AIRTEL",  category: "GIFTING" },
+        { service: "etisalat_data",  network: "9MOBILE", category: "GIFTING" },
+      ];
+
+      const syncedPlans: any[] = [];
+      const failedServices: string[] = [];
+
+      for (const { service, network, category } of DATA_SERVICES) {
         try {
-          const response = await axios.get(mozoPlansUrl, {
-            headers: {
-              'Authorization': `Token ${MOZOSUBZ_API_KEY}`
-            },
+          const response = await axios.get(`${MOZOSUBZ_BASE_URL}/data/plans`, {
+            params: { service },
+            headers: { "X-Connect-Key": MOZOSUBZ_API_KEY },
             timeout: 10000
           });
-          mozosubzPlans = response.data;
-        } catch (apiErr: any) {
-          console.error("[Mozosubz API plans error message]:", apiErr.message);
-          // If trailing slash failed or returned 404, try without trailing slash
-          if (apiErr.response?.status === 404 || apiErr.message?.includes("404")) {
-            const fallbackUrl = `${MOZOSUBZ_BASE_URL}/data/plans`;
-            console.log(`[Mozosubz API] Retrying fallback URL: ${fallbackUrl}`);
+
+          const plans = response.data?.plans;
+          if (!Array.isArray(plans)) {
+            console.warn(`[Mozosubz Sync] No plans array for service ${service}:`, response.data);
+            failedServices.push(service);
+            continue;
+          }
+
+          for (const plan of plans) {
+            const rawId = String(plan.id ?? "");
+            if (!rawId) continue;
+
+            const costPrice = Number(plan.price || 0);
+            const sellingPrice = Math.ceil((costPrice * 1.15) / 10) * 10;
+            const mozosubzPlanId = `${service}_${rawId}`;
+            const itemName = `${plan.displayName || plan.name || rawId} - ${category}`;
+
+            const record = {
+              service_type: "data",
+              provider: "mozosubz",
+              provider_or_network: network,
+              item_name: itemName,
+              plan_category: category,
+              mozosubz_service: service,
+              mozosubz_plan_id: mozosubzPlanId,
+              bigisub_identifier_id: mozosubzPlanId,
+              bigisub_plan_id: mozosubzPlanId,
+              cost_price: costPrice,
+              selling_price: sellingPrice,
+              validity_days: String(plan.validity || "30 Days"),
+              is_active: true,
+              updated_at: new Date().toISOString()
+            };
+
             try {
-              const response = await axios.get(fallbackUrl, {
-                headers: {
-                  'Authorization': `Token ${MOZOSUBZ_API_KEY}`
-                },
-                timeout: 10000
-              });
-              mozosubzPlans = response.data;
-            } catch (fallbackErr: any) {
-              console.error("[Mozosubz API plans fallback error message]:", fallbackErr.message);
-              isFallbackNeeded = true;
+              const { data: existing } = await supabase
+                .from('services_config')
+                .select('id')
+                .eq('mozosubz_plan_id', mozosubzPlanId)
+                .maybeSingle();
+
+              if (existing?.id) {
+                const { error: updErr } = await supabase
+                  .from('services_config')
+                  .update(record)
+                  .eq('id', existing.id);
+                if (updErr) console.error(`[Mozosubz Sync] Update error for ${mozosubzPlanId}:`, updErr.message);
+              } else {
+                const { error: insErr } = await supabase
+                  .from('services_config')
+                  .insert(record);
+                if (insErr) console.error(`[Mozosubz Sync] Insert error for ${mozosubzPlanId}:`, insErr.message);
+              }
+              syncedPlans.push(record);
+            } catch (dbErr: any) {
+              console.error(`[Mozosubz Sync] DB exception for ${mozosubzPlanId}:`, dbErr.message || dbErr);
             }
-          } else {
-            isFallbackNeeded = true;
           }
+        } catch (apiErr: any) {
+          console.error(`[Mozosubz API] Failed to fetch plans for service ${service}:`, apiErr.message);
+          failedServices.push(service);
         }
       }
 
-      if (isFallbackNeeded || !mozosubzPlans || !Array.isArray(mozosubzPlans) || mozosubzPlans.length === 0) {
-        console.error("[Mozosubz] Failed to fetch live plans from API. No simulation fallback — check MOZOSUBZ_API_KEY.");
-        mozosubzPlans = [
-          { id: 101, network: 1, name: "MTN SME 1GB", price: 230, validity: "30 Days" },
-          { id: 102, network: 1, name: "MTN SME 2GB", price: 460, validity: "30 Days" },
-          { id: 103, network: 1, name: "MTN SME 5GB", price: 1150, validity: "30 Days" },
-          { id: 201, network: 2, name: "GLO 1.35GB", price: 450, validity: "30 Days" },
-          { id: 301, network: 3, name: "Airtel CG 1.5GB", price: 500, validity: "30 Days" },
-          { id: 401, network: 4, name: "9mobile 1.5GB", price: 600, validity: "30 Days" }
-        ];
+      if (syncedPlans.length === 0) {
+        return res.status(502).json({
+          error: "Mozosubz sync fetched zero plans across all services -- check MOZOSUBZ_API_KEY / connectivity.",
+          failedServices
+        });
       }
 
-      if (!Array.isArray(mozosubzPlans)) {
-        console.warn("[Mozosubz Plans Sync] Response is not an array:", mozosubzPlans);
-        if (mozosubzPlans && typeof mozosubzPlans === 'object' && Array.isArray((mozosubzPlans as any).results)) {
-          mozosubzPlans = (mozosubzPlans as any).results;
-        } else {
-          throw new Error("Invalid response format from provider API - expected array.");
-        }
-      }
-
-      console.log(`[Mozosubz Plans Sync] Syncing ${mozosubzPlans.length} plans to database...`);
-
-      const syncedPlans = [];
-      for (const plan of mozosubzPlans) {
-        const pId = plan.id || plan.plan_id;
-        if (!pId) continue;
-
-        const record = {
-          mozosubz_plan_id: String(pId),
-          network: String(plan.network || ''),
-          plan_name: String(plan.name || plan.plan_name || ''),
-          original_price: Number(plan.price || plan.original_price || 0),
-          custom_price: Number(plan.price || plan.custom_price || plan.original_price || 0),
-          validity: String(plan.validity || '30 Days'),
-          is_active: plan.is_active !== undefined ? plan.is_active : true,
-          updated_at: new Date().toISOString()
-        };
-
-        let syncedSuccessful = false;
-        try {
-          const { error: upsertErr } = await supabase
-            .from('data_plans')
-            .upsert(record, { onConflict: 'mozosubz_plan_id' });
-
-          if (upsertErr) {
-            console.error(`[Mozosubz Sync] Supabase upsert error for plan ${pId}:`, upsertErr.message);
-          } else {
-            syncedSuccessful = true;
-          }
-        } catch (supErr: any) {
-          console.error(`[Mozosubz Sync] Supabase upsert exception for plan ${pId}:`, supErr.message || supErr);
-        }
-
-        try {
-            await supabase.from('services_config').upsert({ bigisub_identifier_id: String(pId), id: String(pId),
-              mozosubz_plan_id: String(pId),
-              network: String(plan.network || ''),
-              plan_name: String(plan.name || plan.plan_name || ''),
-              price: Number(plan.price || 0),
-              retail_price: Number(plan.price || 0),
-              validity: String(plan.validity || '30 Days'),
-              is_active: plan.is_active !== undefined ? plan.is_active : true,
-              updatedAt: new Date().toISOString() }, { onConflict: 'bigisub_identifier_id' });
-        } catch (fsErr: any) {
-          console.warn(`[Mozosubz Sync] Firestore sync warning for plan ${pId}:`, fsErr.message);
-        }
-
-        // Always save to our robust high-availability local database fallback
-        try {
-          if (!localStore.data_plans) {
-            localStore.data_plans = {};
-          }
-          localStore.data_plans[String(pId)] = {
-            id: String(pId),
-            mozosubz_plan_id: String(pId),
-            network: String(plan.network || ''),
-            plan_name: String(plan.name || plan.plan_name || ''),
-            price: Number(plan.price || 0),
-            retail_price: Number(plan.price || 0),
-            validity: String(plan.validity || '30 Days'),
-            is_active: plan.is_active !== undefined ? plan.is_active : true,
-          };
-          saveLocalDb(localStore);
-          syncedSuccessful = true;
-        } catch (localStoreErr: any) {
-          console.warn(`[Mozosubz Sync] Local fallback database write warning for plan ${pId}:`, localStoreErr.message || localStoreErr);
-        }
-
-        if (syncedSuccessful || MOZOSUBZ_API_KEY.includes("dummy") || MOZOSUBZ_API_KEY.includes("test") || true) {
-          syncedPlans.push(record);
-        }
-      }
-
-      return res.json({ success: true, count: syncedPlans.length, plans: syncedPlans });
+      return res.json({ success: true, count: syncedPlans.length, failedServices, plans: syncedPlans });
     } catch (e: any) {
       console.error("[Mozosubz Plans Sync Endpoint Error]:", e.message || String(e));
       return res.status(500).json({ error: e.message || "Failed to process Mozosubz plans sync" });
