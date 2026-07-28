@@ -1784,20 +1784,23 @@ async function startServer() {
       const rawId = req.params.id;
       // Sanitize: Decode, then replace en-dash (–) with hyphen (-)
       const id = decodeURIComponent(rawId).replace(/–/g, '-');
-      const { cost_price, selling_price, is_active, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
+      const { cost_price, selling_price, is_active, mozosubz_plan_id, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
 
       const updateData: any = {};
       if (item_name !== undefined) updateData.item_name = String(item_name).trim();
       if (cost_price !== undefined) updateData.cost_price = Number(cost_price);
       if (selling_price !== undefined) updateData.selling_price = Number(selling_price);
       if (is_active !== undefined) updateData.is_active = Boolean(is_active);
+      // mozosubz_plan_id is the id actually used for real purchases (vtu-providers.ts).
+      // bigisub_plan_id is a separate legacy column, kept writable too in case anything else still relies on it.
+      if (mozosubz_plan_id !== undefined) updateData.mozosubz_plan_id = String(mozosubz_plan_id).trim();
       if (bigisub_plan_id !== undefined) updateData.bigisub_plan_id = String(bigisub_plan_id).trim();
       if (validity_days !== undefined) updateData.validity_days = String(validity_days).trim();
       if (plan_category !== undefined) updateData.plan_category = String(plan_category).trim();
       updateData.updated_at = new Date().toISOString();
 
       if (Object.keys(updateData).length <= 1) {
-        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, bigisub_plan_id, validity_days, is_active, or item_name." });
+        return res.status(400).json({ error: "Missing fields to update. Please specify cost_price, selling_price, mozosubz_plan_id, validity_days, is_active, or item_name." });
       }
 
       const result = await supabase
