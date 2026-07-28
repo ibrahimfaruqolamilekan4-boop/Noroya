@@ -1054,7 +1054,6 @@ async function startServer() {
         const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
         try {
           await supabase.from('transactions').insert({
-            id: `bigi_${Date.now()}`,
             userId: pgUuid,
             user_id: pgUuid,
             type: finalType,
@@ -1066,23 +1065,6 @@ async function startServer() {
           });
         } catch (txErr: any) {
           console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
-        }
-
-        // Create transaction record in Firestore as fallback
-        try {
-            const txId = `bigi_${Date.now()}`;
-            await supabase.from('transactions').insert({
-              id: txId,
-              userId: finalUserId,
-              type: finalType,
-              amount: finalAmount,
-              status: 'completed',
-              description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-              reference: referenceCode,
-              createdAt: new Date().toISOString()
-            });
-        } catch (fsTxErr) {
-          // Ignored
         }
 
         return res.json({
@@ -1864,7 +1846,6 @@ async function startServer() {
       try {
         const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
         await supabase.from('transactions').insert({
-          id: transactionId,
           userId: pgUuid,
           user_id: pgUuid,
           type: service.service_type,
@@ -1877,20 +1858,6 @@ async function startServer() {
       } catch (txErr: any) {
         console.warn("[Supabase Utility pending transaction logging skipped]:", txErr.message || txErr);
       }
-
-      // Sync 'pending' status to Firestore fallback
-      try {
-          await supabase.from('transactions').insert({
-              id: transactionId,
-              userId: resolvedUserId,
-              type: service.service_type,
-              amount: finalPrice,
-              status: 'pending',
-              description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
-              reference: localReference,
-              createdAt: new Date().toISOString()
-            });
-      } catch (e) {}
 
       const BIGISUB_API_KEY = await resolveBigisubApiKey();
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
@@ -2170,7 +2137,7 @@ async function startServer() {
       const txId     = `airtime_${Date.now()}`;
       try {
         await supabase.from('transactions').insert({
-          id: txId, user_id: pgUuid, userId: pgUuid,
+          user_id: pgUuid, userId: pgUuid,
           type: 'airtime', amount: chargeAmount, status: 'pending',
           description: `Airtime VTU: ₦${parsedAmount} ${network} → ${finalPhone}`,
           reference: localRef, createdAt: new Date().toISOString()
@@ -2947,7 +2914,6 @@ async function startServer() {
         const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
         try {
           await supabase.from('transactions').insert({
-            id: `mozo_${Date.now()}`,
             userId: pgUuid,
             user_id: pgUuid,
             type: finalType,
@@ -2959,23 +2925,6 @@ async function startServer() {
           });
         } catch (txErr: any) {
           console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
-        }
-
-        // Create transaction record in Firestore as fallback
-        try {
-            const txId = `mozo_${Date.now()}`;
-            await supabase.from('transactions').insert({
-              id: txId,
-              userId: finalUserId,
-              type: finalType,
-              amount: finalAmount,
-              status: 'completed',
-              description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-              reference: referenceCode,
-              createdAt: new Date().toISOString()
-            });
-        } catch (fsTxErr) {
-          // Ignored
         }
 
         return res.json({
@@ -3594,8 +3543,7 @@ async function startServer() {
 
         try {
           await supabase.from('transactions').insert({
-            id: transactionId,
-            userId: profile.id,
+              userId: profile.id,
             user_id: profile.id,
             user_email: profile.email || userEmail,
             type: reqType,
@@ -3669,7 +3617,7 @@ async function startServer() {
       if (updateErr) throw new Error(updateErr.message);
 
       await supabase.from('transactions').insert({
-        id: `upgrade_${Date.now()}`, user_id: pgUuid, type: 'upgrade',
+        user_id: pgUuid, type: 'upgrade',
         amount: fee, status: 'completed',
         description: `Account upgraded to ${desireRole.toUpperCase()} (₦${fee} deducted)`,
         created_at: new Date().toISOString()
@@ -3744,7 +3692,7 @@ async function startServer() {
       if (rpcErr) throw new Error(rpcErr.message);
 
       await supabase.from('transactions').insert({
-        id: `bonus_${Date.now()}`, user_id: pgUuid, type: 'bonus',
+        user_id: pgUuid, type: 'bonus',
         amount: wonAmount, status: 'completed',
         description: `Daily bonus wheel reward of ₦${wonAmount}`,
         created_at: new Date().toISOString()
@@ -3966,7 +3914,6 @@ async function startServer() {
           const { error: pgTxErr } = await supabase
             .from('transactions')
             .insert({
-              id: txId,
               user_id: pgUuid,
               userId: userId,
               amount: verifiedAmount,
@@ -3983,7 +3930,6 @@ async function startServer() {
             await supabase
               .from('transactions')
               .insert({
-                id: txId,
                 user_id: userId,
                 amount: verifiedAmount,
                 status: 'success',
@@ -4005,7 +3951,6 @@ async function startServer() {
       // 6. Record transaction history for UI representation
       const txId = `fw_fund_${Date.now()}`;
       await supabase.from('transactions').insert({
-        id: txId,
         userId,
         type: "funding",
         amount: verifiedAmount,
@@ -4204,7 +4149,6 @@ async function startServer() {
         const { error: insertErr } = await supabase
           .from("transactions")
           .insert({
-            id: `fw_webhook_${txId}`,
             user_email: customerEmail,
             amount: amount,
             type: "deposit",
@@ -4331,7 +4275,6 @@ async function startServer() {
           const txId = `mozo_webhook_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
           try {
             await supabase.from('transactions').insert({
-              id: txId,
               user_id: pgUuid,
               userId: pgUuid,
               type: type || 'funding',
