@@ -971,7 +971,39 @@ async function startServer() {
         return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured. Contact admin.` });
       }
 
-      // Dispatch through the provider plugin
+      // 4. LOCK FUNDS FIRST: atomically deduct the wallet balance BEFORE calling the provider.
+      // Uses the deduct_balance() Postgres RPC (SECURITY DEFINER, race-safe: it re-checks the
+      // balance and decrements it in a single atomic statement, so two concurrent requests can
+      // never both succeed against the same balance -- unlike a read-then-write in JS).
+      const localRef = `TRX-VTU-${Date.now()}`;
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: pgUuid,
+        amount: finalAmount,
+      });
+
+      if (lockErr) {
+        console.error("[VTU Fund Lock] deduct_balance RPC error:", lockErr.message);
+        return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+      }
+
+      // Record the pending transaction now that funds are locked.
+      let pendingTxId: number | null = null;
+      try {
+        const { data: pendingTx } = await supabase.from('transactions').insert({
+          user_id: pgUuid, userId: pgUuid,
+          type: finalType, amount: finalAmount, status: 'pending',
+          description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+          reference: localRef, createdAt: new Date().toISOString(),
+        }).select('id').maybeSingle();
+        pendingTxId = pendingTx?.id ?? null;
+      } catch (txErr: any) {
+        console.warn("[VTU pending transaction insert warning]:", txErr.message || txErr);
+      }
+
+      // 5. Call the provider now that funds are safely locked.
       try {
         const result = await provider.purchase({
           type:             finalType as 'data' | 'airtime',
@@ -1014,57 +1046,20 @@ async function startServer() {
           raw:       rawErrData,
         });
       }
-      
 
-      // 4. Decrement the user's Supabase balance only if the Bigisub API call succeeds
+      // 6. Settle: on success just mark the transaction complete (funds already locked/deducted).
+      // On failure, AUTOMATICALLY REFUND the locked amount back to the user's wallet via the
+      // increment_balance() RPC, and mark the transaction failed/refunded.
       if (apiSuccess) {
-        const deductedBalance = currentBalance - finalAmount;
-        const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
-        
-        // Atomically update balance in Supabase profiles
-        const { error: updateErr } = await supabase
-          .from('profiles')
-          .update({ 
-            wallet_balance: deductedBalance,
-            balance: deductedBalance
-          })
-          .eq('id', pgUuid);
-
-        if (updateErr) {
-          console.error("[Supabase Balance Update Error]:", updateErr);
-          return res.status(500).json({ 
-            error: "Bigisub purchase succeeded, but database balance update failed. Please contact admin.",
-            reference: apiResponseData?.reference || apiResponseData?.id 
-          });
-        }
-
-        // Keep fallback users table or other tables in sync if they exist
+        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localRef;
         try {
-          await supabase
-            .from('users')
-            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', pgUuid);
-        } catch (ignoreErr) {
-          // Ignored backup table failure
-        }
-
-        // (Supabase profiles already updated above)
-
-        // Create a transaction record in Supabase 'transactions' table
-        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
-        try {
-          await supabase.from('transactions').insert({
-            userId: pgUuid,
-            user_id: pgUuid,
-            type: finalType,
-            amount: finalAmount,
-            status: 'completed',
-            description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-            reference: referenceCode,
-            createdAt: new Date().toISOString()
-          });
+          if (pendingTxId) {
+            await supabase.from('transactions').update({
+              status: 'success', reference: referenceCode, api_reference: referenceCode,
+            }).eq('id', pendingTxId);
+          }
         } catch (txErr: any) {
-          console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
+          console.warn("[Supabase Transactions update bypassed]:", txErr.message || txErr);
         }
 
         return res.json({
@@ -1079,10 +1074,25 @@ async function startServer() {
           }
         });
       } else {
-        // Purchase failed, return error response and do NOT deduct user's balance
-        console.warn(`[Bigisub Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
-        return res.status(400).json({ 
-          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
+        // Purchase failed at the provider -- automatically refund the locked funds.
+        const { error: refundErr } = await supabase.rpc('increment_balance', {
+          user_uuid: pgUuid,
+          amount: finalAmount,
+        });
+        if (refundErr) {
+          console.error("[VTU Auto-Refund] increment_balance RPC FAILED -- manual intervention needed:", refundErr.message, { pgUuid, finalAmount, localRef });
+        }
+        try {
+          if (pendingTxId) {
+            await supabase.from('transactions').update({
+              status: refundErr ? 'failed' : 'refunded',
+            }).eq('id', pendingTxId);
+          }
+        } catch (_) { /* non-fatal */ }
+
+        console.warn(`[VTU Purchase Failed]: ${apiErrorMsg}. Funds automatically refunded.`);
+        return res.status(400).json({
+          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet has been automatically refunded.`
         });
       }
     } catch (err: any) {
@@ -2115,12 +2125,6 @@ async function startServer() {
       const sellingPct  = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
       const chargeAmount = parseFloat((parsedAmount * (sellingPct / 100)).toFixed(2));
 
-      if (currentBalance < chargeAmount) {
-        return res.status(400).json({
-          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but have ₦${currentBalance.toFixed(2)}.`
-        });
-      }
-
       // ── Pick provider (from services_config or fallback mozosubz) ──
       const chosenProvider = service?.provider || 'mozosubz';
       const provider = getProvider(chosenProvider);
@@ -2132,19 +2136,37 @@ async function startServer() {
         return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured.` });
       }
 
-      // ── Log pending transaction (single insert) ───────────────
+      // ── LOCK FUNDS FIRST: atomically deduct via deduct_balance() RPC before calling the
+      // provider (race-safe -- re-checks + decrements balance in one atomic statement). ──
       const localRef = `TRX-AIRTIME-${Date.now()}`;
-      const txId     = `airtime_${Date.now()}`;
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: pgUuid,
+        amount: chargeAmount,
+      });
+
+      if (lockErr) {
+        console.error("[Airtime Fund Lock] deduct_balance RPC error:", lockErr.message);
+        return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        return res.status(400).json({
+          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but have ₦${currentBalance.toFixed(2)}.`
+        });
+      }
+
+      // ── Log pending transaction, keep the real auto-generated bigint id for later updates ──
+      let txDbId: number | null = null;
       try {
-        await supabase.from('transactions').insert({
+        const { data: pendingTx } = await supabase.from('transactions').insert({
           user_id: pgUuid, userId: pgUuid,
           type: 'airtime', amount: chargeAmount, status: 'pending',
           description: `Airtime VTU: ₦${parsedAmount} ${network} → ${finalPhone}`,
           reference: localRef, createdAt: new Date().toISOString()
-        });
+        }).select('id').maybeSingle();
+        txDbId = pendingTx?.id ?? null;
       } catch (_) { /* non-fatal */ }
 
-      // ── Call the provider ─────────────────────────────────────
+      // ── Call the provider now that funds are safely locked ────
       let purchaseResult;
       try {
         purchaseResult = await provider.purchase({
@@ -2158,39 +2180,31 @@ async function startServer() {
       } catch (provErr: any) {
         const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
         await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data });
-        await supabase.from('transactions').update({ status: 'failed' }).eq('id', txId);
-        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}` });
+        const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
+        if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
+        if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
+        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
       }
 
       if (!purchaseResult.success) {
         const errMsg = purchaseResult.error || 'Gateway rejected the transaction.';
         await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw });
-        await supabase.from('transactions').update({ status: 'failed' }).eq('id', txId);
-        return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. No funds were deducted.` });
+        const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
+        if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
+        if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
+        return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
       }
 
-      // ── Deduct balance (only on success) ─────────────────────
+      // ── Success: funds already locked/deducted, just mark the transaction and reply ──
       const newBalance = parseFloat((currentBalance - chargeAmount).toFixed(2));
-      const { error: balErr } = await supabase
-        .from('profiles')
-        .update({ wallet_balance: newBalance, balance: newBalance, available_balance: newBalance })
-        .eq('id', pgUuid);
-
-      if (balErr) {
-        console.error("[Airtime balance deduct error]:", balErr);
-        return res.status(500).json({
-          error: "Purchase succeeded at gateway but balance update failed. Please contact support.",
-          reference: purchaseResult.reference
-        });
-      }
-
       const refCode = purchaseResult.reference || purchaseResult.raw?.transaction_id || localRef;
 
-      // ── Mark transaction success ──────────────────────────────
       try {
-        await supabase.from('transactions').update({
-          status: 'success', reference: refCode, api_reference: refCode
-        }).eq('id', txId);
+        if (txDbId) {
+          await supabase.from('transactions').update({
+            status: 'success', reference: refCode, api_reference: refCode
+          }).eq('id', txDbId);
+        }
       } catch (_) { /* non-fatal */ }
 
       return res.status(200).json({
