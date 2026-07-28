@@ -4374,6 +4374,316 @@ async function startServer() {
     }
   });
 
+  // ─── Admin: Users list (paginated, searchable) ──────────────────────────
+  app.get("/api/admin/users", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const limit = Math.min(Number(req.query.limit) || 25, 100);
+      const offset = Number(req.query.offset) || 0;
+      const search = String(req.query.search || "").trim();
+
+      let query = supabase
+        .from('profiles')
+        .select('id, email, full_name, name, phone_number, wallet_balance, balance, role, created_at', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (search) {
+        query = query.or(`email.ilike.%${search}%,full_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+      }
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      return res.json({ users: data || [], total: count || 0, limit, offset });
+    } catch (err: any) {
+      console.error("[Admin Users List Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Single user detail + their transactions ─────────────────────
+  app.get("/api/admin/users/:id", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const userId = req.params.id;
+      const { data: profile, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profErr) throw new Error(profErr.message);
+      if (!profile) return res.status(404).json({ error: "User not found." });
+
+      const { data: txs, error: txErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (txErr) console.warn("[Admin User Detail] transactions fetch warning:", txErr.message);
+
+      return res.json({ user: profile, transactions: txs || [] });
+    } catch (err: any) {
+      console.error("[Admin User Detail Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Adjust a user's wallet balance (credit or debit) ────────────
+  app.post("/api/admin/users/:id/adjust-balance", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const userId = req.params.id;
+      const { amount, direction, reason } = req.body;
+      const numAmount = Number(amount);
+
+      if (!numAmount || numAmount <= 0) {
+        return res.status(400).json({ error: "Amount must be a positive number." });
+      }
+      if (direction !== 'credit' && direction !== 'debit') {
+        return res.status(400).json({ error: "Direction must be 'credit' or 'debit'." });
+      }
+      if (!reason || !String(reason).trim()) {
+        return res.status(400).json({ error: "A reason is required for balance adjustments." });
+      }
+
+      // Identify the acting admin from their session token for the audit log
+      const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+      const { data: { user: adminUser } } = await supabase.auth.getUser(token);
+
+      if (direction === 'credit') {
+        const { error: rpcErr } = await supabase.rpc('increment_balance', { user_uuid: userId, amount: numAmount });
+        if (rpcErr) throw new Error(rpcErr.message);
+      } else {
+        const { data: ok, error: rpcErr } = await supabase.rpc('deduct_balance', { user_uuid: userId, amount: numAmount });
+        if (rpcErr) throw new Error(rpcErr.message);
+        if (!ok) return res.status(400).json({ error: "User has insufficient balance for this debit." });
+      }
+
+      // Audit log
+      try {
+        await supabase.from('admin_wallet_adjustments').insert({
+          user_id: userId,
+          admin_id: adminUser?.id || null,
+          amount: numAmount,
+          direction,
+          reason: String(reason).trim(),
+        });
+      } catch (auditErr: any) {
+        console.warn("[Admin Balance Adjust] audit log insert warning:", auditErr.message);
+      }
+
+      // Mirror into the user's own transaction history (id is bigint auto-increment — never set it manually)
+      try {
+        await supabase.from('transactions').insert({
+          user_id: userId,
+          type: 'admin_adjustment',
+          amount: numAmount,
+          status: 'completed',
+          description: `Admin ${direction === 'credit' ? 'credited' : 'debited'} wallet: ${String(reason).trim()}`,
+          reference: `ADMIN-ADJ-${Date.now()}`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (txErr: any) {
+        console.warn("[Admin Balance Adjust] transaction log warning:", txErr.message);
+      }
+
+      const { data: updatedProfile } = await supabase.from('profiles').select('wallet_balance, balance').eq('id', userId).maybeSingle();
+
+      return res.json({ success: true, newBalance: updatedProfile?.wallet_balance ?? null });
+    } catch (err: any) {
+      console.error("[Admin Balance Adjust Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: All-users transaction ledger (paginated, filterable) ────────
+  app.get("/api/admin/transactions", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const limit = Math.min(Number(req.query.limit) || 25, 100);
+      const offset = Number(req.query.offset) || 0;
+      const status = String(req.query.status || "").trim();
+      const type = String(req.query.type || "").trim();
+      const search = String(req.query.search || "").trim();
+      const userId = String(req.query.user_id || "").trim();
+      const from = String(req.query.from || "").trim();
+      const to = String(req.query.to || "").trim();
+
+      let query = supabase
+        .from('transactions')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (status) query = query.eq('status', status);
+      if (type) query = query.eq('type', type);
+      if (userId) query = query.eq('user_id', userId);
+      if (from) query = query.gte('created_at', from);
+      if (to) query = query.lte('created_at', to);
+      if (search) {
+        query = query.or(`user_email.ilike.%${search}%,reference.ilike.%${search}%,phone.ilike.%${search}%,recipient.ilike.%${search}%`);
+      }
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      return res.json({ transactions: data || [], total: count || 0, limit, offset });
+    } catch (err: any) {
+      console.error("[Admin Transactions List Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Mozosubz provider status / uptime check ─────────────────────
+  app.get("/api/admin/mozosubz-status", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const MOZOSUBZ_SERVICES = [
+        { id: 'mtn_sme', label: 'MTN SME' },
+        { id: 'mtn_datashare', label: 'MTN DataShare' },
+        { id: 'mtn_gifting', label: 'MTN Gifting' },
+        { id: 'mtn_awoof', label: 'MTN Awoof' },
+        { id: 'glo_data', label: 'Glo Data' },
+        { id: 'glo_sme', label: 'Glo SME' },
+        { id: 'airtel_sme', label: 'Airtel SME' },
+        { id: 'airtel_gifting', label: 'Airtel Gifting' },
+        { id: 'etisalat_data', label: '9mobile Data' },
+      ];
+
+      const base = process.env.MOZOSUBZ_BASE_URL || 'https://mozosubz.xyz/api/v1';
+      const mozosubzProvider = getProvider('mozosubz');
+      const apiKey = mozosubzProvider ? await mozosubzProvider.resolveApiKey() : '';
+
+      const checkOne = async (svc: { id: string; label: string }) => {
+        const start = Date.now();
+        try {
+          const resp = await axios.get(`${base}/data/plans`, {
+            params: { service: svc.id },
+            headers: { 'X-Connect-Key': apiKey },
+            timeout: 8000,
+            validateStatus: () => true,
+          });
+          const latency = Date.now() - start;
+          const body = resp.data;
+          if (body?.success === true) {
+            return { ...svc, status: 'ok', httpStatus: resp.status, latencyMs: latency, message: `${(body.plans || []).length} plans` };
+          }
+          const errMsg = String(body?.error || body?.message || 'Unknown error');
+          if (/inactive|revoked/i.test(errMsg)) {
+            return { ...svc, status: 'key_revoked', httpStatus: resp.status, latencyMs: latency, message: errMsg };
+          }
+          return { ...svc, status: 'error', httpStatus: resp.status, latencyMs: latency, message: errMsg };
+        } catch (e: any) {
+          const latency = Date.now() - start;
+          const isTimeout = e.code === 'ECONNABORTED' || /timeout/i.test(e.message || '');
+          return { ...svc, status: isTimeout ? 'timeout' : 'error', httpStatus: e.response?.status || 0, latencyMs: latency, message: e.message };
+        }
+      };
+
+      const results = await Promise.all(MOZOSUBZ_SERVICES.map(checkOne));
+      const healthy = results.filter(r => r.status === 'ok').length;
+
+      // Lightweight Supabase reachability check
+      const dbStart = Date.now();
+      let dbStatus = 'ok';
+      try {
+        await supabase.from('profiles').select('id').limit(1);
+      } catch (e) {
+        dbStatus = 'error';
+      }
+      const dbLatency = Date.now() - dbStart;
+
+      return res.json({
+        summary: `${healthy}/${MOZOSUBZ_SERVICES.length} services healthy`,
+        healthyCount: healthy,
+        totalCount: MOZOSUBZ_SERVICES.length,
+        services: results,
+        supabase: { status: dbStatus, latencyMs: dbLatency },
+        checkedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[Admin Mozosubz Status Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Dashboard summary metrics ────────────────────────────────────
+  app.get("/api/admin/dashboard-summary", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const last30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      const [
+        { count: totalUsers },
+        { count: usersToday },
+        { count: usersWeek },
+        { count: usersMonth },
+        { data: balances },
+        { count: txToday },
+        { count: txWeek },
+        { count: txMonth },
+        { data: recentTx },
+        { data: last30dTx },
+      ] = await Promise.all([
+        supabase.from('profiles').select('id', { count: 'exact', head: true }),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).gte('created_at', startOfDay),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth),
+        supabase.from('profiles').select('wallet_balance'),
+        supabase.from('transactions').select('id', { count: 'exact', head: true }).gte('created_at', startOfDay),
+        supabase.from('transactions').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek),
+        supabase.from('transactions').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth),
+        supabase.from('transactions').select('id, user_email, type, amount, status, created_at').order('created_at', { ascending: false }).limit(10),
+        supabase.from('transactions').select('type, amount, status, created_at').gte('created_at', last30d),
+      ]);
+
+      const totalWalletLiability = (balances || []).reduce((sum: number, p: any) => sum + Number(p.wallet_balance || 0), 0);
+
+      const last30 = last30dTx || [];
+      const successCount = last30.filter((t: any) => t.status === 'success' || t.status === 'completed').length;
+      const successRate = last30.length > 0 ? Math.round((successCount / last30.length) * 100) : 0;
+
+      const planCounts: Record<string, number> = {};
+      last30.forEach((t: any) => {
+        const key = t.type || 'unknown';
+        planCounts[key] = (planCounts[key] || 0) + 1;
+      });
+      const topPlans = Object.entries(planCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([type, count]) => ({ type, count }));
+
+      // Revenue proxy: sum of successful transaction amounts in the last 30 days
+      // (cost_price/selling_price margin isn't reliably joinable from transactions as stored today).
+      const revenue30d = last30
+        .filter((t: any) => t.status === 'success' || t.status === 'completed')
+        .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+
+      return res.json({
+        users: { total: totalUsers || 0, today: usersToday || 0, week: usersWeek || 0, month: usersMonth || 0 },
+        walletLiability: totalWalletLiability,
+        transactions: { today: txToday || 0, week: txWeek || 0, month: txMonth || 0 },
+        successRatePercent30d: successRate,
+        revenueProxy30d: revenue30d,
+        revenueProxyNote: "Sum of successful transaction amounts over the last 30 days (cost/selling-price margin isn't cleanly joinable from the transactions table as currently stored).",
+        topPlans,
+        recentActivity: recentTx || [],
+      });
+    } catch (err: any) {
+      console.error("[Admin Dashboard Summary Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     // Dynamic import so 'vite' (a devDependency, correctly excluded from the
