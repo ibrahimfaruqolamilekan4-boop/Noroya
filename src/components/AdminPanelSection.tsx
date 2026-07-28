@@ -520,7 +520,7 @@ export default function AdminPanelSection() {
     try {
       const payload = {
         service_type: 'airtime',
-        network_or_provider: 'SYSTEM_CONFIG',
+        provider_or_network: 'SYSTEM_CONFIG',
         item_name: providerKey.trim(),
         bigisub_identifier_id: 'mozosubz_api_key',
         cost_price: 0,
