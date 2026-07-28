@@ -42,6 +42,20 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
   const [pinDenom, setPinDenom] = React.useState<number>(100);
   const [pinQty, setPinQty] = React.useState<number>(10);
 
+  // Live plan data fetched from the real database -- no hardcoded prices.
+  const [livePlans, setLivePlans] = React.useState<any[]>([]);
+  const [liveCablePlans, setLiveCablePlans] = React.useState<any[]>([]);
+  React.useEffect(() => {
+    fetch('/api/services/data').then(r => r.ok ? r.json() : []).then(data => {
+      if (Array.isArray(data)) setLivePlans(data);
+    }).catch(() => {});
+    fetch('/api/services/all').then(r => r.ok ? r.json() : []).then(data => {
+      if (Array.isArray(data)) {
+        setLiveCablePlans(data.filter((s: any) => s.is_active && s.service_type === 'cable'));
+      }
+    }).catch(() => {});
+  }, []);
+
   // Copy handler with temporary state feedback
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -49,57 +63,36 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
     setTimeout(() => setCopiedText(null), 2000);
   };
 
-  const planRates = {
-    mtn: [
-      { size: "500MB", duration: "30 Days", type: "SME", price: "₦135" },
-      { size: "1GB", duration: "30 Days", type: "SME", price: "₦265" },
-      { size: "2GB", duration: "30 Days", type: "SME", price: "₦530" },
-      { size: "5GB", duration: "30 Days", type: "SME", price: "₦1,325" },
-      { size: "10GB", duration: "30 Days", type: "SME", price: "₦2,650" }
-    ],
-    glo: [
-      { size: "750MB", duration: "14 Days", type: "SME", price: "₦190" },
-      { size: "1.5GB", duration: "30 Days", type: "SME", price: "₦290" },
-      { size: "3GB", duration: "30 Days", type: "SME", price: "₦580" },
-      { size: "5GB", duration: "30 Days", type: "SME", price: "₦950" },
-      { size: "10GB", duration: "30 Days", type: "SME", price: "₦1,900" }
-    ],
-    airtel: [
-      { size: "500MB", duration: "7 Days", type: "Gifting", price: "₦145" },
-      { size: "1GB", duration: "30 Days", type: "Gifting", price: "₦250" },
-      { size: "2GB", duration: "30 Days", type: "Gifting", price: "₦500" },
-      { size: "5GB", duration: "30 Days", type: "Gifting", price: "₦1,250" },
-      { size: "10GB", duration: "30 Days", type: "Gifting", price: "₦2,500" }
-    ],
-    "9mobile": [
-      { size: "1GB", duration: "30 Days", type: "SME", price: "₦295" },
-      { size: "1.5GB", duration: "30 Days", type: "SME", price: "₦445" },
-      { size: "3GB", duration: "30 Days", type: "SME", price: "₦890" },
-      { size: "5GB", duration: "30 Days", type: "SME", price: "₦1,480" },
-      { size: "10GB", duration: "30 Days", type: "SME", price: "₦2,950" }
-    ]
-  };
+  // Derived live plan tables -- grouped by network from real, current DB data (max 6 per network, cheapest first).
+  const networkKeyMap: Record<string, string> = { MTN: 'mtn', GLO: 'glo', AIRTEL: 'airtel', '9MOBILE': '9mobile' };
+  const planRates: Record<string, Array<{ size: string; duration: string; type: string; price: string }>> = { mtn: [], glo: [], airtel: [], '9mobile': [] };
+  livePlans
+    .slice()
+    .sort((a: any, b: any) => (a.selling_price || 0) - (b.selling_price || 0))
+    .forEach((p: any) => {
+      const key = networkKeyMap[String(p.network || p.provider_or_network || '').toUpperCase()];
+      if (key && planRates[key].length < 6) {
+        planRates[key].push({
+          size: p.item_name || p.name || 'Data Plan',
+          duration: p.validity_days || '-',
+          type: p.plan_category || 'Data',
+          price: `₦${Number(p.selling_price || 0).toLocaleString()}`
+        });
+      }
+    });
 
-  const cablePlans = {
-    dstv: [
-      { name: "DStv Padi", price: "₦2,950 / month", channels: "45+ Channels" },
-      { name: "DStv Yanga", price: "₦4,200 / month", channels: "85+ Channels" },
-      { name: "DStv Confam", price: "₦6,200 / month", channels: "105+ Channels" },
-      { name: "DStv Compact", price: "₦12,500 / month", channels: "135+ Channels" }
-    ],
-    gotv: [
-      { name: "GOtv Lite", price: "₦1,200 / month", channels: "25+ Channels" },
-      { name: "GOtv Value", price: "₦1,850 / month", channels: "40+ Channels" },
-      { name: "GOtv Jinja", price: "₦2,700 / month", channels: "45+ Channels" },
-      { name: "GOtv Max", price: "₦4,850 / month", channels: "75+ Channels" }
-    ],
-    startimes: [
-      { name: "Startimes Nova", price: "₦1,500 / month", channels: "30+ Channels" },
-      { name: "Startimes Basic", price: "₦3,000 / month", channels: "80+ Channels" },
-      { name: "Startimes Smart", price: "₦4,500 / month", channels: "100+ Channels" },
-      { name: "Startimes Super", price: "₦6,500 / month", channels: "150+ Channels" }
-    ]
-  };
+  const cablePlans: Record<string, Array<{ name: string; price: string; channels: string }>> = { dstv: [], gotv: [], startimes: [] };
+  liveCablePlans.forEach((p: any) => {
+    const prov = String(p.provider_or_network || '').toUpperCase();
+    const key = prov.includes('DSTV') ? 'dstv' : prov.includes('GOTV') ? 'gotv' : prov.includes('STARTIMES') ? 'startimes' : null;
+    if (key) {
+      cablePlans[key].push({
+        name: p.item_name || p.name || 'Cable Plan',
+        price: `₦${Number(p.selling_price || 0).toLocaleString()} / month`,
+        channels: p.metadata?.channels || ''
+      });
+    }
+  });
 
   const faqs = [
     {
@@ -507,9 +500,11 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                     ))}
                   </div>
 
-                  {/* Tiny Cable packages display list */}
+                  {/* Tiny Cable packages display list -- live data, no hardcoded plans */}
                   <div className="bg-white rounded-2xl p-4 border border-slate-200/40 space-y-2 max-w-md">
-                    {cablePlans[activeCableTab].map((p, idx) => (
+                    {cablePlans[activeCableTab].length === 0 ? (
+                      <div className="text-xs text-slate-400 font-bold py-2 text-center">New plans coming soon</div>
+                    ) : cablePlans[activeCableTab].map((p, idx) => (
                       <div key={idx} className="flex justify-between items-center text-xs">
                         <span className="font-extrabold text-slate-800">{p.name}</span>
                         <div className="flex items-center gap-2">
@@ -605,6 +600,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                   <div className="text-right">Price</div>
                 </div>
                 <div className="divide-y divide-slate-100 bg-white">
+                  {planRates[activeNetworkTab].length === 0 && (
+                    <div className="p-6 text-xs text-slate-400 font-bold text-center">Loading live plans...</div>
+                  )}
                   {planRates[activeNetworkTab].map((p, idx) => (
                     <div key={idx} className="grid grid-cols-4 p-4 text-xs font-bold text-slate-700 hover:bg-slate-50/50 transition-colors items-center">
                       <div className="font-extrabold text-sm text-slate-900">{p.size}</div>

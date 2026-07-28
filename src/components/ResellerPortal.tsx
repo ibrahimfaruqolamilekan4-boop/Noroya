@@ -49,6 +49,14 @@ export default function ResellerPortal() {
   const [isSelling, setIsSelling] = React.useState(false);
   const [saleReceipt, setSaleReceipt] = React.useState<any>(null);
 
+  // Live data plans for the sale-plan dropdown -- no hardcoded prices.
+  const [liveDataPlans, setLiveDataPlans] = React.useState<any[]>([]);
+  React.useEffect(() => {
+    fetch('/api/services/data').then(r => r.ok ? r.json() : []).then(data => {
+      if (Array.isArray(data)) setLiveDataPlans(data);
+    }).catch(() => {});
+  }, []);
+
   // Simulated validation names for customer
   const CUSTOMER_NAMES = [
     "Adewunmi Gbenga", "Ngozi Chika", "Bello Ibrahim", "Precious Adebayo", 
@@ -631,27 +639,22 @@ export default function ResellerPortal() {
                         value={salePlan}
                         onChange={(e) => {
                           setSalePlan(e.target.value);
-                          const planOpts: Record<string, number> = {
-                            "MTN 1.2GB Gifting": 250, "MTN 3GB Corporate Gifting": 620, "MTN 10GB Corporate Gifting": 1850,
-                            "Airtel 1GB Monthly": 240, "Airtel 5GB Monthly": 1150,
-                            "Glo 1.5GB Data": 400, "Glo 6GB Monthly": 1200,
-                            "9mobile 1.5GB": 450, "9mobile 5GB Corporate Gifting": 1300
-                          };
-                          if (planOpts[e.target.value]) {
-                            setSaleCost(String(planOpts[e.target.value]));
-                            setCustomerPrice(String(planOpts[e.target.value] + 50)); // default markup
+                          const chosen = liveDataPlans.find((p: any) => String(p.id) === e.target.value);
+                          if (chosen) {
+                            setSaleCost(String(chosen.cost_price ?? chosen.selling_price ?? 0));
+                            setCustomerPrice(String((chosen.selling_price ?? 0) + 50)); // default markup
                           }
                         }}
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-blue-500"
                       >
                         <option value="">Choose Bundle</option>
-                        <option value="MTN 1.2GB Gifting">MTN 1.2GB Gifting (₦250)</option>
-                        <option value="MTN 3GB Corporate Gifting">MTN 3GB Corporate Gifting (₦620)</option>
-                        <option value="MTN 10GB Corporate Gifting">MTN 10GB Corporate Gifting (₦1,850)</option>
-                        <option value="Airtel 1GB Monthly">Airtel 1GB Monthly (₦240)</option>
-                        <option value="Airtel 5GB Monthly">Airtel 5GB Monthly (₦1,150)</option>
-                        <option value="Glo 1.5GB">Glo 1.5GB (₦400)</option>
-                        <option value="Glo 6GB Monthly">Glo 6GB Monthly (₦1,200)</option>
+                        {liveDataPlans
+                          .filter((p: any) => (!carrier || String(p.network || p.provider_or_network || '').toUpperCase() === carrier.toUpperCase()))
+                          .map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.network || p.provider_or_network} {p.item_name || p.name} (₦{Number(p.selling_price || 0).toLocaleString()})
+                            </option>
+                          ))}
                       </select>
                     ) : (
                       <input
