@@ -1957,7 +1957,7 @@ function DashboardOverview({
             </div>
           </div>
           <div className="mt-4">
-            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Personal Referral Code</p>
+            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Referral Code / Transfer ID</p>
             <div className="flex gap-2">
               <div className="flex-1 bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl text-xs font-mono font-black text-slate-800 select-all tracking-wider text-center flex items-center justify-center">
                 {user.referralCode}
@@ -1965,28 +1965,8 @@ function DashboardOverview({
               <button 
                 onClick={() => {
                   navigator.clipboard.writeText(user.referralCode);
-                  toast.success("Referral code copied to clipboard!");
+                  toast.success("Code copied to clipboard!");
                 }} 
-                className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-
-          {/* Your Transfer UID */}
-          <div className="mt-4">
-            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Your Transfer UID</p>
-            <div className="flex gap-2">
-              <div className="flex-1 bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl text-xs font-mono font-black text-slate-800 select-all tracking-wider text-center flex items-center justify-center">
-                {(user as any).uid_code || 'Loading...'}
-              </div>
-              <button
-                onClick={() => {
-                  if (!(user as any).uid_code) return;
-                  navigator.clipboard.writeText((user as any).uid_code);
-                  toast.success("UID copied!");
-                }}
                 className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
               >
                 Copy
@@ -2736,11 +2716,11 @@ function DashboardOverview({
               {transferStep === 'input' && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient UID</label>
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient Referral Code</label>
                     <input
                       value={transferUid}
                       onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
-                      placeholder="e.g. NR1A2B3C"
+                      placeholder="e.g. NOROYA-25J7Q"
                       className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600"
                     />
                   </div>
