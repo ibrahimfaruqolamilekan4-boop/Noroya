@@ -84,8 +84,6 @@ export const ensureUUID = (strId: string): string => {
 export default function AdminPanelSection() {
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
-  const [users, setUsers] = React.useState<UserProfile[]>([]);
-  const [allTransactions, setAllTransactions] = React.useState<Transaction[]>([]);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
   const [utilityPlansList, setUtilityPlansList] = React.useState<any[]>([]);
   const [examPlansList, setExamPlansList] = React.useState<any[]>([]);
@@ -99,25 +97,19 @@ export default function AdminPanelSection() {
   }, [dataPlansList, utilityPlansList, examPlansList]);
   
   // Search state
-  const [userSearchText, setUserSearchText] = React.useState('');
 
   // Dynamic Supabase Overrides
   const [supabaseUrlInput, setSupabaseUrlInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_URL") || "");
   const [supabaseKeyInput, setSupabaseKeyInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY") || "");
   
   // Credit/Debit Modals
-  const [adjustingUser, setAdjustingUser] = React.useState<UserProfile | null>(null);
-  const [adjustMode, setAdjustMode] = React.useState<'credit' | 'debit' | null>(null);
-  const [adjustAmount, setAdjustAmount] = React.useState('');
-  const [adjustReason, setAdjustReason] = React.useState('');
-  const [isUpdatingBalance, setIsUpdatingBalance] = React.useState(false);
 
   // Bigisub Services Config State
   const [servicesConfig, setServicesConfig] = React.useState<any[]>([]);
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'overview' | 'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>('overview');
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>('dashboard');
 
   // Mozosubz Data Plans States & Functions
   const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
@@ -543,53 +535,10 @@ export default function AdminPanelSection() {
   };
 
   React.useEffect(() => {
-    let unsubUsers = () => {};
-    let unsubTx = () => {};
+    // Legacy Firestore users/transactions listeners removed 2026-07-28 -- the admin
+    // panel now uses Supabase-backed endpoints (see AdminExtraTabs.tsx) instead.
+    setLoading(false);
 
-    if (auth.currentUser) {
-      // 1. Fetch Users
-      unsubUsers = onSnapshot(query(collection(db, 'users')), (snapshot) => {
-        const userList: UserProfile[] = [];
-        snapshot.forEach(doc => {
-          userList.push({ uid: doc.id, ...doc.data() } as any);
-        });
-        setUsers(userList);
-        setLoading(false);
-      }, (err) => {
-        console.warn("Firestore collection 'users' subscribe failed:", err);
-        setLoading(false);
-      });
-
-      // 2. Fetch System Transactions
-      unsubTx = onSnapshot(query(collection(db, 'transactions'), orderBy('createdAt', 'desc'), limit(150)), (snapshot) => {
-        const txList: Transaction[] = [];
-        snapshot.forEach(doc => {
-          txList.push({ id: doc.id, ...doc.data() } as any);
-        });
-        setAllTransactions(txList);
-      }, (err) => {
-        console.warn("Firestore collection 'transactions' subscribe failed:", err);
-      });
-    } else {
-      console.log("Admin Panel loaded with simulated session. Using offline mock datasets.");
-      setUsers([{
-        uid: 'admin_ibrahim_vtu_uid',
-        email: 'ibrahimfaruqolamilekan4@gmail.com',
-        fullName: 'Faruq Ibrahim (Admin)',
-        balance: 0,
-        role: 'admin',
-        referralCode: 'NOROYA-ADMIN-99',
-        createdAt: new Date().toISOString()
-      }]);
-      setLoading(false);
-      
-      const stored = localStorage.getItem("vtu_simulated_transactions");
-      if (stored) {
-        try {
-          setAllTransactions(JSON.parse(stored));
-        } catch (e) {}
-      }
-    }
 
     // 3. Fetch Service Plans: real-time streams for data_plans, utility_plans, and exam_plans
     console.log("Attempting to connect to Firestore collections: data_plans, utility_plans, exam_plans...");
@@ -807,8 +756,6 @@ export default function AdminPanelSection() {
     });
 
     return () => {
-      unsubUsers();
-      unsubTx();
       unsubPlans();
       unsubUtils();
       unsubExams();
@@ -840,13 +787,6 @@ export default function AdminPanelSection() {
     }
   }, [adminSubTab]);
 
-  // Filter users
-  const filteredUsers = users.filter(u => 
-    u.fullName?.toLowerCase().includes(userSearchText.toLowerCase()) ||
-    u.email?.toLowerCase().includes(userSearchText.toLowerCase()) ||
-    u.phoneNumber?.includes(userSearchText)
-  );
-
   // Filter service plans
   const filteredPlans = servicePlansList.filter(plan => {
     const matchesSearch = !planSearchQuery.trim() || 
@@ -857,98 +797,7 @@ export default function AdminPanelSection() {
     return matchesSearch && matchesNetwork && matchesType;
   });
 
-  // Stats Analytics derived state
-  const totalBalanceReserves = users.reduce((sum, u) => sum + (u.balance || 0), 0);
-  const totalTransactionsVolume = allTransactions.reduce((sum, tx) => sum + tx.amount, 0);
-  // Estimate profits as 4% of service recharges
-  const estimatedPlatformProfits = allTransactions
-    .filter(tx => tx.type === 'data' || tx.type === 'airtime' || tx.type === 'bill')
-    .reduce((sum, tx) => sum + (tx.amount * 0.04), 0);
 
-  // Credit/Debit handler
-  const handleBalanceAdjustSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adjustingUser || !adjustAmount || Number(adjustAmount) <= 0) {
-      toast.error("Please enter a valid transfer amount");
-      return;
-    }
-
-    setIsUpdatingBalance(true);
-    try {
-      const userRef = doc(db, 'users', adjustingUser.uid);
-      const val = Number(adjustAmount);
-      const adjustment = adjustMode === 'credit' ? val : -val;
-
-      // Update User balance
-      await updateDoc(userRef, {
-        balance: increment(adjustment)
-      });
-
-      // Write transaction history logs
-      await addDoc(collection(db, 'transactions'), {
-        userId: adjustingUser.uid,
-        type: 'funding',
-        amount: adjustMode === 'credit' ? val : -val,
-        status: 'completed',
-        description: adjustReason.trim() || `Admin balance adjustment: ${adjustMode === 'credit' ? 'Wallet Funded' : 'Wallet Debited'}`,
-        reference: `ADJ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-        createdAt: serverTimestamp()
-      });
-
-      toast.success(`Successfully ${adjustMode}ed ${adjustingUser.fullName} with ${formatCurrency(val)}`);
-      setAdjustingUser(null);
-      setAdjustAmount('');
-      setAdjustReason('');
-    } catch (err: any) {
-      toast.error(`Operation failed: ${err.message}`);
-    } finally {
-      setIsUpdatingBalance(false);
-    }
-  };
-
-  const handleToggleResellerRole = async (targetUser: UserProfile) => {
-    const isCurrentlyReseller = targetUser.is_reseller === true || targetUser.user_role === 'reseller';
-    const nextResellerState = !isCurrentlyReseller;
-    const nextRole = nextResellerState ? 'reseller' : 'customer';
-
-    try {
-      // 1. Update in Firestore
-      const userDocRef = doc(db, 'users', targetUser.uid);
-      await updateDoc(userDocRef, {
-        is_reseller: nextResellerState,
-        user_role: nextRole
-      });
-
-      // 2. Local State update
-      setUsers(prev => prev.map(u => u.uid === targetUser.uid ? {
-        ...u,
-        is_reseller: nextResellerState,
-        user_role: nextRole
-      } : u));
-
-      // 3. Update in Supabase
-      try {
-        const pgUuid = ensureUUID(targetUser.uid);
-        const { error: pgErr } = await supabase
-          .from('users')
-          .update({
-            is_reseller: nextResellerState,
-            user_role: nextRole
-          })
-          .eq('id', pgUuid);
-
-        if (pgErr) {
-          console.warn("[ToggleReseller] Supabase update warning:", pgErr.message);
-        }
-      } catch (e: any) {
-        console.warn("[ToggleReseller] Supabase update skipped:", e.message);
-      }
-
-      toast.success(`Successfully updated ${targetUser.fullName || 'user'} to ${nextRole.toUpperCase()}`);
-    } catch (err: any) {
-      toast.error(`Failed to update user role: ${err.message}`);
-    }
-  };
 
   // Push news banner announcement
   const handlePublishBroadcast = async (e: React.FormEvent) => {
@@ -1007,55 +856,8 @@ export default function AdminPanelSection() {
         </span>
       </div>
 
-      {/* 2. SUMMARY COUNTERS PANELS */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/90 shadow-sm">
-          <span className="text-[10px] uppercase font-bold text-slate-405 tracking-wider font-sans block">Total Registred Users</span>
-          <div className="flex items-baseline justify-between mt-2.5">
-            <span className="text-3xl font-black text-slate-800 tracking-tight">{users.length}</span>
-            <Users className="text-slate-200" size={24} />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/90 shadow-sm">
-          <span className="text-[10px] uppercase font-bold text-slate-405 tracking-wider font-sans block">Balance Reserves Pool</span>
-          <div className="flex items-baseline justify-between mt-2.5">
-            <span className="text-2xl font-black text-slate-800 font-mono tracking-tight">{formatCurrency(totalBalanceReserves)}</span>
-            <DollarSign className="text-slate-200" size={24} />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/90 shadow-sm">
-          <span className="text-[10px] uppercase font-bold text-slate-405 tracking-wider font-sans block">Processed Outflow</span>
-          <div className="flex items-baseline justify-between mt-2.5">
-            <span className="text-2xl font-black text-indigo-600 font-mono tracking-tight">{formatCurrency(totalTransactionsVolume)}</span>
-            <TrendingUp className="text-slate-200" size={24} />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/90 shadow-sm bg-gradient-to-br from-indigo-50/20 to-blue-50/20">
-          <span className="text-[10px] uppercase font-bold text-blue-700 tracking-wider font-sans block">Est. Platform Profit (4%)</span>
-          <div className="flex items-baseline justify-between mt-2.5">
-            <span className="text-2xl font-black text-emerald-600 font-mono tracking-tight">{formatCurrency(estimatedPlatformProfits)}</span>
-            <span className="text-xs font-black text-emerald-750 bg-emerald-50 px-2 py-0.5 rounded uppercase">Liquid</span>
-          </div>
-        </div>
-      </div>
-
       {/* Tab Switcher */}
       <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-3xl select-none font-bold">
-        <button
-          type="button"
-          onClick={() => setAdminSubTab('overview')}
-          className={cn(
-            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
-            adminSubTab === 'overview'
-              ? "bg-white text-slate-900 shadow-md font-extrabold"
-              : "text-slate-500 hover:text-slate-850"
-          )}
-        >
-          Users & Operations
-        </button>
         <button
           type="button"
           onClick={() => setAdminSubTab('service-plans')}
@@ -1149,322 +951,6 @@ export default function AdminPanelSection() {
       {adminSubTab === 'transactions' && <TransactionsTab />}
       {adminSubTab === 'user-mgmt' && <UserManagementTab />}
       {adminSubTab === 'provider-status' && <ProviderStatusTab />}
-
-      {adminSubTab === 'overview' && (
-        <>
-          {/* QUICK LAUNCH DATA PLANS PANEL */}
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-6 rounded-3xl space-y-4 shadow-lg relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1 z-10">
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-green-400 animate-ping"></span>
-                <span className="text-[10px] uppercase font-black tracking-widest text-blue-200 font-sans">Active VTU Integration Module</span>
-              </div>
-              <h5 className="font-extrabold text-white text-lg font-sans">Mozosubz Core Database Controller</h5>
-              <p className="text-xs text-blue-100 font-bold max-w-2xl leading-relaxed font-sans">
-                Quickly view, sync, and override prices of live Mozosubz data packages in your PostgreSQL & Firestore catalog.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setAdminSubTab('mozosubz-plans')}
-              className="z-10 bg-white text-blue-900 hover:bg-slate-100 font-black uppercase text-[11px] tracking-wider py-3.5 px-6 rounded-xl shadow-md cursor-pointer transition-all active:scale-95 flex items-center gap-2.5 font-sans whitespace-nowrap self-start md:self-auto"
-            >
-              📱 Manage Data Plans
-            </button>
-          </div>
-
-          {/* SUPABASE CONNECTION CREDENTIALS PANEL */}
-          <div className="bg-amber-50/40 border-2 border-amber-200 p-6 rounded-3xl space-y-4 shadow-sm relative overflow-hidden">
-            <div className="absolute right-0 top-0 translate-x-1/4 -translate-y-1/4 rotate-12 opacity-5 pointer-events-none">
-              <Database size={200} />
-            </div>
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-700 shrink-0 border border-amber-200">
-                <Database size={20} />
-              </div>
-              <div className="space-y-1 max-w-2xl">
-                <h5 className="font-extrabold text-amber-900 text-sm">Supabase Integration Gateway</h5>
-                <p className="text-xs text-amber-700 font-bold leading-relaxed">
-                  Connect your live database to load plans dynamically. Enter your Supabase connection parameters below. They will be securely stored inside your local browser storage and override defaults automatically without requiring clean redeployment.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4 max-w-4xl pt-2">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Supabase URL Link</label>
-                <input
-                  type="text"
-                  value={supabaseUrlInput}
-                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
-                  placeholder="https://your-project.supabase.co"
-                  className="w-full bg-white border-2 border-slate-200 focus:border-black rounded-xl py-2.5 px-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all text-black"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Supabase Anon key</label>
-                <input
-                  type="password"
-                  value={supabaseKeyInput}
-                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
-                  placeholder="eyJhbGciOi..."
-                  className="w-full bg-white border-2 border-slate-200 focus:border-black rounded-xl py-2.5 px-4 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/15 transition-all text-black"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!supabaseUrlInput.trim() || !supabaseKeyInput.trim()) {
-                    toast.error("Both fields are required to secure the bridge.");
-                    return;
-                  }
-                  localStorage.setItem("DYNAMIC_SUPABASE_URL", supabaseUrlInput.trim());
-                  localStorage.setItem("DYNAMIC_SUPABASE_ANON_KEY", supabaseKeyInput.trim());
-                  toast.success("Bridge successfully mapped! Reloading connection...");
-                  setTimeout(() => window.location.reload(), 1000);
-                }}
-                className="bg-black hover:bg-slate-900 text-white font-black uppercase text-[10px] tracking-wider py-2.5 px-5 rounded-xl border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer"
-              >
-                Save Configuration Settings
-              </button>
-              {localStorage.getItem("DYNAMIC_SUPABASE_URL") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.removeItem("DYNAMIC_SUPABASE_URL");
-                    localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
-                    setSupabaseUrlInput("");
-                    setSupabaseKeyInput("");
-                    toast.success("Values reset to repository defaults! Tuning down connection...");
-                    setTimeout(() => window.location.reload(), 1000);
-                  }}
-                  className="bg-white hover:bg-slate-50 text-rose-600 font-black uppercase text-[10px] tracking-wider py-2.5 px-5 rounded-xl border-2 border-rose-200 cursor-pointer text-center"
-                >
-                  Reset Default Settings
-                </button>
-              )}
-            </div>
-
-            <div className="pt-2 text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
-              <span>Current URL:</span>
-              <span className="font-mono text-slate-600 lowercase bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{(supabase as any).supabaseUrl || 'None / Not Initialized'}</span>
-            </div>
-          </div>
-
-          {/* CORE TWO BLOCK SECTOR: USER MANAGEMENT & UTILITIES */}
-          <div className="grid lg:grid-cols-3 gap-8">
-            
-            {/* L-S: USER MANAGEMENT LOGICAL HUB */}
-            <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between">
-              <div>
-                <div className="p-6 border-b border-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <h5 className="font-extrabold text-slate-900">User Wallet Registrar</h5>
-                    <p className="text-xs text-slate-400 font-medium font-sans">Verify balances, credit, or debit platform users securely.</p>
-                  </div>
-                  
-                  <div className="relative max-w-xs w-full">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                    <input 
-                      type="text" 
-                      value={userSearchText}
-                      onChange={(e) => setUserSearchText(e.target.value)}
-                      placeholder="Query by Name/Email..." 
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 pl-9 pr-4 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-600/30"
-                    />
-                  </div>
-                </div>
-
-                <div className="divide-y divide-slate-100 overflow-y-auto max-h-[460px]">
-                  {filteredUsers.length > 0 ? (
-                    filteredUsers.map((u) => (
-                      <div key={u.uid} className="p-5 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                        <div className="space-y-1 flex-1 pr-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-slate-800 leading-none">{u.fullName}</span>
-                            <span className={cn(
-                              "text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded leading-none",
-                              u.role === 'admin' ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
-                            )}>
-                              {u.role}
-                            </span>
-                            {(u.is_reseller === true || u.user_role === 'reseller' || u.role === 'reseller') && (
-                              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded leading-none bg-purple-50 text-purple-600 border border-purple-200">
-                                Reseller Tier
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-400 font-medium font-mono leading-none">{u.email}</p>
-                          {u.phoneNumber && <p className="text-[10px] text-slate-500 font-sans font-semibold">Tel: {u.phoneNumber}</p>}
-                        </div>
-
-                        <div className="flex items-center gap-4 text-right">
-                          <div>
-                            <p className="text-[9px] font-black uppercase text-slate-455 tracking-wider font-sans mb-0.5">Wallet Balance</p>
-                            <p className="font-black text-sm text-slate-800 font-mono leading-none">{formatCurrency(u.balance || 0)}</p>
-                          </div>
-
-                          <div className="flex flex-col sm:flex-row gap-1.5">
-                            <button 
-                              type="button"
-                              onClick={() => { setAdjustingUser(u); setAdjustMode('credit'); }}
-                              className="px-2.5 py-1.5 text-[11px] font-black bg-green-50 text-green-700 hover:bg-green-100 rounded-lg transition-all border border-green-200 cursor-pointer text-center"
-                            >
-                              Credit
-                            </button>
-                            <button 
-                              type="button"
-                              onClick={() => { setAdjustingUser(u); setAdjustMode('debit'); }}
-                              className="px-2.5 py-1.5 text-[11px] font-black bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg transition-all border border-rose-200 cursor-pointer text-center"
-                            >
-                              Debit
-                            </button>
-                            <button 
-                              type="button"
-                              onClick={() => handleToggleResellerRole(u)}
-                              className={cn(
-                                "px-2.5 py-1.5 text-[11px] font-black rounded-lg transition-all border cursor-pointer text-center whitespace-nowrap",
-                                (u.is_reseller === true || u.user_role === 'reseller' || u.role === 'reseller')
-                                  ? "bg-purple-100 border-purple-300 text-purple-900 hover:bg-purple-200 shadow-sm"
-                                  : "bg-slate-100 border-slate-300 text-slate-705 hover:bg-slate-200 shadow-sm"
-                              )}
-                            >
-                              {(u.is_reseller === true || u.user_role === 'reseller' || u.role === 'reseller') ? '➔ Customer' : '➔ Reseller'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="py-12 text-center text-xs font-bold text-slate-400">No users found querying that keyword filter.</div>
-                  )}
-                </div>
-              </div>
-              
-              <div className="p-4 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-450 text-center font-medium font-sans">
-                Deducts or increments balances directly on transaction commit secure gates.
-              </div>
-            </div>
-
-            {/* R-S: BROADCAST AND GATEWAY SIDEBAR CONTAINER */}
-            <div className="space-y-6">
-              {/* BROADCAST BOX */}
-              <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-4">
-                <div>
-                  <h5 className="font-extrabold text-slate-900">Push Global Notification</h5>
-                  <p className="text-xs text-slate-400 font-medium font-sans">Broadcast instant notice banners</p>
-                </div>
-
-                <form onSubmit={handlePublishBroadcast} className="space-y-3.5">
-                  <textarea 
-                    required
-                    value={broadcastText}
-                    onChange={(e) => setBroadcastText(e.target.value)}
-                    placeholder="Alert text, e.g. Temporary service warning notice."
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3.5 text-xs font-medium focus:outline-none min-h-[90px] max-h-[140px]"
-                  />
-
-                  <button 
-                    disabled={isPublishingBroadcast}
-                    type="submit"
-                    className="w-full bg-slate-900 hover:bg-black text-white text-xs font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                  >
-                    {isPublishingBroadcast ? "Publishing..." : <><Send size={14} /> Send Broadcast</>}
-                  </button>
-                </form>
-              </div>
-
-              {/* API MANAGER GATEWAYS */}
-              <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-4">
-                <div>
-                  <h5 className="font-extrabold text-slate-900">API Gateway Controller</h5>
-                  <p className="text-xs text-slate-400 font-medium font-sans">Telecom API endpoints setting configuration</p>
-                </div>
-
-                <div className="space-y-3.5 text-xs font-bold text-slate-500">
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block ml-1 font-sans">Provider url endpoint</span>
-                    <input 
-                      type="text" 
-                      value={providerUrl} 
-                      onChange={(e) => setProviderUrl(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block ml-1 font-sans">Provider authentication key</span>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        placeholder="Paste your Mozosubz API Token here..."
-                        value={providerKey} 
-                        onChange={(e) => setProviderKey(e.target.value)}
-                        className="flex-1 bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-[11px] font-mono focus:outline-none" 
-                      />
-                      <button 
-                        type="button"
-                        onClick={handleSaveMozosubzKey}
-                        disabled={isSavingKey}
-                        className="bg-slate-900 hover:bg-black text-white text-[11px] font-extrabold py-2.5 px-3.5 rounded-xl transition-all cursor-pointer shadow-sm whitespace-nowrap"
-                      >
-                        {isSavingKey ? "Linking..." : "Link API Token"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-green-50/50 border border-green-100 text-[10px] leading-relaxed text-slate-600 font-medium font-sans">
-                    Connections automatically route in real-time. Changes write back safe-parameters.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          {/* LOWER LEVEL SECTION: SYSTEM TRANSACTION LOGS */}
-          <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm">
-            <div className="pb-6 border-b border-slate-50 mb-4">
-              <h5 className="font-extrabold text-slate-900">System Transaction Logs</h5>
-              <p className="text-xs text-slate-400 font-medium font-sans">Real-time dynamic monitoring logs for database audit trails.</p>
-            </div>
-
-            <div className="divide-y divide-slate-50 max-h-[350px] overflow-y-auto pr-2 space-y-1 flex flex-col">
-              {allTransactions.length > 0 ? (
-                allTransactions.map((tx) => (
-                  <div key={tx.id} className="py-3 flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-8 h-8 rounded-full flex items-center justify-center",
-                        tx.amount > 0 ? "bg-green-55 text-green-600 bg-green-50" : "bg-red-50 text-red-600"
-                      )}>
-                        {tx.amount > 0 ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
-                      </div>
-                      <div>
-                        <p className="font-bold text-slate-800">{tx.description}</p>
-                        <p className="font-mono text-[9px] text-slate-400 leading-none">ID: {tx.reference}</p>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <p className={cn("font-bold text-xs font-mono", tx.amount > 0 ? "text-green-600" : "text-slate-900")}>
-                        {tx.amount > 0 ? '+' : ''}{formatCurrency(tx.amount)}
-                      </p>
-                      <p className="text-[8px] uppercase tracking-wider font-extrabold text-slate-400 font-sans">
-                        {tx.status || 'completed'}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="py-12 text-center text-slate-400 text-xs font-bold bg-slate-50/50 rounded-2xl border border-dashed border-slate-100">No operations executed in platform yet.</div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
 
       {adminSubTab === 'service-plans' && (
         /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
@@ -2663,74 +2149,6 @@ export default function AdminPanelSection() {
                     className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-extrabold transition-all flex items-center justify-center gap-1 shadow-lg shadow-indigo-100 cursor-pointer"
                   >
                     {isUpdatingPlan ? "Saving..." : "Save Properties"}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* 5. USER WALLET ADJUST ADJUSTMENT MODAL POPUP */}
-      <AnimatePresence>
-        {adjustingUser && adjustMode && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => { setAdjustingUser(null); setAdjustMode(null); }}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl p-8 max-w-md w-full relative border border-slate-100 shadow-2xl z-10 font-sans text-slate-900"
-            >
-              <h5 className="font-extrabold text-lg text-slate-900 capitalize mb-2">{adjustMode} Wallet Balance</h5>
-              <p className="text-xs text-slate-500 mb-6 font-sans">Modifies wallet reserves for <span className="font-bold text-slate-800">{adjustingUser.fullName}</span> ({adjustingUser.email})</p>
-
-              <form onSubmit={handleBalanceAdjustSubmit} className="space-y-4 text-xs font-bold">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Transfer Amount (₦)</label>
-                  <input 
-                    required
-                    type="text" 
-                    value={adjustAmount}
-                    onChange={(e) => setAdjustAmount(e.target.value.replace(/\D/g,''))}
-                    placeholder="e.g. 5000"
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 font-mono text-sm focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Adjustment Reason / Notes (Optional)</label>
-                  <input 
-                    type="text" 
-                    value={adjustReason}
-                    onChange={(e) => setAdjustReason(e.target.value)}
-                    placeholder="e.g. Referral reward boost, Manual transfer credit code"
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none"
-                  />
-                </div>
-
-                <div className="pt-4 flex gap-3">
-                  <button 
-                    type="button"
-                    onClick={() => { setAdjustingUser(null); setAdjustMode(null); }}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3.5 rounded-xl font-bold font-sans transition-colors cursor-pointer"
-                  >
-                    Cancel Action
-                  </button>
-                  <button 
-                    disabled={isUpdatingBalance}
-                    type="submit"
-                    className={cn(
-                      "flex-1 text-white py-3.5 rounded-xl font-extrabold transition-all flex items-center justify-center gap-1 shadow-lg cursor-pointer",
-                      adjustMode === 'credit' ? "bg-green-600 hover:bg-green-700 shadow-green-100" : "bg-red-600 hover:bg-red-700 shadow-red-100"
-                    )}
-                  >
-                    {isUpdatingBalance ? "Processing..." : `${adjustMode === 'credit' ? 'Credit' : 'Debit'} User`}
                   </button>
                 </div>
               </form>
