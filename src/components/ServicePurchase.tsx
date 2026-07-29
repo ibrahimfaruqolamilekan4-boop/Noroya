@@ -187,7 +187,8 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               type: pType,
               peyflex_variation_id: pVarId,
               validity_days: pValidity,
-              mozosubz_service
+              mozosubz_service,
+              metadata: p.metadata || {},
             };
           });
 
@@ -528,6 +529,11 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                         <span className="text-[10px] text-slate-500 font-medium block">
                           {plan.validity_days || '30 days'} validity
                         </span>
+                        {(plan as any)?.metadata?.eligibility_warning && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded mt-1">
+                            <AlertTriangle size={9} /> Eligibility varies
+                          </span>
+                        )}
                       </div>
 
                       <div className="mt-3">
@@ -696,10 +702,19 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   )}
                 </div>
 
+                {type === 'data' && (selectedPlan as any)?.metadata?.eligibility_warning && (
+                  <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl p-3.5 text-xs">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                    <p className="font-medium leading-relaxed">
+                      {(selectedPlan as any).metadata.eligibility_warning}
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex items-center space-x-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 rounded-xl p-3.5 text-xs">
                   <AlertTriangle size={16} className="shrink-0" />
                   <p className="font-medium leading-relaxed">
-                    Verify the recipient's phone number carefully. Airtime and data purchases are final and cannot be refunded.
+                    Verify the recipient's phone number carefully before confirming. If a purchase fails on the provider's end, your wallet is automatically refunded.
                   </p>
                 </div>
               </div>
