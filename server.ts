@@ -61,7 +61,7 @@ import { getProvider, initProviders, listProviders } from './src/lib/vtu-provide
 const logVtuFailure = async (opts: {
   provider: string; network: string; phone: string;
   planId: string; planName: string; amount: number;
-  error: string; raw?: any;
+  error: string; raw?: any; userId?: string | null; userEmail?: string | null;
 }) => {
   const entry = {
     provider:      opts.provider,
@@ -73,6 +73,8 @@ const logVtuFailure = async (opts: {
     error_message: opts.error,
     raw_response:  JSON.stringify(opts.raw || {}).substring(0, 2000),
     timestamp:     new Date().toISOString(),
+    user_id:       opts.userId || null,
+    user_email:    opts.userEmail || null,
   };
   console.error('[VTU FAILURE]', JSON.stringify(entry));
   try {
@@ -1032,6 +1034,7 @@ async function startServer() {
             amount:    finalAmount,
             error:     apiErrorMsg,
             raw:       apiResponseData,
+            userId:    pgUuid,
           });
         }
       } catch (providerErr: any) {
@@ -1048,6 +1051,7 @@ async function startServer() {
           amount:    finalAmount,
           error:     apiErrorMsg,
           raw:       rawErrData,
+          userId:    pgUuid,
         });
       }
 
@@ -2191,7 +2195,7 @@ async function startServer() {
         });
       } catch (provErr: any) {
         const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data });
+        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
@@ -2200,7 +2204,7 @@ async function startServer() {
 
       if (!purchaseResult.success) {
         const errMsg = purchaseResult.error || 'Gateway rejected the transaction.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw });
+        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
@@ -2900,12 +2904,22 @@ async function startServer() {
         } else {
           apiErrorMsg = result.error || 'Purchase rejected by gateway.';
           apiErrorCode = apiResponseData?.error_code || null;
+          await logVtuFailure({
+            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
+            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
+            error: apiErrorMsg, raw: apiResponseData, userId: pgUuid,
+          });
         }
       } catch (providerErr: any) {
         const rawErrData = providerErr.response?.data;
         apiResponseData = rawErrData;
         apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
         apiErrorCode = rawErrData?.error_code || null;
+        await logVtuFailure({
+          provider: chosenProvider, network: finalNetwork, phone: finalPhone,
+          planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
+          error: apiErrorMsg, raw: rawErrData, userId: pgUuid,
+        });
       }
 
       if (apiSuccess) {
