@@ -960,6 +960,7 @@ async function startServer() {
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
+      let apiErrorCode: string | null = null;
 
       if (!provider) {
         return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
@@ -1021,6 +1022,7 @@ async function startServer() {
           apiSuccess = true;
         } else {
           apiErrorMsg = result.error || 'Purchase rejected by gateway.';
+          apiErrorCode = apiResponseData?.error_code || null;
           await logVtuFailure({
             provider:  chosenProvider,
             network:   finalNetwork,
@@ -1034,7 +1036,9 @@ async function startServer() {
         }
       } catch (providerErr: any) {
         const rawErrData = providerErr.response?.data;
+        apiResponseData = rawErrData;
         apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
+        apiErrorCode = rawErrData?.error_code || null;
         await logVtuFailure({
           provider:  chosenProvider,
           network:   finalNetwork,
@@ -1074,25 +1078,33 @@ async function startServer() {
           }
         });
       } else {
-        // Purchase failed at the provider -- automatically refund the locked funds.
+        // Purchase failed at the provider -- automatically refund the locked funds, and report
+        // truthfully whether that refund itself actually succeeded.
         const { error: refundErr } = await supabase.rpc('increment_balance', {
           user_uuid: pgUuid,
           amount: finalAmount,
         });
+        const refunded = !refundErr;
         if (refundErr) {
           console.error("[VTU Auto-Refund] increment_balance RPC FAILED -- manual intervention needed:", refundErr.message, { pgUuid, finalAmount, localRef });
         }
         try {
           if (pendingTxId) {
             await supabase.from('transactions').update({
-              status: refundErr ? 'failed' : 'refunded',
+              status: refunded ? 'refunded' : 'failed',
             }).eq('id', pendingTxId);
           }
         } catch (_) { /* non-fatal */ }
 
-        console.warn(`[VTU Purchase Failed]: ${apiErrorMsg}. Funds automatically refunded.`);
+        console.warn(`[VTU Purchase Failed]: ${apiErrorMsg} (code: ${apiErrorCode || 'n/a'}). Refunded: ${refunded}.`);
         return res.status(400).json({
-          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet has been automatically refunded.`
+          error: refunded
+            ? `Purchase failed: ${apiErrorMsg} Your wallet has been automatically refunded.`
+            : `Purchase failed: ${apiErrorMsg} Refund could not be processed automatically -- contact support with reference ${localRef}.`,
+          error_code: apiErrorCode,
+          provider_message: apiErrorMsg,
+          refunded,
+          reference: localRef,
         });
       }
     } catch (err: any) {
@@ -2252,9 +2264,13 @@ async function startServer() {
       const planId       = String(mozosubz_plan_id || id || `plan_${Date.now()}`);
 
       const record: any = {
-        // Core identifiers — upsert on mozosubz_plan_id when available, else bigisub_identifier_id
+        // Core identifiers — upsert on mozosubz_plan_id when available, else bigisub_identifier_id.
+        // bigisub_plan_id is a separate legacy NOT NULL column on services_config (distinct from
+        // bigisub_identifier_id) -- must always be populated or inserts of new plans fail with
+        // "null value in column bigisub_plan_id violates not-null constraint".
         mozosubz_plan_id:     planId,
         bigisub_identifier_id: planId,
+        bigisub_plan_id:      planId,
         mozosubz_service:     mozosubz_service || service || '',
 
         // Names
@@ -2287,10 +2303,11 @@ async function startServer() {
       // onConflict requires an actual unique index on that column in Postgres, and we
       // can't guarantee mozosubz_plan_id has one on every environment. This works regardless.
       record.bigisub_identifier_id = planId;
+      record.bigisub_plan_id = planId;
       const { data: existing, error: findErr } = await supabase
         .from('services_config')
         .select('id')
-        .or(`mozosubz_plan_id.eq.${planId},bigisub_identifier_id.eq.${planId}`)
+        .or(`mozosubz_plan_id.eq.${planId},bigisub_identifier_id.eq.${planId},bigisub_plan_id.eq.${planId}`)
         .maybeSingle();
 
       if (findErr) throw new Error(findErr.message);
@@ -2786,15 +2803,19 @@ async function startServer() {
       return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
     }
 
+    // Non-VTU purchase types (e.g. bills/betting) never actually belonged on the Mozosubz
+    // data/airtime path -- leave that behavior exactly as it was, out of scope here.
+    if (finalType !== 'data' && finalType !== 'airtime') {
+      return res.status(400).json({ error: `Purchase type '${finalType}' is not handled by this endpoint.` });
+    }
+
     try {
-      // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
       if (!pgUuid) {
         return res.status(400).json({ error: "Invalid user ID format." });
       }
 
       const profile = await getOrCreateProfile(pgUuid, finalUserId);
-
       if (!profile) {
         return res.status(404).json({ error: "User profile not found in Supabase database." });
       }
@@ -2804,141 +2825,99 @@ async function startServer() {
         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
       }
 
-      // 2. Dispatch the secure request to Mozosubz using Axios with an 8-second timeout
-      const MOZOSUBZ_API_KEY = await resolveMozosubzApiKey();
-      const MOZOSUBZ_BASE_URL = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
+      // Resolve the plan against services_config -- frontend may send either a composite
+      // mozosubz_plan_id, a raw bigisub_identifier_id, or (legacy) a plan display name.
+      let planConfig: any = null;
+      if (finalType === 'data' && finalPlan) {
+        try {
+          const { data: pc } = await supabase
+            .from('services_config')
+            .select('provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name')
+            .or(`mozosubz_plan_id.eq.${finalPlan},bigisub_identifier_id.eq.${finalPlan},bigisub_plan_id.eq.${finalPlan},item_name.eq.${finalPlan},plan_name.eq.${finalPlan},name.eq.${finalPlan}`)
+            .maybeSingle();
+          planConfig = pc;
+        } catch (_) { /* fall through with no config -- provider call will still attempt a best-effort guess */ }
+      }
+
+      const chosenProvider = planConfig?.provider || 'mozosubz';
+      const provider = getProvider(chosenProvider);
+      if (!provider) {
+        return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
+      }
+      const providerApiKey = await provider.resolveApiKey();
+      if (!providerApiKey || providerApiKey.length < 6) {
+        return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured. Contact admin.` });
+      }
+
+      const resolvedPlanCode = planConfig?.mozosubz_plan_id || planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || finalPlan;
+
+      // LOCK FUNDS FIRST via the atomic deduct_balance() RPC (race-safe) before calling the provider.
+      const localRef = `TRX-VTUP-${Date.now()}`;
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: pgUuid,
+        amount: finalAmount,
+      });
+      if (lockErr) {
+        console.error("[VTU/purchase Fund Lock] deduct_balance RPC error:", lockErr.message);
+        return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+      }
+
+      let pendingTxId: number | null = null;
+      try {
+        const { data: pendingTx } = await supabase.from('transactions').insert({
+          user_id: pgUuid, userId: pgUuid,
+          type: finalType, amount: finalAmount, status: 'pending',
+          description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
+          reference: localRef, createdAt: new Date().toISOString(),
+        }).select('id').maybeSingle();
+        pendingTxId = pendingTx?.id ?? null;
+      } catch (txErr: any) {
+        console.warn("[VTU/purchase pending transaction insert warning]:", txErr.message || txErr);
+      }
 
       let apiSuccess = false;
       let apiResponseData: any = null;
       let apiErrorMsg = "";
-
-      if (!MOZOSUBZ_API_KEY || MOZOSUBZ_API_KEY.includes('dummy') || MOZOSUBZ_API_KEY.includes('test')) {
-        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
-      }
+      let apiErrorCode: string | null = null;
 
       try {
-        const endpoint = finalType === "airtime" ? "airtime" : "data";
-        const mozoUrl = `${MOZOSUBZ_BASE_URL}/${endpoint}/`;
-
-          // Map network strings or IDs from frontend safely into Mozosubz's expected IDs
-          let mozoNetworkId = finalNetwork;
-          if (typeof finalNetwork === 'string') {
-            const cleanNetwork = finalNetwork.toLowerCase().trim();
-            if (cleanNetwork.includes('mtn') || cleanNetwork === '1') mozoNetworkId = 1;
-            else if (cleanNetwork.includes('glo') || cleanNetwork === '2') mozoNetworkId = 2;
-            else if (cleanNetwork.includes('airtel') || cleanNetwork === '3') mozoNetworkId = 3;
-            else if (cleanNetwork.includes('9mobile') || cleanNetwork.includes('9mob') || cleanNetwork === '4') mozoNetworkId = 4;
-          } else if (typeof finalNetwork === 'number') {
-            if (finalNetwork === 1) mozoNetworkId = 1;
-            else if (finalNetwork === 2) mozoNetworkId = 2;
-            else if (finalNetwork === 3) mozoNetworkId = 3;
-            else if (finalNetwork === 4) mozoNetworkId = 4;
-          }
-
-          // Construct the exact object payload structure for Mozosubz
-          const payload: any = {
-            network: mozoNetworkId,
-            mobile_number: finalPhone,
-            Ported_number: true
-          };
-
-          // Add type-specific parameters
-          if (finalType === 'airtime') {
-            payload.airtime_type = "VTU";
-            payload.amount = parseFloat(String(finalAmount));
-          } else {
-            // For data plans, ensure plan is the numerical ID provided by Mozosubz's plan codes
-            payload.plan = parseInt(String(finalPlan)); 
-          }
-
-          console.log(`[Mozosubz API Request] URL: ${mozoUrl}, Payload:`, JSON.stringify(payload));
-
-          const response = await axios.post(mozoUrl, payload, {
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Token ${MOZOSUBZ_API_KEY}`
-            },
-            timeout: 8000 // 8-second timeout limit as requested
-          });
-
-          apiResponseData = response.data;
-          console.log("[Mozosubz API Response]:", apiResponseData);
-
-          if (response.status === 200 || response.status === 201) {
-            const isSuccessStatus = apiResponseData.status === "success" || 
-                                    apiResponseData.status === "SUCCESSFUL" || 
-                                    apiResponseData.success === true ||
-                                    apiResponseData.status === "completed" ||
-                                    apiResponseData.status === "successful";
-            if (isSuccessStatus) {
-              apiSuccess = true;
-            } else {
-              apiErrorMsg = apiResponseData.error || apiResponseData.message || "Mozosubz purchase rejected by gateway.";
-            }
-          } else {
-            apiErrorMsg = `HTTP Gateway error status code: ${response.status}`;
-          }
-        } catch (axiosErr: any) {
-          console.error("[Mozosubz API HTTP Error]:", axiosErr.response?.data || axiosErr.message);
-          
-          if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
-            apiErrorMsg = "8-second API Timeout limit reached. Gateway was slow or non-responsive.";
-          } else {
-            const respData = axiosErr.response?.data;
-            apiErrorMsg = respData?.error || respData?.message || axiosErr.message || "Connection refused by VTU provider.";
-          }
+        const result = await provider.purchase({
+          type:             finalType as 'data' | 'airtime',
+          network:          finalNetwork,
+          phone:            finalPhone,
+          amount:           finalAmount,
+          planId:           resolvedPlanCode,
+          providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
+          mozosubzService:  planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+          apiKey:           providerApiKey,
+        });
+        apiResponseData = result.raw;
+        if (result.success) {
+          apiSuccess = true;
+        } else {
+          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
+          apiErrorCode = apiResponseData?.error_code || null;
         }
-      
+      } catch (providerErr: any) {
+        const rawErrData = providerErr.response?.data;
+        apiResponseData = rawErrData;
+        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
+        apiErrorCode = rawErrData?.error_code || null;
+      }
 
-      // 3. Decrement the user's Supabase balance only if the Mozosubz API call succeeds
       if (apiSuccess) {
-        const deductedBalance = currentBalance - finalAmount;
-        const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
-        
-        // Atomically update balance in Supabase profiles
-        const { error: updateErr } = await supabase
-          .from('profiles')
-          .update({ 
-            wallet_balance: deductedBalance,
-            balance: deductedBalance
-          })
-          .eq('id', pgUuid);
-
-        if (updateErr) {
-          console.error("[Supabase Balance Update Error]:", updateErr);
-          return res.status(500).json({ 
-            error: "Mozosubz purchase succeeded, but database balance update failed. Please contact admin.",
-            reference: apiResponseData?.reference || apiResponseData?.id 
-          });
-        }
-
-        // Keep fallback users table or other tables in sync if they exist
+        const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localRef;
         try {
-          await supabase
-            .from('users')
-            .update({ wallet_balance: deductedBalance, balance: deductedBalance })
-            .eq('id', pgUuid);
-        } catch (ignoreErr) {
-          // Ignored backup table failure
-        }
-
-        // (Supabase profiles already updated above)
-
-        // Create a transaction record in Supabase 'transactions' table
-        const referenceCode = apiResponseData?.reference || apiResponseData?.id || `TRX-MOZO-${Date.now()}`;
-        try {
-          await supabase.from('transactions').insert({
-            userId: pgUuid,
-            user_id: pgUuid,
-            type: finalType,
-            amount: finalAmount,
-            status: 'completed',
-            description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-            reference: referenceCode,
-            createdAt: new Date().toISOString()
-          });
+          if (pendingTxId) {
+            await supabase.from('transactions').update({
+              status: 'success', reference: referenceCode, api_reference: referenceCode,
+            }).eq('id', pendingTxId);
+          }
         } catch (txErr: any) {
-          console.warn("[Supabase Transactions insert bypassed]:", txErr.message || txErr);
+          console.warn("[VTU/purchase Transactions update bypassed]:", txErr.message || txErr);
         }
 
         return res.json({
@@ -2953,15 +2932,38 @@ async function startServer() {
           }
         });
       } else {
-        // Purchase failed, return error response and do NOT deduct user's balance
-        console.warn(`[Mozosubz Purchase Failed]: ${apiErrorMsg}. No balance was deducted.`);
-        return res.status(400).json({ 
-          error: `VTU Purchase Rejected: ${apiErrorMsg}. Your wallet balance remains untouched.` 
+        // Purchase failed at the provider -- automatically refund the locked funds and report
+        // truthfully whether the refund itself actually succeeded.
+        const { error: refundErr } = await supabase.rpc('increment_balance', {
+          user_uuid: pgUuid,
+          amount: finalAmount,
+        });
+        const refunded = !refundErr;
+        if (refundErr) {
+          console.error("[VTU/purchase Auto-Refund] increment_balance RPC FAILED -- manual intervention needed:", refundErr.message, { pgUuid, finalAmount, localRef });
+        }
+        try {
+          if (pendingTxId) {
+            await supabase.from('transactions').update({
+              status: refunded ? 'refunded' : 'failed',
+            }).eq('id', pendingTxId);
+          }
+        } catch (_) { /* non-fatal */ }
+
+        console.warn(`[VTU/purchase Failed]: ${apiErrorMsg} (code: ${apiErrorCode || 'n/a'}). Refunded: ${refunded}.`);
+        return res.status(400).json({
+          error: refunded
+            ? `Purchase failed: ${apiErrorMsg} Your wallet has been automatically refunded.`
+            : `Purchase failed: ${apiErrorMsg} Refund could not be processed automatically -- contact support with reference ${localRef}.`,
+          error_code: apiErrorCode,
+          provider_message: apiErrorMsg,
+          refunded,
+          reference: localRef,
         });
       }
     } catch (err: any) {
-      console.error("[Mozosubz Purchase Endpoint Exception]:", err);
-      return res.status(500).json({ error: "Internal processing error during Mozosubz purchase flow." });
+      console.error("[VTU/purchase Endpoint Exception]:", err);
+      return res.status(500).json({ error: "Internal processing error during purchase flow." });
     }
   });
 
