@@ -1801,8 +1801,7 @@ function DashboardOverview({
         setPhoneNumber('');
       } else {
         const baseMsg = data.error || data.provider_message || "Purchase failed";
-        const fullMsg = data.error_code ? `${baseMsg} [${data.error_code}]` : baseMsg;
-        toast.error(fullMsg, { duration: 8000 });
+        toast.error(baseMsg, { duration: 6000 });
       }
     } catch (err) {
       console.error(err);
@@ -1858,8 +1857,7 @@ function DashboardOverview({
         setShowAirtimeConfirmModal(false);
       } else {
         const baseMsg = data.error || data.provider_message || "Airtime purchase failed";
-        const fullMsg = data.error_code ? `${baseMsg} [${data.error_code}]` : baseMsg;
-        toast.error(fullMsg, { duration: 8000 });
+        toast.error(baseMsg, { duration: 6000 });
       }
     } catch (err) {
       console.error(err);

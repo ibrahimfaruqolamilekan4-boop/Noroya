@@ -310,8 +310,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         } else {
           setPurchaseStatus('failed');
           const baseMsg = resData.error || resData.provider_message || resData.message || 'Data purchase failed. Please check your balance.';
-          const fullMsg = resData.error_code ? `${baseMsg} [${resData.error_code}]` : baseMsg;
-          toast.error(fullMsg, { duration: 8000 });
+          toast.error(baseMsg, { duration: 6000 });
         }
       } else {
         const payload = {
@@ -337,8 +336,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         } else {
           setPurchaseStatus('failed');
           const baseMsg = resData.error || resData.provider_message || resData.message || 'Airtime purchase failed. Please try again.';
-          const fullMsg = resData.error_code ? `${baseMsg} [${resData.error_code}]` : baseMsg;
-          toast.error(fullMsg, { duration: 8000 });
+          toast.error(baseMsg, { duration: 6000 });
         }
       }
     } catch (err: any) {
