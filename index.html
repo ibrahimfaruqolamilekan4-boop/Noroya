@@ -4,21 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NOROYA DATA SITE</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#2563EB" />
     <!-- Paystack Inline Popup SDK -->
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <!-- Flutterwave Inline Popup SDK -->
     <script src="https://checkout.flutterwave.com/v3.js"></script>
     <!-- Dynamic Supabase Runtime Environment Configuration -->
-    <script src="/config/supabase.js"></script>
+    <script type="module" src="/config/supabase.js"></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-<link rel="manifest" href="/manifest.json" />
-<meta name="theme-color" content="#2563EB" />
-<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-<link rel="apple-touch-icon" href="/icons/icon-192.png" />
-
-
