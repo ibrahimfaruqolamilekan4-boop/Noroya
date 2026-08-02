@@ -63,6 +63,14 @@ import CableTvSection from './CableTvSection';
 import ResellerPortal from './ResellerPortal';
 import TransactionHistory from './TransactionHistory';
 
+// Admin WhatsApp contacts — edit labels/numbers here any time.
+// Format: country code + number, no leading 0 or +
+const ADMIN_CONTACTS = [
+  { label: 'Admin 1', number: '2348143889102' },
+  { label: 'Admin 2', number: '2347034519634' },
+  { label: 'Admin 3', number: '2349059530817' },
+];
+
 export default function Dashboard({ user, onLogout }: { user: UserProfile, onLogout: () => void }) {
   const { signOut, setSimulatedUser } = useAuth();
   const [activeTab, setActiveTab] = React.useState('dashboard');
@@ -164,36 +172,32 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
   return (
     <div className={cn(
       "flex h-screen overflow-hidden transition-colors duration-200 font-sans",
-      isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#DBE2EF] text-slate-900"
+      isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#F3F4FB] text-slate-900"
     )}>
       {/* Sidebar - Desktop */}
-      <aside className={cn(
-        "hidden md:flex flex-col w-64 transition-colors duration-200 shrink-0",
-        isDarkMode ? "bg-slate-900 border-r border-slate-800 text-slate-100" : "bg-white border-r-2 border-black text-slate-900"
-      )}>
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+      <aside className="hidden md:flex flex-col w-64 shrink-0 relative overflow-hidden bg-gradient-to-b from-[#161049] via-[#0F0B33] to-[#08061F] text-white">
+        <div className="absolute inset-0 opacity-[0.07] pointer-events-none" style={{backgroundImage: 'radial-gradient(circle at 20% 0%, #fff 0%, transparent 60%)'}} />
+        <div className="p-6 flex items-center gap-3 relative z-10">
+          <div className="w-9 h-9 bg-gradient-to-br from-indigo-400 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/50">
             <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <span className={cn("text-xl font-black tracking-tight font-display", isDarkMode ? "text-white" : "text-slate-900")}>
+          <span className="text-xl font-black tracking-tight font-display text-white">
             Noroyasub
           </span>
         </div>
-        
-        <nav className="flex-1 px-4 space-y-1">
+
+        <nav className="flex-1 px-4 space-y-1 relative z-10">
           {sidebarItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setTabAndService(item.id)}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-semibold",
-                activeTab === item.id 
-                  ? "bg-blue-650 text-white bg-blue-600" 
-                  : isDarkMode 
-                    ? "text-slate-400 hover:bg-slate-805 hover:text-white hover:bg-slate-800" 
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                activeTab === item.id
+                  ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-900/40"
+                  : "text-indigo-200/70 hover:bg-white/5 hover:text-white"
               )}
             >
               {item.icon}
@@ -202,10 +206,10 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
           ))}
         </nav>
 
-        <div className={cn("p-4 border-t", isDarkMode ? "border-slate-800" : "border-slate-100")}>
+        <div className="p-4 border-t border-white/10 relative z-10">
           <button 
             onClick={handleLoggedOut}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 hover:text-red-600 transition-all text-sm font-extrabold"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 transition-all text-sm font-extrabold"
           >
             <LogOut size={20} />
             Logout Account
@@ -230,21 +234,18 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className={cn(
-                "absolute top-0 bottom-0 left-0 w-72 p-6 flex flex-col shadow-2xl",
-                isDarkMode ? "bg-slate-900 text-slate-150" : "bg-white text-slate-900"
-              )}
+              className="absolute top-0 bottom-0 left-0 w-72 p-6 flex flex-col shadow-2xl bg-gradient-to-b from-[#161049] via-[#0F0B33] to-[#08061F] text-white"
             >
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                  <div className="w-8 h-8 bg-gradient-to-br from-indigo-400 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/50">
                     <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   </div>
-                  <span className={cn("text-lg font-black tracking-tight font-display", isDarkMode ? "text-white" : "text-slate-900")}>Noroyasub</span>
+                  <span className="text-lg font-black tracking-tight font-display text-white">Noroyasub</span>
                 </div>
-                <button onClick={() => setIsMobileMenuOpen(false)} className="p-1 px-1.5 bg-slate-50 rounded-lg">
+                <button onClick={() => setIsMobileMenuOpen(false)} className="p-1 px-1.5 bg-white/10 rounded-lg text-white">
                   <X size={18} />
                 </button>
               </div>
@@ -256,9 +257,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                     onClick={() => { setTabAndService(item.id); setIsMobileMenuOpen(false); }}
                     className={cn(
                       "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-bold",
-                      activeTab === item.id 
-                        ? "bg-blue-600 text-white" 
-                        : isDarkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-50"
+                      activeTab === item.id
+                        ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-900/40"
+                        : "text-indigo-200/70 hover:bg-white/5 hover:text-white"
                     )}
                   >
                     {item.icon}
@@ -267,10 +268,10 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                 ))}
               </nav>
 
-              <div className="pt-4 border-t border-slate-100">
+              <div className="pt-4 border-t border-white/10">
                 <button 
                   onClick={handleLoggedOut}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 font-bold transition-all text-sm"
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 font-bold transition-all text-sm"
                 >
                   <LogOut size={20} />
                   Logout Account
@@ -285,8 +286,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
       <main className="flex-1 flex flex-col overflow-hidden font-sans">
         {/* Header toolbar */}
         <header className={cn(
-          "h-16 px-6 flex items-center justify-between transition-colors duration-200 shrink-0",
-          isDarkMode ? "bg-slate-900 border-b border-slate-800 text-slate-100" : "bg-white border-b-2 border-black text-slate-950"
+          "h-16 px-6 flex items-center justify-between transition-colors duration-200 shrink-0 border-b",
+          isDarkMode ? "bg-slate-900 border-slate-800 text-slate-100" : "bg-white/90 backdrop-blur-md border-slate-100 text-slate-950"
         )}>
           <div className="flex items-center gap-4">
             <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 -ml-2 text-slate-500">
@@ -301,7 +302,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={cn(
                 "p-2.5 rounded-xl transition-all border",
-                isDarkMode ? "bg-slate-800 hover:bg-slate-750 border-slate-700 text-yellow-300" : "bg-slate-50 hover:bg-slate-100 border-slate-150 text-slate-600"
+                isDarkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-300" : "bg-slate-50 hover:bg-slate-100 border-slate-150 text-slate-600"
               )}
               title="Toggle Contrast Mode"
             >
@@ -310,7 +311,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
 
             <button className="p-2.5 text-slate-500 hover:bg-slate-50 rounded-xl relative border border-transparent">
               <Bell size={18} className={isDarkMode ? "text-slate-300" : "text-slate-600"} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-blue-600 rounded-full border-2 border-white" />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-indigo-600 rounded-full border-2 border-white" />
             </button>
             
             <div className={cn("hidden sm:flex items-center gap-3 pl-4 border-l", isDarkMode ? "border-slate-800" : "border-slate-100")}>
@@ -318,7 +319,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                 <p className="text-sm font-extrabold">{user.fullName}</p>
                 <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">{user.role}</p>
               </div>
-              <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-bold">
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-bold">
                 {user.fullName[0].toUpperCase()}
               </div>
             </div>
@@ -344,7 +345,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
         {/* Scrollable Panel Area with Light/Dark Theme contrast backgrounds hooks */}
         <div className={cn(
           "flex-1 overflow-y-auto p-6 md:p-8 transition-colors duration-250",
-          isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#DBE2EF] text-[#1A1A1A]"
+          isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#F3F4FB] text-[#1A1A1A]"
         )}>
           <div className="max-w-5xl mx-auto space-y-8">
             {activeTab === 'dashboard' && (
@@ -374,7 +375,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
       <div className="fixed right-6 bottom-6 z-40 print:hidden font-sans">
         <button 
           onClick={() => setShowSupportHub(!showSupportHub)}
-          className="w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-all outline-none"
+          className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center shadow-2xl shadow-indigo-900/30 hover:scale-110 active:scale-95 transition-all outline-none"
           title="Consult Live Hub Support Chat"
         >
           {showSupportHub ? <X size={24} /> : <MessageSquare size={24} />}
@@ -395,7 +396,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 flex flex-col space-y-6 print:p-0 print:shadow-none print:border-none"
+              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 flex flex-col space-y-6 print:p-0 print:shadow-none print:border-none"
             >
               <div className="text-center space-y-2 mt-4">
                 <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center mx-auto shadow-sm">
@@ -408,7 +409,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               </div>
 
               {/* Amount visual area */}
-              <div className="bg-slate-50 border border-slate-100/80 rounded-3xl p-6 text-center">
+              <div className="bg-slate-50 border border-slate-100/80 rounded-[2rem] p-6 text-center">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount Charged</p>
                 <p className="text-3xl font-black text-slate-900 tracking-tight mt-1">
                   {formatCurrency(selectedReceiptTx.amount)}
@@ -463,7 +464,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-blue-100 text-xs tracking-tight"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-indigo-200/60 text-xs tracking-tight"
                 >
                   Print E-Receipt
                 </button>
@@ -489,7 +490,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 15, scale: 0.95 }}
               className={cn(
-                "absolute bottom-20 right-0 w-72 rounded-[2.5rem] p-6 border shadow-2xl space-y-4",
+                "absolute bottom-20 right-0 w-72 rounded-[2rem] p-6 border shadow-2xl space-y-4",
                 isDarkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-100 text-slate-900"
               )}
             >
@@ -499,14 +500,17 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               </div>
 
               <div className="space-y-2 text-xs">
-                {/* WHATSAPP LINK */}
-                <a 
-                  href="https://wa.me/2348143889102?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with..." 
-                  target="_blank" rel="noreferrer"
-                  className="flex items-center gap-3 p-3 bg-green-55 hover:bg-green-105 text-green-800 rounded-2xl transition-all font-bold"
-                >
-                  <MessageSquare size={16} /> WhatsApp Live Channel
-                </a>
+                {/* WHATSAPP LINKS — 3 admins */}
+                {ADMIN_CONTACTS.map((admin) => (
+                  <a
+                    key={admin.number}
+                    href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
+                    target="_blank" rel="noreferrer"
+                    className="flex items-center gap-3 p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl transition-all font-bold"
+                  >
+                    <MessageSquare size={16} /> WhatsApp — {admin.label}
+                  </a>
+                ))}
 
                 {/* TELEGRAM LINK */}
                 <a 
@@ -613,20 +617,20 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
   return (
     <div className="space-y-8 font-sans">
       {/* Hero Card */}
-      <div className="bg-gradient-to-br from-blue-600 via-blue-600 to-indigo-700 rounded-[32px] p-8 md:p-10 text-white shadow-2xl shadow-blue-100 relative overflow-hidden">
+      <div className="bg-gradient-to-br from-indigo-600 via-violet-600 to-violet-700 rounded-[32px] p-8 md:p-10 text-white shadow-2xl shadow-indigo-200/60 relative overflow-hidden">
         <div className="relative z-10 max-w-xl space-y-6">
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-3.5 py-1.5 rounded-full text-xs font-black tracking-wide uppercase">
             <Gift size={14} className="text-yellow-300 animate-pulse" /> Noroya Partner Program
           </div>
           <h3 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">Refer & Earn 2% Commissions</h3>
-          <p className="text-blue-100 text-sm md:text-base leading-relaxed font-medium">
+          <p className="text-indigo-100 text-sm md:text-base leading-relaxed font-medium">
             Invite your friends to Noroya Data and earn a <span className="text-white font-bold underline decoration-yellow-400 decoration-2">2% cash commission</span> on every single data and airtime purchase they make — for life!
           </p>
           
           {/* Actions panel */}
           <div className="grid sm:grid-cols-2 gap-4 pt-2">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col justify-center border border-white/15 relative group">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-blue-200 mb-1">Your Unique Code</span>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-200 mb-1">Your Unique Code</span>
               <div className="flex items-center justify-between">
                 <span className="text-lg font-mono font-black tracking-wider text-white">{user.referralCode}</span>
                 <button 
@@ -644,7 +648,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
             </div>
 
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col justify-center border border-white/15 relative group">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-blue-200 mb-1">Your Referral Link</span>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-200 mb-1">Your Referral Link</span>
               <div className="flex items-center justify-between">
                 <span className="text-xs truncate max-w-[120px] md:max-w-[140px] font-mono opacity-85">{referralLink}</span>
                 <button 
@@ -653,7 +657,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
                     "p-1.5 px-3 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer",
                     copiedLink 
                       ? "bg-green-500 text-white shadow-lg shadow-green-500/20 scale-105" 
-                      : "bg-white text-blue-600 hover:bg-blue-50"
+                      : "bg-white text-indigo-600 hover:bg-indigo-50"
                   )}
                 >
                   {copiedLink ? <CheckCircle2 size={13} className="text-white" /> : <Copy size={13} />} {copiedLink ? 'Copied!' : 'Copy Link'}
@@ -663,7 +667,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
           </div>
 
           <div className="flex items-center gap-3 pt-2 border-t border-white/10">
-            <span className="text-xs text-blue-200 font-bold uppercase tracking-wider">Direct Sharing:</span>
+            <span className="text-xs text-indigo-200 font-bold uppercase tracking-wider">Direct Sharing:</span>
             <div className="flex gap-2">
               <a href={whatsappUrl} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-full bg-green-500 hover:bg-green-600 flex items-center justify-center text-white transition-all hover:scale-110 shadow" title="Share via WhatsApp">
                 <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98-.208.118zM17.65 14.9c-.312-.158-1.848-.911-2.134-1.015-.285-.104-.493-.158-.7.158-.207.314-.805 1.015-.987 1.222-.18.207-.363.233-.675.076-1.111-.556-1.921-.979-2.613-2.164-.176-.301-.176-.563-.021-.718.14-.139.312-.363.468-.545.155-.182.207-.312.311-.52.104-.208.052-.39-.026-.547-.078-.156-.7-1.688-.959-2.311-.252-.607-.508-.525-.7-.525-.18 0-.389-.011-.597-.011-.207 0-.547.078-.832.39-.285.312-1.09 1.066-1.09 2.6s1.117 3.016 1.272 3.223c.156.208 2.2 3.36 5.33 4.717.745.322 1.325.515 1.777.659.749.238 1.428.205 1.967.125.6-.09 1.847-.753 2.107-1.444.26-.692.26-1.287.182-1.411-.078-.125-.286-.203-.597-.362z"/></svg>
@@ -682,8 +686,8 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
 
       {/* Statistics board */}
       <div className="grid md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-sm flex items-center gap-5">
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
             <Users size={24} />
           </div>
           <div>
@@ -692,7 +696,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-sm flex items-center gap-5">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
           <div className="w-12 h-12 rounded-2xl bg-green-50 text-green-600 flex items-center justify-center">
             <CheckCircle2 size={24} />
           </div>
@@ -704,7 +708,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-3xl border border-slate-100/80 shadow-sm flex items-center gap-5">
+        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
           <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
             <Gift size={24} />
           </div>
@@ -716,13 +720,13 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
       </div>
 
       {/* Referrals table / list */}
-      <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
         <div className="p-6 border-b border-slate-50 flex items-center justify-between">
           <div>
             <h4 className="font-extrabold text-slate-900">Your Referred Network</h4>
             <p className="text-xs text-slate-500 font-medium">Referred users who registered with your invitation link or code.</p>
           </div>
-          <span className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{referredUsers.length} Total</span>
+          <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{referredUsers.length} Total</span>
         </div>
 
         {loading ? (
@@ -757,7 +761,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
                           <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> Active
                         </span>
                       </td>
-                      <td className="p-4 pr-6 text-right font-extrabold text-blue-600 font-mono">
+                      <td className="p-4 pr-6 text-right font-extrabold text-indigo-600 font-mono">
                         {formatCurrency(comm)}
                       </td>
                     </tr>
@@ -768,7 +772,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
           </div>
         ) : (
           <div className="py-16 text-center space-y-4 max-w-sm mx-auto">
-            <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+            <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
               <Gift size={28} />
             </div>
             <div>
@@ -817,7 +821,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
 
   return (
     <div className="space-y-8 max-w-2xl font-sans">
-      <div className="bg-white rounded-3xl border border-slate-100 divide-y divide-slate-50 shadow-sm">
+      <div className="bg-white rounded-[2rem] border border-slate-100 divide-y divide-slate-50 shadow-sm">
         {/* Profile Information Block */}
         <div className="p-8">
           <h3 className="font-extrabold text-xl mb-6 text-slate-900 uppercase tracking-tight">Profile Information</h3>
@@ -893,7 +897,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
                 <p className="font-bold text-slate-900">Premium Reseller Account</p>
                 <p className="text-xs text-slate-600 font-bold font-mono">ONE-TIME UPGRADE FEE: ₦2,500.00</p>
               </div>
-              <button className="bg-indigo-600 hover:bg-indigo-505 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-100 cursor-pointer">
+              <button className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-100 cursor-pointer">
                 Upgrade Now
               </button>
             </div>
@@ -901,7 +905,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
         )}
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-100 p-8 space-y-4 shadow-sm">
+      <div className="bg-white rounded-[2rem] border border-slate-100 p-8 space-y-4 shadow-sm">
         <h3 className="font-extrabold text-xl text-rose-600 uppercase tracking-tight">Danger Zone</h3>
         <p className="text-slate-500 text-xs font-bold uppercase tracking-wide leading-relaxed">Once you terminate or wipe your account portfolio data inside our system, there is no recovering it. Please exercise caution.</p>
         <button className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-6 py-3.5 rounded-xl text-xs font-black uppercase tracking-wider border border-rose-200 transition-all cursor-pointer">
@@ -1908,7 +1912,8 @@ function DashboardOverview({
       {/* Wallet Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Wallet Card */}
-        <div className="bg-gradient-to-br from-[#1E293B] to-[#0F172A] rounded-[2rem] p-6 text-white shadow-xl relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5" id="vtu_wallet_card">
+        <div className="bg-gradient-to-br from-[#4338CA] via-[#4F2AC9] to-[#1E1650] rounded-[2rem] p-6 text-white shadow-xl shadow-indigo-900/30 relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5" id="vtu_wallet_card">
+          <div className="absolute -top-16 -right-10 w-56 h-56 rounded-full bg-white/10 blur-2xl pointer-events-none" />
           <div className="relative z-10">
             <span className="bg-amber-400 text-slate-900 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-4">
               💰 Account Liquid Assets
@@ -1923,7 +1928,7 @@ function DashboardOverview({
           <div className="relative z-10 flex gap-3 flex-wrap">
             <button 
               onClick={() => handleOpenFundModal()} 
-              className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/30 select-none cursor-pointer"
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-indigo-900/40 select-none cursor-pointer"
             >
               <ArrowDownLeft size={16} /> Fund Wallet
             </button>
@@ -1935,7 +1940,7 @@ function DashboardOverview({
             </button>
           </div>
           
-          <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-blue-600/10 rounded-full border border-white/5 pointer-events-none" />
+          <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-indigo-600/10 rounded-full border border-white/5 pointer-events-none" />
         </div>
 
         {/* Referrals Card */}
@@ -1955,7 +1960,7 @@ function DashboardOverview({
               </h3>
             </div>
             <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-              <Users className="text-slate-705 text-slate-705" size={20} />
+              <Users className="text-slate-700 text-slate-700" size={20} />
             </div>
           </div>
           <div className="mt-4">
@@ -2038,24 +2043,29 @@ function DashboardOverview({
       </div>
 
       {/* WhatsApp Live Support desk */}
-      <div className="bg-[#DCFCE7] border border-green-200 rounded-[2rem] p-6 text-slate-800 shadow-md flex flex-col md:flex-row items-center justify-between gap-4 select-none transition-all duration-300 hover:shadow-lg">
+      <div className="bg-white border border-slate-100 rounded-[2rem] p-6 text-slate-800 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 select-none transition-all duration-300 hover:shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#25D366] flex items-center justify-center text-white text-xl shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 text-xl shrink-0">
             💬
           </div>
           <div className="text-left font-sans">
             <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-wider leading-snug">Nooraya Live customer support</h4>
-            <p className="text-[11px] text-slate-500 font-bold uppercase mt-0.5">Need immediate assistance, have order queries, or require help? We are online.</p>
+            <p className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Need immediate assistance, have order queries, or require help? We are online.</p>
           </div>
         </div>
-        <a
-          href="https://wa.me/2348143889102?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with..."
-          target="_blank"
-          rel="noopener noreferrer"
-          className="w-full md:w-auto bg-[#25D366] hover:bg-[#20ba5a] text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-center inline-flex justify-center items-center gap-1.5 no-underline shadow-md shadow-green-200/50 hover:-translate-y-0.5"
-        >
-          💬 CHAT WITH SUPPORT ON WHATSAPP
-        </a>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          {ADMIN_CONTACTS.map((admin) => (
+            <a
+              key={admin.number}
+              href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-center inline-flex justify-center items-center gap-1.5 no-underline shadow-md shadow-emerald-200/60 hover:-translate-y-0.5"
+            >
+              💬 {admin.label}
+            </a>
+          ))}
+        </div>
       </div>
 
       {/* Available Data & Airtime Purchases Tabbed Section */}
@@ -2067,7 +2077,7 @@ function DashboardOverview({
               className={cn(
                 "px-5 py-2.5 rounded-2xl text-sm font-extrabold transition-all flex items-center gap-2 border",
                 serviceType === 'data' 
-                  ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-100" 
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200/60" 
                   : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
               )}
             >
@@ -2078,7 +2088,7 @@ function DashboardOverview({
               className={cn(
                 "px-5 py-2.5 rounded-2xl text-sm font-extrabold transition-all flex items-center gap-2 border",
                 serviceType === 'airtime' 
-                  ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-100" 
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200/60" 
                   : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
               )}
             >
@@ -2098,8 +2108,8 @@ function DashboardOverview({
                     className={cn(
                       "px-4 py-2 rounded-xl text-xs font-bold transition-all",
                       selectedNetwork?.toUpperCase() === networkOpt.toUpperCase()
-                        ? "bg-white text-blue-600 shadow-sm"
-                        : "text-slate-650 hover:text-slate-900"
+                        ? "bg-white text-indigo-600 shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
                     )}
                   >
                     {networkOpt}
@@ -2108,7 +2118,7 @@ function DashboardOverview({
               </div>
 
               {/* Plan Category Filter Tabs */}
-              <div className="flex flex-wrap gap-2 bg-blue-50/60 p-1 rounded-2xl border border-blue-100/30">
+              <div className="flex flex-wrap gap-2 bg-indigo-50/60 p-1 rounded-2xl border border-indigo-100/30">
                 {(['ALL', 'SME', 'GIFTING', 'CG'] as const).map((catOpt) => (
                   <button
                     key={catOpt}
@@ -2117,8 +2127,8 @@ function DashboardOverview({
                     className={cn(
                       "px-4 py-2 rounded-xl text-xs font-extrabold transition-all tracking-tight",
                       selectedCategory === catOpt
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-blue-700/80 hover:text-blue-950"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-indigo-700/80 hover:text-indigo-950"
                     )}
                   >
                     {catOpt === 'CG' ? 'Corporate Gifting (CG)' : catOpt}
@@ -2132,7 +2142,7 @@ function DashboardOverview({
         {serviceType === 'data' ? (
           plans.length === 0 ? (
             <div className="bg-white rounded-[2rem] p-8 border border-slate-100 text-center space-y-4">
-              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+              <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
                 <Database size={28} />
               </div>
               <div className="max-w-md mx-auto">
@@ -2174,7 +2184,7 @@ function DashboardOverview({
                           {plan.network === '9mobile' ? '9m' : plan.network}
                         </div>
                         <div>
-                          <h4 className="text-lg font-extrabold text-slate-900 tracking-tight group-hover/card:text-blue-600 transition-colors">
+                          <h4 className="text-lg font-extrabold text-slate-900 tracking-tight group-hover/card:text-indigo-600 transition-colors">
                             {plan.name}
                           </h4>
                           <p className="text-xs text-slate-400 mt-0.5">High-speed network connection</p>
@@ -2189,7 +2199,7 @@ function DashboardOverview({
                           {formatCurrency(plan.price)}
                         </p>
                       </div>
-                      <span className="bg-slate-100 text-slate-700 group-hover/card:bg-blue-600 group-hover/card:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
+                      <span className="bg-slate-100 text-slate-700 group-hover/card:bg-indigo-600 group-hover/card:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
                         Buy Plan
                       </span>
                     </div>
@@ -2200,7 +2210,7 @@ function DashboardOverview({
           )
         ) : (
           /* Instant Airtime Recharge Form Widget */
-          <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm max-w-xl mx-auto space-y-6">
+          <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm max-w-xl mx-auto space-y-6">
             <div>
               <h4 className="font-extrabold text-slate-900 text-xl tracking-tight">Instant Airtime Recharge</h4>
               <p className="text-xs text-slate-400 mt-1">Recharge any national carrier number securely using your wallet balance.</p>
@@ -2245,7 +2255,7 @@ function DashboardOverview({
                         className={cn(
                           "py-3 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 font-bold text-xs",
                           isSelected 
-                            ? "border-blue-600 bg-blue-50/40 shadow-sm text-blue-600" 
+                            ? "border-indigo-600 bg-indigo-50/40 shadow-sm text-indigo-600" 
                             : "border-slate-150 hover:border-slate-300 bg-slate-50/20 text-slate-600"
                         )}
                       >
@@ -2271,7 +2281,7 @@ function DashboardOverview({
                     placeholder="e.g. 08123456789"
                     value={airtimePhone}
                     onChange={(e) => setAirtimePhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 text-lg"
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
                   />
                 </div>
               </div>
@@ -2280,7 +2290,7 @@ function DashboardOverview({
               <div className="space-y-3">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-wider block ml-1">Recharge Amount (₦)</label>
                 <div className="relative font-sans">
-                  <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-450 text-slate-400 text-lg">₦</span>
+                  <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-slate-400 text-lg">₦</span>
                   <input
                     required
                     type="number"
@@ -2289,7 +2299,7 @@ function DashboardOverview({
                     placeholder="100 - 50,000"
                     value={airtimeAmount}
                     onChange={(e) => setAirtimeAmount(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 text-lg"
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
                   />
                 </div>
 
@@ -2300,7 +2310,7 @@ function DashboardOverview({
                       type="button"
                       key={amt}
                       onClick={() => setAirtimeAmount(String(amt))}
-                      className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-705 text-slate-700 rounded-xl text-xs font-bold transition-all"
+                      className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-slate-700 rounded-xl text-xs font-bold transition-all"
                     >
                       ₦{amt}
                     </button>
@@ -2313,10 +2323,10 @@ function DashboardOverview({
                 <div className={cn(
                   "flex items-center gap-3 p-4 rounded-xl text-xs border font-sans",
                   user.balance >= Number(airtimeAmount) 
-                    ? "bg-green-50/50 border-green-200 text-green-805 text-green-800" 
-                    : "bg-rose-50/50 border-rose-200 text-rose-805 text-rose-800"
+                    ? "bg-green-50/50 border-green-200 text-green-800 text-green-800" 
+                    : "bg-rose-50/50 border-rose-200 text-rose-800 text-rose-800"
                 )}>
-                  <AlertCircle size={18} className={cn("flex-shrink-0", user.balance >= Number(airtimeAmount) ? "text-green-650" : "text-rose-650")} />
+                  <AlertCircle size={18} className={cn("flex-shrink-0", user.balance >= Number(airtimeAmount) ? "text-green-600" : "text-rose-600")} />
                   <div>
                     <p className="font-bold">Transaction Pre-check</p>
                     <p className="text-[11px] opacity-90 mt-0.5 font-semibold">
@@ -2334,7 +2344,7 @@ function DashboardOverview({
               <button
                 type="submit"
                 disabled={!airtimeNetwork || !airtimePhone || !airtimeAmount || Number(airtimeAmount) <= 0 || user.balance < Number(airtimeAmount)}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-blue-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-indigo-200/60 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
               >
                 Continue to Payment
               </button>
@@ -2362,7 +2372,7 @@ function DashboardOverview({
       <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
         <div className="p-6 border-b border-slate-50 flex justify-between items-center">
           <h3 className="font-bold text-slate-800">Recent Transactions</h3>
-          <button onClick={() => setTab('history')} className="text-blue-600 text-sm font-bold hover:underline cursor-pointer">View All</button>
+          <button onClick={() => setTab('history')} className="text-indigo-600 text-sm font-bold hover:underline cursor-pointer">View All</button>
         </div>
         <div className="divide-y divide-slate-50">
           {transactions.slice(0, 4).map(tx => (
@@ -2399,7 +2409,7 @@ function DashboardOverview({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10"
+              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10"
             >
               {/* Header */}
               <div className="p-6 border-b border-slate-50 flex justify-between items-center">
@@ -2436,7 +2446,7 @@ function DashboardOverview({
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Price</p>
-                    <p className="text-2xl font-black text-blue-600 tracking-tight font-sans">
+                    <p className="text-2xl font-black text-indigo-600 tracking-tight font-sans">
                       {formatCurrency(selectedPlan.price)}
                     </p>
                   </div>
@@ -2455,17 +2465,17 @@ function DashboardOverview({
                       placeholder="e.g. 08123456789"
                       value={phoneNumber}
                       onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600 text-lg"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
                     />
                   </div>
                 </div>
 
                 {/* Balance validation indicator */}
-                <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-blue-50/50 border border-blue-100 text-blue-800">
-                  <AlertCircle size={18} className="text-blue-600 flex-shrink-0" />
+                <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-indigo-50/50 border border-indigo-100 text-indigo-800">
+                  <AlertCircle size={18} className="text-indigo-600 flex-shrink-0" />
                   <div>
                     <p className="font-bold font-sans">Wallet Balance Check</p>
-                    <p className="text-[11px] text-blue-700/80 font-sans">
+                    <p className="text-[11px] text-indigo-700/80 font-sans">
                       Current balance: <strong>{formatCurrency(user.balance)}</strong>. 
                       {user.balance >= selectedPlan.price ? " Balance is sufficient!" : " Insufficient balance. Please fund."}
                     </p>
@@ -2476,7 +2486,7 @@ function DashboardOverview({
                 <button
                   type="submit"
                   disabled={isSubmitting || user.balance < selectedPlan.price}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-blue-100 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-indigo-200/60 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
                 >
                   {isSubmitting ? "Processing Transaction..." : `Pay ${formatCurrency(selectedPlan.price)}`}
                 </button>
@@ -2499,7 +2509,7 @@ function DashboardOverview({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 space-y-6"
+              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 space-y-6"
             >
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
@@ -2533,7 +2543,7 @@ function DashboardOverview({
                 </div>
                 <div className="pt-3 border-t border-slate-200/60 flex justify-between items-center text-base">
                   <span className="text-slate-500 font-extrabold text-sm uppercase tracking-wider">Charge Amount</span>
-                  <span className="text-xl font-black text-blue-600 tracking-tight">
+                  <span className="text-xl font-black text-indigo-600 tracking-tight">
                     {formatCurrency(Number(airtimeAmount))}
                   </span>
                 </div>
@@ -2551,7 +2561,7 @@ function DashboardOverview({
                   type="button"
                   disabled={isBuyingAirtime}
                   onClick={handleInstantAirtimePurchase}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-blue-105 text-sm disabled:opacity-55"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-indigo-200/60 text-sm disabled:opacity-55"
                 >
                   {isBuyingAirtime ? "Sending..." : "Confirm & Recharge"}
                 </button>
@@ -2577,10 +2587,10 @@ function DashboardOverview({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-lg overflow-hidden relative border border-slate-100 shadow-2xl z-10"
+              className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden relative border border-slate-100 shadow-2xl z-10"
             >
               {/* Header */}
-              <div className="p-6 border-b-2 border-black flex justify-between items-center bg-[#DBE2EF]">
+              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-50">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-white border-2 border-black flex items-center justify-center text-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                     <Wallet size={20} />
@@ -2605,7 +2615,7 @@ function DashboardOverview({
               {/* Accounts Content List */}
               <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto bg-white">
                 <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-6 font-sans">
-                  <div className="text-slate-700 text-xs leading-relaxed font-bold bg-[#DBE2EF]/65 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
+                  <div className="text-slate-700 text-xs leading-relaxed font-bold bg-indigo-50/70 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
                     🦋 Fund your secure wallet instantly with **Flutterwave**. Your balance is credited automatically across our cloud nodes upon secure server validation.
                   </div>
 
@@ -2620,7 +2630,7 @@ function DashboardOverview({
                           value={opayAmount}
                           onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
                           placeholder="e.g. 2000"
-                          className="w-full bg-slate-50 border-2 border-black focus:border-[#5B21B6] rounded-xl py-4 pl-10 pr-4 font-mono font-extrabold text-slate-900 text-lg focus:outline-none transition-all placeholder:text-slate-350"
+                          className="w-full bg-slate-50 border-2 border-black focus:border-[#5B21B6] rounded-xl py-4 pl-10 pr-4 font-mono font-extrabold text-slate-900 text-lg focus:outline-none transition-all placeholder:text-slate-300"
                         />
                       </div>
                     </div>
@@ -2650,7 +2660,7 @@ function DashboardOverview({
                         <span className="text-slate-500 font-sans uppercase">Current Balance:</span>
                         <span className="font-extrabold font-mono text-slate-900">{formatCurrency(user.balance)}</span>
                       </div>
-                      <div className="flex justify-between items-center text-xs border-t border-slate-250 pt-2 font-bold">
+                      <div className="flex justify-between items-center text-xs border-t border-slate-200 pt-2 font-bold">
                         <span className="text-[#5B21B6] uppercase">Projected Balance:</span>
                         <span className="font-black font-mono text-[#5B21B6] text-sm">
                           {formatCurrency(user.balance + Number(opayAmount || 0))}
@@ -2706,7 +2716,7 @@ function DashboardOverview({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-8 space-y-6"
+              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-8 space-y-6"
             >
               <div className="flex justify-between items-center">
                 <h4 className="font-extrabold text-slate-900 text-xl">Transfer Funds</h4>
@@ -2723,7 +2733,7 @@ function DashboardOverview({
                       value={transferUid}
                       onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
                       placeholder="e.g. NOROYA-25J7Q"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
                     />
                   </div>
                   <div className="space-y-2">
@@ -2733,13 +2743,13 @@ function DashboardOverview({
                       value={transferAmount}
                       onChange={(e) => setTransferAmount(e.target.value)}
                       placeholder="0.00"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600/10 focus:border-blue-600"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
                     />
                   </div>
                   <button
                     onClick={handleLookupRecipient}
                     disabled={transferLoading || !transferUid || !transferAmount}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
                   >
                     {transferLoading ? "Checking..." : "Continue"}
                   </button>
@@ -2754,14 +2764,14 @@ function DashboardOverview({
                     <p className="text-xs text-slate-500">{transferRecipient.uid}</p>
                     <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
                       <span className="text-xs text-slate-400 font-bold uppercase">Amount</span>
-                      <span className="text-xl font-black text-blue-600">₦{Number(transferAmount).toLocaleString()}</span>
+                      <span className="text-xl font-black text-indigo-600">₦{Number(transferAmount).toLocaleString()}</span>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
                       {transferLoading ? "Sending..." : "Confirm"}
                     </button>
                   </div>
@@ -2781,7 +2791,7 @@ const imgToast = (item: string) => {
 
 function QuickAction({ icon, label, color, onClick }: { icon: React.ReactNode, label: string, color: string, onClick: () => void }) {
   const colorMap: any = {
-    blue: "bg-blue-50 text-blue-600",
+    blue: "bg-indigo-50 text-indigo-600",
     amber: "bg-green-50 text-green-600",
     purple: "bg-purple-100/60 text-purple-700",
     green: "bg-emerald-50 text-emerald-700",
@@ -2809,7 +2819,7 @@ function TransactionItem({ label, date, amount, status, reference, onClick }: { 
       <div className="flex items-center gap-4">
         <div className={cn(
           "w-10 h-10 rounded-full flex items-center justify-center",
-          amount > 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-650 bg-red-50/70 text-red-600"
+          amount > 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600 bg-red-50/70 text-red-600"
         )}>
           {amount > 0 ? <ArrowDownLeft size={20} /> : <ArrowUpRight size={20} />}
         </div>
@@ -2842,13 +2852,13 @@ function TransactionItem({ label, date, amount, status, reference, onClick }: { 
 
 function ServicePlaceholder({ name }: { name: string }) {
   return (
-    <div className="bg-white rounded-3xl p-12 border border-slate-100 text-center space-y-4">
-      <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto text-blue-600">
+    <div className="bg-white rounded-[2rem] p-12 border border-slate-100 text-center space-y-4">
+      <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600">
         <Smartphone size={40} />
       </div>
       <h3 className="text-2xl font-bold">{name}</h3>
       <p className="text-slate-500">This feature is being connected to the service provider API.</p>
-      <button className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-blue-100">
+      <button className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-indigo-200/60">
         Refresh Status
       </button>
     </div>
