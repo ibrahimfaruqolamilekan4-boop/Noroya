@@ -109,6 +109,35 @@ const resolveMozosubzApiKey = async (): Promise<string> => {
 
 dotenv.config();
 
+// ─── Reseller Program ───────────────────────────────────────────────────────
+// Manual monthly renewal: users pay RESELLER_MONTHLY_FEE to extend
+// reseller_expires_at by 30 days. Status is always derived live from that
+// timestamp (never a stale flag) -- active if now() is before expiry, still
+// discounted during the RESELLER_GRACE_DAYS grace window after expiry, and
+// reverts to standard pricing automatically once the grace window passes.
+// No cron job is needed since this is checked at purchase time, not on a schedule.
+const RESELLER_DISCOUNT_PERCENT = 20;   // flat % off retail price, data purchases only
+const RESELLER_MONTHLY_FEE = 1000;      // ₦, manual renewal (not auto-charged)
+const RESELLER_GRACE_DAYS = 3;          // days after expiry before discount actually drops
+
+const isResellerActive = (profile: any): boolean => {
+  if (!profile?.reseller_expires_at) return false;
+  const expiresAt = new Date(profile.reseller_expires_at).getTime();
+  const graceMs = RESELLER_GRACE_DAYS * 24 * 60 * 60 * 1000;
+  return Date.now() <= expiresAt + graceMs;
+};
+
+// Applies the flat reseller discount to a base retail price -- ONLY for
+// service_type 'data', and ONLY while the profile's reseller subscription is
+// active (including the grace window). Any other service_type, or a lapsed
+// subscription past grace, returns the unchanged retail price.
+const applyResellerPricing = (basePrice: number, profile: any, serviceType: string): number => {
+  if (serviceType !== 'data') return basePrice;
+  if (!isResellerActive(profile)) return basePrice;
+  const discounted = basePrice * (1 - RESELLER_DISCOUNT_PERCENT / 100);
+  return Math.round(discounted);
+};
+
 // =========================================================================
 // 🗝️ VTU GATEWAY & MOZOSUBZ CONFIGURATION CONFIG KEYS (EXPOSED VARIABLES)
 // =========================================================================
@@ -1831,6 +1860,10 @@ if (Object.keys(updateData).length <= 1) {
         finalPrice = finalPrice * qty;
       }
 
+      // Reseller discount (data purchases only) -- applied server-side against the
+      // caller's own verified profile, never trusting a client-supplied discount.
+      finalPrice = applyResellerPricing(finalPrice, profile, service.service_type);
+
       if (currentBalance < finalPrice) {
         return res.status(400).json({ 
           error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` 
@@ -3404,6 +3437,10 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         finalPrice = Number(service.selling_price || amount || 0);
       }
 
+      // Reseller discount (data purchases only) -- applied server-side against the
+      // caller's own verified profile, never trusting a client-supplied discount.
+      finalPrice = applyResellerPricing(finalPrice, profile, reqType);
+
       if (isNaN(finalPrice) || finalPrice <= 0) {
         return res.status(400).json({ error: "Invalid dynamic utility purchase amount calculated." });
       }
@@ -3628,6 +3665,97 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     } catch (error: any) {
       console.error("[Upgrade Option Exception]:", error);
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // ─── Reseller Program: manual monthly subscribe/renew ───────────────────
+  // Charges RESELLER_MONTHLY_FEE from the caller's own wallet (never a body-supplied
+  // target -- getAuthenticatedUserBalance only ever resolves the verified session's own
+  // account) and extends reseller_expires_at by 30 days. If the previous subscription is
+  // still active or within its grace window, the new 30 days stacks on top of the current
+  // expiry instead of the extension being wasted; if it already lapsed past grace, the new
+  // period starts fresh from now.
+  app.post("/api/reseller/subscribe", async (req, res) => {
+    try {
+      const { pgUuid, profile } = await getAuthenticatedUserBalance(req);
+
+      const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: pgUuid,
+        amount: RESELLER_MONTHLY_FEE,
+      });
+      if (deductErr) throw new Error(deductErr.message);
+      if (!deductOk) {
+        return res.status(400).json({ error: `Insufficient balance. ₦${RESELLER_MONTHLY_FEE} required to subscribe as a reseller.` });
+      }
+
+      const now = Date.now();
+      const graceMs = RESELLER_GRACE_DAYS * 24 * 60 * 60 * 1000;
+      const currentExpiry = profile?.reseller_expires_at ? new Date(profile.reseller_expires_at).getTime() : 0;
+      const baseTime = currentExpiry + graceMs > now ? currentExpiry : now;
+      const newExpiry = new Date(baseTime + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { error: updateErr } = await supabase
+        .from('profiles')
+        .update({ reseller_expires_at: newExpiry, role: 'reseller' })
+        .eq('id', pgUuid);
+      if (updateErr) throw new Error(updateErr.message);
+
+      try {
+        await supabase.from('transactions').insert({
+          user_id: pgUuid, type: 'reseller_subscription',
+          amount: RESELLER_MONTHLY_FEE, status: 'completed',
+          description: `Reseller subscription renewed until ${newExpiry}`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (txErr: any) {
+        console.warn("[Reseller Subscribe] transaction log warning:", txErr.message);
+      }
+
+      return res.json({
+        success: true,
+        message: `Reseller subscription active until ${new Date(newExpiry).toLocaleDateString()}.`,
+        reseller_expires_at: newExpiry,
+        discount_percent: RESELLER_DISCOUNT_PERCENT,
+      });
+    } catch (err: any) {
+      console.error("[Reseller Subscribe Exception]:", err);
+      return res.status(400).json({ error: err.message });
+    }
+  });
+
+  // GET /api/reseller/status -- live status derived from reseller_expires_at, never a stored flag.
+  app.get("/api/reseller/status", async (req, res) => {
+    try {
+      const { profile } = await getAuthenticatedUserBalance(req);
+      const expiresAtRaw = profile?.reseller_expires_at;
+
+      if (!expiresAtRaw) {
+        return res.json({
+          status: 'none', active: false,
+          discount_percent: RESELLER_DISCOUNT_PERCENT, monthly_fee: RESELLER_MONTHLY_FEE,
+        });
+      }
+
+      const expiresAt = new Date(expiresAtRaw).getTime();
+      const graceMs = RESELLER_GRACE_DAYS * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      let status: 'active' | 'grace' | 'expired';
+      if (now <= expiresAt) status = 'active';
+      else if (now <= expiresAt + graceMs) status = 'grace';
+      else status = 'expired';
+
+      return res.json({
+        status,
+        active: status !== 'expired',
+        reseller_expires_at: expiresAtRaw,
+        days_remaining: Math.max(0, Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000))),
+        grace_days_remaining: status === 'grace' ? Math.max(0, Math.ceil((expiresAt + graceMs - now) / (24 * 60 * 60 * 1000))) : 0,
+        discount_percent: RESELLER_DISCOUNT_PERCENT,
+        monthly_fee: RESELLER_MONTHLY_FEE,
+      });
+    } catch (err: any) {
+      return res.status(401).json({ error: err.message });
     }
   });
 
