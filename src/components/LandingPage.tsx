@@ -134,7 +134,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 overflow-x-hidden relative font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-900 overflow-x-hidden relative font-sans selection:bg-indigo-600 selection:text-white">
       
       {/* Dynamic Header / Navbar */}
       <nav className="fixed top-0 w-full z-50 bg-white/90 backdrop-blur-md border-b border-slate-100">
@@ -143,34 +143,34 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             
             {/* Logo */}
             <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-              <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+              <div className="w-11 h-11 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
                 {/* Modern "N" Custom SVG inside blue box */}
                 <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <span className="text-2xl font-black tracking-tight text-slate-900 font-display">Noroyasub</span>
+              <span className="text-2xl font-black tracking-tight text-slate-900 font-display">NORODATA</span>
             </div>
             
             {/* Desktop Navigation Links */}
             <div className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-600">
-              <a href="#services" className="hover:text-blue-600 transition-colors">Services</a>
-              <a href="#prices" className="hover:text-blue-600 transition-colors">Prices</a>
-              <a href="#features" className="hover:text-blue-600 transition-colors">Features</a>
-              <a href="#faq" className="hover:text-blue-600 transition-colors">FAQ</a>
+              <a href="#services" className="hover:text-indigo-600 transition-colors">Services</a>
+              <a href="#prices" className="hover:text-indigo-600 transition-colors">Prices</a>
+              <a href="#features" className="hover:text-indigo-600 transition-colors">Features</a>
+              <a href="#faq" className="hover:text-indigo-600 transition-colors">FAQ</a>
             </div>
 
             {/* Desktop Auth Buttons */}
             <div className="hidden md:flex items-center gap-4">
               <button 
                 onClick={onAuth}
-                className="text-slate-700 hover:text-blue-600 font-bold text-sm px-4 py-2.5 transition-all"
+                className="text-slate-700 hover:text-indigo-600 font-bold text-sm px-4 py-2.5 transition-all"
               >
                 Log in
               </button>
               <button 
                 onClick={onAuth}
-                className="bg-blue-600 text-white font-bold text-sm px-6 py-3.5 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20 transform hover:-translate-y-0.5"
+                className="bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-bold text-sm px-6 py-3.5 rounded-2xl hover:from-indigo-600 hover:to-violet-700 transition-all shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30 transform hover:-translate-y-0.5"
               >
                 Create free account →
               </button>
@@ -197,10 +197,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             className="fixed top-20 inset-x-0 z-40 bg-white border-b border-slate-100 px-6 py-8 md:hidden shadow-xl"
           >
             <div className="flex flex-col gap-6 text-lg font-bold text-slate-800">
-              <a href="#services" onClick={() => setIsMenuOpen(false)} className="hover:text-blue-600 py-1 transition-colors">Services</a>
-              <a href="#prices" onClick={() => setIsMenuOpen(false)} className="hover:text-blue-600 py-1 transition-colors">Prices</a>
-              <a href="#features" onClick={() => setIsMenuOpen(false)} className="hover:text-blue-600 py-1 transition-colors">Features</a>
-              <a href="#faq" onClick={() => setIsMenuOpen(false)} className="hover:text-blue-600 py-1 transition-colors">FAQ</a>
+              <a href="#services" onClick={() => setIsMenuOpen(false)} className="hover:text-indigo-600 py-1 transition-colors">Services</a>
+              <a href="#prices" onClick={() => setIsMenuOpen(false)} className="hover:text-indigo-600 py-1 transition-colors">Prices</a>
+              <a href="#features" onClick={() => setIsMenuOpen(false)} className="hover:text-indigo-600 py-1 transition-colors">Features</a>
+              <a href="#faq" onClick={() => setIsMenuOpen(false)} className="hover:text-indigo-600 py-1 transition-colors">FAQ</a>
               
               <div className="h-[1px] bg-slate-100 my-2" />
               
@@ -213,7 +213,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 </button>
                 <button 
                   onClick={() => { onAuth(); setIsMenuOpen(false); }}
-                  className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl text-center hover:bg-blue-700 shadow-lg shadow-blue-500/10 transition-all"
+                  className="w-full bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-bold py-4 rounded-2xl text-center hover:from-indigo-600 hover:to-violet-700 shadow-lg shadow-indigo-500/20 transition-all"
                 >
                   Create free account →
                 </button>
@@ -231,27 +231,27 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="lg:col-span-7 space-y-8 text-left">
             
             {/* Services Badge */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-full border border-blue-100">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-semibold rounded-full border border-indigo-100">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse" />
               Airtime • Data • Cable • Electricity • Pins
             </div>
 
             {/* Display Header */}
             <h1 className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight leading-[1.08] text-slate-900 font-display">
               Smart payments.<br />
-              Delivered <span className="text-blue-600 underline underline-offset-8 decoration-3 decoration-blue-500/30">instantly.</span>
+              Delivered <span className="text-indigo-600 underline underline-offset-8 decoration-3 decoration-indigo-500/30">instantly.</span>
             </h1>
 
             {/* Description */}
             <p className="text-lg md:text-xl text-slate-500 leading-relaxed max-w-2xl font-medium">
-              Fund your Noroyasub wallet securely to recharge airtime, buy cheap data bundles, pay power bills, and renew TV subscriptions across Nigeria in under 5 seconds.
+              Fund your NORODATA wallet securely to recharge airtime, buy cheap data bundles, pay power bills, and renew TV subscriptions across Nigeria in under 5 seconds.
             </p>
 
             {/* Primary Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-4">
               <button 
                 onClick={onAuth}
-                className="bg-blue-600 text-white font-bold text-lg px-8 py-5 rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/15 hover:-translate-y-0.5 transform flex items-center justify-center gap-2"
+                className="bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-bold text-lg px-8 py-5 rounded-2xl hover:from-indigo-600 hover:to-violet-700 transition-all shadow-xl shadow-indigo-500/20 hover:-translate-y-0.5 transform flex items-center justify-center gap-2"
               >
                 Get Started Now <ArrowRight size={18} />
               </button>
@@ -290,15 +290,15 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="lg:col-span-5 relative">
             
             {/* Glowing Accent behind the card */}
-            <div className="absolute -inset-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-[3rem] blur-2xl opacity-10 -z-10" />
+            <div className="absolute -inset-4 bg-gradient-to-r from-indigo-500 to-violet-600 rounded-[3rem] blur-2xl opacity-10 -z-10" />
 
             <div className="space-y-6">
               
               {/* Wallet Card Mockup */}
-              <div className="bg-slate-950 text-white rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden border border-slate-800/50">
+              <div className="bg-slate-950 text-white rounded-[2rem] p-8 shadow-2xl relative overflow-hidden border border-slate-800/50">
                 
                 {/* Visual Circle Background elements for card realism */}
-                <div className="absolute -top-12 -right-12 w-48 h-48 bg-blue-600/10 rounded-full blur-xl pointer-events-none" />
+                <div className="absolute -top-12 -right-12 w-48 h-48 bg-indigo-600/10 rounded-full blur-xl pointer-events-none" />
                 <div className="absolute -bottom-16 -left-16 w-52 h-52 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
 
                 {/* Header of Card */}
@@ -341,13 +341,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 {/* Icons Grid: Airtime, Data, Cable, Electricity */}
                 <div className="grid grid-cols-4 gap-4 pt-1 relative z-10 border-t border-slate-900">
                   <div className="flex flex-col items-center gap-2 cursor-pointer group" onClick={onAuth}>
-                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-blue-600/25 rounded-2xl flex items-center justify-center text-blue-400 group-hover:text-blue-300 transition-all border border-slate-800">
+                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-indigo-600/25 rounded-2xl flex items-center justify-center text-indigo-400 group-hover:text-indigo-300 transition-all border border-slate-800">
                       <Smartphone size={18} />
                     </div>
                     <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200">Airtime</span>
                   </div>
                   <div className="flex flex-col items-center gap-2 cursor-pointer group" onClick={onAuth}>
-                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-blue-600/25 rounded-2xl flex items-center justify-center text-blue-400 group-hover:text-blue-300 transition-all border border-slate-800">
+                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-indigo-600/25 rounded-2xl flex items-center justify-center text-indigo-400 group-hover:text-indigo-300 transition-all border border-slate-800">
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
@@ -355,13 +355,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                     <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200">Data</span>
                   </div>
                   <div className="flex flex-col items-center gap-2 cursor-pointer group" onClick={onAuth}>
-                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-blue-600/25 rounded-2xl flex items-center justify-center text-blue-400 group-hover:text-blue-300 transition-all border border-slate-800">
+                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-indigo-600/25 rounded-2xl flex items-center justify-center text-indigo-400 group-hover:text-indigo-300 transition-all border border-slate-800">
                       <Tv size={18} />
                     </div>
                     <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200">Cable</span>
                   </div>
                   <div className="flex flex-col items-center gap-2 cursor-pointer group" onClick={onAuth}>
-                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-blue-600/25 rounded-2xl flex items-center justify-center text-blue-400 group-hover:text-blue-300 transition-all border border-slate-800">
+                    <div className="w-12 h-12 bg-slate-900 group-hover:bg-indigo-600/25 rounded-2xl flex items-center justify-center text-indigo-400 group-hover:text-indigo-300 transition-all border border-slate-800">
                       <Zap size={18} />
                     </div>
                     <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-200">Electricity</span>
@@ -371,7 +371,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               </div>
 
               {/* Live Ticker Transaction Item Mockup */}
-              <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-xl shadow-slate-100/50 flex items-center justify-between">
+              <div className="bg-white rounded-[2rem] p-5 border border-slate-100 shadow-xl shadow-slate-100/50 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {/* MTN circle brand logo mockup */}
                   <div className="w-11 h-11 bg-amber-400 text-slate-900 rounded-full flex items-center justify-center font-black text-xs border border-amber-300 tracking-tighter shadow-sm shrink-0">
@@ -442,7 +442,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           
           {/* Main Title Block */}
           <div className="text-left space-y-4 max-w-3xl">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Our Services</span>
+            <span className="text-xs font-black tracking-widest uppercase text-indigo-600">Our Services</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">All your daily subscriptions in one place.</h2>
             <p className="text-slate-500 text-base md:text-lg font-medium leading-relaxed">
               Experience seamless, instant fulfillment on all networks and utility portals through direct telecom API handshakes.
@@ -453,9 +453,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="grid md:grid-cols-2 gap-8">
             
             {/* Airtime Card */}
-            <div className="bg-slate-50 rounded-[2.5rem] p-8 border border-slate-100 flex flex-col justify-between">
+            <div className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 flex flex-col justify-between">
               <div className="space-y-6">
-                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-100">
+                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-slate-100">
                   <Smartphone size={24} />
                 </div>
                 <div className="space-y-2">
@@ -465,15 +465,15 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                   </p>
                 </div>
               </div>
-              <button onClick={onAuth} className="mt-8 text-blue-600 hover:text-blue-700 font-extrabold text-sm flex items-center gap-1">
+              <button onClick={onAuth} className="mt-8 text-indigo-600 hover:text-indigo-700 font-extrabold text-sm flex items-center gap-1">
                 Recharge airtime <ChevronRight size={16} />
               </button>
             </div>
 
             {/* Cable TV Card */}
-            <div className="bg-slate-50 rounded-[2.5rem] p-8 border border-slate-100 flex flex-col justify-between">
+            <div className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 flex flex-col justify-between">
               <div className="space-y-6">
-                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-100">
+                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-slate-100">
                   <Tv size={24} />
                 </div>
                 <div className="space-y-4">
@@ -509,24 +509,24 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                         <span className="font-extrabold text-slate-800">{p.name}</span>
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-slate-400 font-bold">{p.channels}</span>
-                          <span className="font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{p.price.split(' ')[0]}</span>
+                          <span className="font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">{p.price.split(' ')[0]}</span>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
-              <button onClick={onAuth} className="mt-8 text-blue-600 hover:text-blue-700 font-extrabold text-sm flex items-center gap-1">
+              <button onClick={onAuth} className="mt-8 text-indigo-600 hover:text-indigo-700 font-extrabold text-sm flex items-center gap-1">
                 Renew your subscription <ChevronRight size={16} />
               </button>
             </div>
 
             {/* Electricity Card */}
-            <div className="bg-slate-50 rounded-[2.5rem] p-8 border border-slate-100 flex flex-col justify-between md:col-span-2">
+            <div className="bg-slate-50 rounded-[2rem] p-8 border border-slate-100 flex flex-col justify-between md:col-span-2">
               <div className="grid lg:grid-cols-12 gap-8 items-center">
                 
                 <div className="lg:col-span-7 space-y-6">
-                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-100">
+                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-slate-100">
                     <Zap size={24} />
                   </div>
                   <div className="space-y-3">
@@ -535,7 +535,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                       Buy prepaid tokens or pay postpaid bills across all electricity distribution companies (DISCOs). Your generated token displays on screen instantly and remains saved in your personal history log.
                     </p>
                   </div>
-                  <button onClick={onAuth} className="text-blue-600 hover:text-blue-700 font-extrabold text-sm flex items-center gap-1">
+                  <button onClick={onAuth} className="text-indigo-600 hover:text-indigo-700 font-extrabold text-sm flex items-center gap-1">
                     Buy power token <ChevronRight size={16} />
                   </button>
                 </div>
@@ -560,9 +560,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           </div>
 
           {/* DYNAMIC INTERACTIVE RATES TABLE (High Fidelity Showcase) */}
-          <div id="prices" className="bg-white rounded-[3rem] p-8 lg:p-12 border border-slate-200/60 shadow-lg relative overflow-hidden">
+          <div id="prices" className="bg-white rounded-[2rem] p-8 lg:p-12 border border-slate-200/60 shadow-lg relative overflow-hidden">
             
-            <div className="absolute -top-12 -left-12 w-40 h-40 bg-blue-500/5 rounded-full blur-xl pointer-events-none" />
+            <div className="absolute -top-12 -left-12 w-40 h-40 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
 
             <div className="space-y-8 relative z-10">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
@@ -592,7 +592,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               </div>
 
               {/* Plans Table */}
-              <div className="border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+              <div className="border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm">
                 <div className="grid grid-cols-4 bg-slate-50 p-4 border-b border-slate-100 text-xs font-black text-slate-400 uppercase tracking-wider">
                   <div>Data Size</div>
                   <div>Validity</div>
@@ -612,7 +612,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                           {p.type}
                         </span>
                       </div>
-                      <div className="text-right font-black text-sm text-blue-600">{p.price}</div>
+                      <div className="text-right font-black text-sm text-indigo-600">{p.price}</div>
                     </div>
                   ))}
                 </div>
@@ -621,7 +621,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               <div className="text-center pt-2">
                 <button 
                   onClick={onAuth}
-                  className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 font-extrabold text-sm transition-all"
+                  className="inline-flex items-center gap-1.5 text-indigo-600 hover:text-indigo-700 font-extrabold text-sm transition-all"
                 >
                   View all available plans in dashboard <ArrowRight size={16} />
                 </button>
@@ -630,12 +630,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           </div>
 
           {/* BULK RECHARGE PINS PRINTING (Fabulous Interactive Widget) */}
-          <div className="bg-slate-50 rounded-[3rem] p-8 lg:p-12 border border-slate-100">
+          <div className="bg-slate-50 rounded-[2rem] p-8 lg:p-12 border border-slate-100">
             <div className="grid lg:grid-cols-12 gap-12 items-center">
               
               {/* Left text column */}
               <div className="lg:col-span-7 space-y-6">
-                <span className="bg-blue-100 text-blue-700 font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-full inline-block">
+                <span className="bg-indigo-100 text-indigo-700 font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-full inline-block">
                   Built for kiosks and resellers
                 </span>
                 <h3 className="text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight font-display">
@@ -670,7 +670,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="pt-2">
                   <button 
                     onClick={onAuth}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-base px-6 py-4 rounded-xl flex items-center gap-2 shadow-lg shadow-blue-500/10 transition-all transform hover:-translate-y-0.5"
+                    className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white font-bold text-base px-6 py-4 rounded-xl flex items-center gap-2 shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5"
                   >
                     Start generating pins <ArrowRight size={16} />
                   </button>
@@ -713,7 +713,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                         className={cn(
                           "py-3 rounded-xl border text-xs font-black transition-all text-center",
                           pinDenom === denom 
-                            ? "bg-blue-50 text-blue-600 border-blue-300" 
+                            ? "bg-indigo-50 text-indigo-600 border-indigo-300" 
                             : "bg-slate-50 text-slate-600 border-slate-200/50 hover:bg-slate-100"
                         )}
                       >
@@ -747,7 +747,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                       max="50" 
                       value={pinQty} 
                       onChange={(e) => setPinQty(Number(e.target.value))}
-                      className="flex-1 accent-blue-600 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
+                      className="flex-1 accent-indigo-600 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
                     />
 
                     <button 
@@ -778,17 +778,17 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         <div className="max-w-7xl mx-auto space-y-16 text-left">
           
           <div className="space-y-4 max-w-2xl">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">How it works</span>
+            <span className="text-xs font-black tracking-widest uppercase text-indigo-600">How it works</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">Three steps to your first payment.</h2>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8">
             
             {/* Step 1 */}
-            <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
+            <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
               <span className="text-7xl font-black text-slate-100 absolute top-4 right-6 group-hover:scale-110 transition-transform duration-500 select-none">01</span>
               <div className="space-y-6 relative z-10 pt-8">
-                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
@@ -803,10 +803,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             </div>
 
             {/* Step 2 */}
-            <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
+            <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
               <span className="text-7xl font-black text-slate-100 absolute top-4 right-6 group-hover:scale-110 transition-transform duration-500 select-none">02</span>
               <div className="space-y-6 relative z-10 pt-8">
-                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                   </svg>
@@ -821,10 +821,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             </div>
 
             {/* Step 3 */}
-            <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
+            <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm relative flex flex-col justify-between group overflow-hidden">
               <span className="text-7xl font-black text-slate-100 absolute top-4 right-6 group-hover:scale-110 transition-transform duration-500 select-none">03</span>
               <div className="space-y-6 relative z-10 pt-8">
-                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
@@ -842,12 +842,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         </div>
       </section>
 
-      {/* CORE HIGHLIGHTS GRID: "WHY NOROYASUB" */}
+      {/* CORE HIGHLIGHTS GRID: "WHY NORODATA" */}
       <section id="features" className="py-24 px-4 bg-white">
         <div className="max-w-7xl mx-auto space-y-16">
           
           <div className="text-left space-y-4 max-w-2xl">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Why Noroyasub</span>
+            <span className="text-xs font-black tracking-widest uppercase text-indigo-600">Why NORODATA</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">Built for speed, honesty and reliability.</h2>
           </div>
 
@@ -948,12 +948,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         </div>
       </section>
 
-      {/* FAQS SEGMENT: "ANSWERS, STRAIGHT FROM HOW NOROYASUB ACTUALLY WORKS." */}
+      {/* FAQS SEGMENT: "ANSWERS, STRAIGHT FROM HOW NORODATA ACTUALLY WORKS." */}
       <section id="faq" className="py-24 px-4 bg-white relative">
         <div className="max-w-4xl mx-auto space-y-16">
           
           <div className="text-center space-y-4">
-            <span className="text-xs font-black tracking-widest uppercase text-blue-600">Frequently Asked</span>
+            <span className="text-xs font-black tracking-widest uppercase text-indigo-600">Frequently Asked</span>
             <h2 className="text-3xl md:text-5xl font-black tracking-tight text-slate-900 font-display">
               Clear answers about how our platform works.
             </h2>
@@ -965,8 +965,8 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               <div 
                 key={idx} 
                 className={cn(
-                  "border border-slate-100 rounded-3xl overflow-hidden transition-all duration-300",
-                  faqOpenIdx === idx ? "border-blue-200 bg-slate-50/50" : "bg-white hover:bg-slate-50/30"
+                  "border border-slate-100 rounded-[2rem] overflow-hidden transition-all duration-300",
+                  faqOpenIdx === idx ? "border-indigo-200 bg-slate-50/50" : "bg-white hover:bg-slate-50/30"
                 )}
               >
                 <button
@@ -1011,7 +1011,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="flex flex-col items-center gap-4">
             <button 
               onClick={onAuth}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 py-5 rounded-2xl shadow-xl shadow-blue-500/15 transition-all transform hover:-translate-y-0.5"
+              className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white font-bold text-lg px-8 py-5 rounded-2xl shadow-xl shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5"
             >
               Create free account →
             </button>
@@ -1019,7 +1019,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               onClick={onAuth}
               className="text-slate-500 hover:text-slate-800 text-sm font-bold transition-all mt-1"
             >
-              Already have an account? <span className="text-blue-600 underline underline-offset-4 decoration-2 decoration-blue-500/20">Log in</span>
+              Already have an account? <span className="text-indigo-600 underline underline-offset-4 decoration-2 decoration-indigo-500/20">Log in</span>
             </button>
           </div>
         </div>
@@ -1034,12 +1034,12 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
             {/* Brand column */}
             <div className="col-span-2 space-y-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center">
                   <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
-                <span className="text-2xl font-black tracking-tight text-white font-display">Noroyasub</span>
+                <span className="text-2xl font-black tracking-tight text-white font-display">NORODATA</span>
               </div>
               <p className="text-slate-400 text-sm leading-relaxed max-w-sm font-medium">
                 Simplify how you recharge, subscribe, and pay utilities in Nigeria. Fast, automated, secure, and reliable.
@@ -1085,7 +1085,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           {/* Bottom Copyright segment */}
           <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="space-y-1 text-center md:text-left">
-              <p className="text-slate-500 text-xs font-bold">© 2026 Noroyasub. All rights reserved.</p>
+              <p className="text-slate-500 text-xs font-bold">© 2026 NORODATA. All rights reserved.</p>
               <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Payments securely powered by Monnify</p>
             </div>
             <div className="flex gap-6 text-xs text-slate-500 font-semibold">
@@ -1116,7 +1116,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              className="bg-white rounded-[2.5rem] p-8 w-full max-w-md relative z-10 border border-slate-100 shadow-2xl space-y-6 text-left"
+              className="bg-white rounded-[2rem] p-8 w-full max-w-md relative z-10 border border-slate-100 shadow-2xl space-y-6 text-left"
             >
               
               {/* Header */}
@@ -1147,7 +1147,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                     <span className="font-extrabold text-slate-800">Sterling Bank</span>
                     <button 
                       onClick={() => handleCopy("Sterling Bank", "bank")}
-                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                      className="text-slate-400 hover:text-indigo-600 transition-colors"
                     >
                       {copiedText === "bank" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                     </button>
@@ -1161,7 +1161,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                     <span className="font-mono font-black text-sm text-slate-900 tracking-wider">8234850192</span>
                     <button 
                       onClick={() => handleCopy("8234850192", "account")}
-                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                      className="text-slate-400 hover:text-indigo-600 transition-colors"
                     >
                       {copiedText === "account" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                     </button>
@@ -1172,10 +1172,10 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-400 font-bold">Account Name</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-slate-800">Noroyasub / Ibrahim Faruq</span>
+                    <span className="font-extrabold text-slate-800">NORODATA / Ibrahim Faruq</span>
                     <button 
-                      onClick={() => handleCopy("Noroyasub / Ibrahim Faruq", "name")}
-                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                      onClick={() => handleCopy("NORODATA / Ibrahim Faruq", "name")}
+                      className="text-slate-400 hover:text-indigo-600 transition-colors"
                     >
                       {copiedText === "name" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                     </button>
@@ -1185,13 +1185,13 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               </div>
 
               {/* Call out info */}
-              <div className="flex gap-3 bg-blue-50/50 border border-blue-100 p-4 rounded-xl items-start">
-                <svg className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex gap-3 bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl items-start">
+                <svg className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <div className="space-y-0.5">
-                  <span className="text-[10px] font-black text-blue-800 uppercase block">Instant Automation Enabled</span>
-                  <p className="text-[10px] text-blue-600 font-semibold leading-relaxed">
+                  <span className="text-[10px] font-black text-indigo-800 uppercase block">Instant Automation Enabled</span>
+                  <p className="text-[10px] text-indigo-600 font-semibold leading-relaxed">
                     This account is fully whitelisted. No debit card, OTP, or passwords required to fund your wallet.
                   </p>
                 </div>
