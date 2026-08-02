@@ -19,24 +19,80 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   Loader2, 
-  ArrowUpRight 
+  ArrowUpRight,
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
-interface ProductPlan {
-  id: string;
-  name: string;
-  price: number;
+interface ResellerStatus {
+  status: 'none' | 'active' | 'grace' | 'expired';
+  active: boolean;
+  reseller_expires_at?: string;
+  days_remaining?: number;
+  grace_days_remaining?: number;
+  discount_percent: number;
+  monthly_fee: number;
+}
+
+// Attaches the caller's real Supabase session token, since the backend's reseller
+// and purchase routes only trust a verified Authorization header -- never a
+// body-supplied userId -- to prevent one account acting on another's behalf.
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return {
+    'Content-Type': 'application/json',
+    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+  };
 }
 
 export default function ResellerPortal() {
   const { user, setSimulatedUser } = useAuth();
-  const [activeSubTab, setActiveSubTab] = React.useState<'upgrade' | 'terminal' | 'bulk-fund' | 'ledger'>('upgrade');
+  const [activeSubTab, setActiveSubTab] = React.useState<'reseller' | 'terminal' | 'bulk-fund' | 'ledger'>('reseller');
 
-  // Upgrade States
-  const [isUpgrading, setIsUpgrading] = React.useState(false);
+  // Reseller subscription status (live from backend, never assumed from a stale role field)
+  const [resellerStatus, setResellerStatus] = React.useState<ResellerStatus | null>(null);
+  const [isLoadingStatus, setIsLoadingStatus] = React.useState(true);
+  const [isSubscribing, setIsSubscribing] = React.useState(false);
+
+  const fetchResellerStatus = React.useCallback(async () => {
+    if (!user) {
+      setResellerStatus(null);
+      setIsLoadingStatus(false);
+      return;
+    }
+    setIsLoadingStatus(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/reseller/status', { headers });
+      const resData = await response.json();
+      if (response.ok) {
+        setResellerStatus(resData);
+      } else {
+        console.warn('[Reseller Status] fetch failed:', resData.error);
+        setResellerStatus(null);
+      }
+    } catch (err) {
+      console.error('[Reseller Status] network error:', err);
+      setResellerStatus(null);
+    } finally {
+      setIsLoadingStatus(false);
+    }
+  }, [user]);
+
+  React.useEffect(() => {
+    fetchResellerStatus();
+  }, [fetchResellerStatus]);
+
+  // Once status loads, land active/grace resellers on the POS terminal by default;
+  // everyone else lands on the subscription tab.
+  React.useEffect(() => {
+    if (!resellerStatus) return;
+    setActiveSubTab(resellerStatus.active ? 'terminal' : 'reseller');
+  }, [resellerStatus?.active]);
 
   // POS Sales terminal states
   const [saleType, setSaleType] = React.useState<'airtime' | 'data' | 'cable' | 'electricity' | 'betting'>('airtime');
@@ -74,53 +130,44 @@ export default function ResellerPortal() {
     { amount: 100000, bonusPercent: 1.5, tag: "Elite Wholesaler" }
   ];
 
-  // Auto set active subtab based on role
-  React.useEffect(() => {
-    if (user && (user.role === 'agent' || user.role === 'reseller')) {
-      setActiveSubTab('terminal');
-    } else {
-      setActiveSubTab('upgrade');
-    }
-  }, [user?.role]);
-
-  // Handle Account upgrade through API
-  const handleUpgrade = async (role: 'agent' | 'reseller') => {
+  // Handle reseller subscribe/renew through the new API
+  const handleSubscribe = async () => {
     if (!user) {
       toast.error("Please log in to continue");
       return;
     }
-    const fee = role === 'agent' ? 1500 : 3500;
+    const fee = resellerStatus?.monthly_fee ?? 1000;
     if (user.balance < fee) {
       toast.error(`Insufficient wallet funds. You need ${formatCurrency(fee)} to subscribe.`);
       return;
     }
 
-    setIsUpgrading(true);
+    setIsSubscribing(true);
     try {
-      const response = await fetch('/api/agent/upgrade', {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/reseller/subscribe', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.uid, desireRole: role })
+        headers,
       });
 
       const resData = await response.json();
       if (response.ok) {
         toast.success(resData.message);
-        // Update user state locally
         setSimulatedUser({
           ...user,
-          role: role,
-          balance: resData.balance
+          role: 'reseller',
+          balance: user.balance - fee
         });
+        await fetchResellerStatus();
         setActiveSubTab('terminal');
       } else {
-        toast.error(resData.error || "Upgrade transaction failed");
+        toast.error(resData.error || "Subscription failed");
       }
     } catch (err) {
       console.error(err);
-      toast.error("Network issue. Upgrade failed.");
+      toast.error("Network issue. Subscription failed.");
     } finally {
-      setIsUpgrading(false);
+      setIsSubscribing(false);
     }
   };
 
@@ -163,8 +210,7 @@ export default function ResellerPortal() {
 
       const resData = await response.json();
       if (response.ok) {
-        const cashback = resData.transaction?.cashbackEarned || 0;
-        const totalProfitAfterMarkup = (priceNum - costNum) + cashback;
+        const totalProfit = Math.max(0, priceNum - costNum);
 
         setSaleReceipt({
           ref: resData.transaction?.reference || `POS-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
@@ -175,9 +221,8 @@ export default function ResellerPortal() {
           plan: salePlan,
           actualCost: costNum,
           customerCharge: priceNum,
-          cashbackEarned: cashback,
-          markupProfit: priceNum - costNum,
-          totalProfit: totalProfitAfterMarkup,
+          markupProfit: totalProfit,
+          totalProfit,
           date: new Date().toLocaleString()
         });
 
@@ -185,7 +230,7 @@ export default function ResellerPortal() {
         if (user) {
           setSimulatedUser({
             ...user,
-            balance: user.balance - costNum + cashback
+            balance: user.balance - costNum
           });
         }
 
@@ -231,6 +276,9 @@ export default function ResellerPortal() {
         setBulkAmount('');
         setActiveSubTab('terminal');
       } else {
+        // The backend intentionally disabled this endpoint (raw balance-minting was a
+        // security hole with no real payment behind it) -- its error message explains
+        // that and points to Paystack/Flutterwave instead, so we just relay it here.
         toast.error(resData.error || "Bulk funding was declined.");
       }
     } catch (err) {
@@ -241,9 +289,21 @@ export default function ResellerPortal() {
     }
   };
 
-  // Compute live potential agent commissions dynamically based on a user inputting a test sales volume
+  // Discount used across the terminal/ledger views -- comes from the live backend status,
+  // never assumed from role, so it correctly drops to 0% the moment a subscription lapses
+  // past its grace window.
+  const discountPercent = (resellerStatus?.active ? resellerStatus.discount_percent : 0) / 100;
+
+  // Compute live potential reseller margin dynamically based on a user inputting a test sales volume
   const [projVol, setProjVol] = React.useState('50000');
-  const userRate = user?.role === 'reseller' ? 0.04 : user?.role === 'agent' ? 0.03 : 0.02;
+
+  const statusLabel = !resellerStatus || resellerStatus.status === 'none'
+    ? 'STANDARD USER'
+    : resellerStatus.status === 'active'
+    ? 'RESELLER · ACTIVE'
+    : resellerStatus.status === 'grace'
+    ? 'RESELLER · GRACE PERIOD'
+    : 'RESELLER · EXPIRED';
 
   return (
     <div className="space-y-8 font-sans">
@@ -257,26 +317,32 @@ export default function ResellerPortal() {
           <div className="space-y-3">
             <span className={cn(
               "px-4 py-1.5 rounded-full text-xs font-black tracking-widest uppercase inline-flex items-center gap-1.5 shadow-sm",
-              user?.role === 'reseller' ? "bg-amber-400 text-slate-950 font-bold" :
-              user?.role === 'agent' ? "bg-blue-500 text-white font-bold" :
+              resellerStatus?.status === 'active' ? "bg-amber-400 text-slate-950 font-bold" :
+              resellerStatus?.status === 'grace' ? "bg-orange-400 text-slate-950 font-bold" :
               "bg-slate-800 text-slate-300 font-bold"
             )}>
               <Award size={14} className="animate-pulse" />
-              {user?.role === 'reseller' ? 'ELITE RE-SELLER RANK' :
-               user?.role === 'agent' ? 'VIP AGENT RANK' :
-               'BASIC USER CLASS'}
+              {statusLabel}
             </span>
             <h2 className="text-3xl font-black tracking-tight leading-none text-white">Merchant Agency Dashboard</h2>
             <p className="text-slate-400 text-xs font-bold uppercase tracking-wider max-w-lg leading-relaxed">
               Wholesale VTU Distribution Engine & Point-of-Sale (POS) commissions terminal
             </p>
+            {resellerStatus?.status === 'grace' && (
+              <p className="text-orange-300 text-[11px] font-bold flex items-center gap-1.5">
+                <Clock size={13} />
+                {resellerStatus.grace_days_remaining} day(s) left in your grace period -- renew now to keep your discount.
+              </p>
+            )}
           </div>
           <div className="bg-white/5 border border-white/5 p-5 rounded-[2rem] text-right md:min-w-64">
             <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">RESELLER TRADING CAPITAL</p>
             <h3 className="text-3xl font-mono font-black text-white">{formatCurrency(user?.balance || 0)}</h3>
             <p className="text-[10px] text-emerald-400 font-semibold mt-1 flex items-center justify-end gap-1">
-              <span>Commission Rate:</span>
-              <strong className="bg-emerald-400/10 px-1.5 py-0.5 rounded">{(userRate * 100).toFixed(0)}% cashback</strong>
+              <span>Data discount:</span>
+              <strong className="bg-emerald-400/10 px-1.5 py-0.5 rounded">
+                {resellerStatus?.active ? `${resellerStatus.discount_percent}% off retail` : 'None'}
+              </strong>
             </p>
           </div>
         </div>
@@ -284,18 +350,16 @@ export default function ResellerPortal() {
 
       {/* Mini Tab Links */}
       <div className="flex border-b border-slate-100 pb-3 gap-6 overflow-x-auto select-none">
-        {(!user || (user.role !== 'agent' && user.role !== 'reseller')) && (
-          <button
-            onClick={() => setActiveSubTab('upgrade')}
-            className={cn(
-              "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
-              activeSubTab === 'upgrade' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
-            )}
-          >
-            Become Reseller
-          </button>
-        )}
-        {user && (user.role === 'agent' || user.role === 'reseller') && (
+        <button
+          onClick={() => setActiveSubTab('reseller')}
+          className={cn(
+            "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
+            activeSubTab === 'reseller' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          Reseller Subscription
+        </button>
+        {resellerStatus?.active && (
           <>
             <button
               onClick={() => setActiveSubTab('terminal')}
@@ -331,175 +395,104 @@ export default function ResellerPortal() {
       {/* TABS CONTAINER */}
       <AnimatePresence mode="wait">
         
-        {/* SUBTAB 1: Become an Agent or Reseller Upgrade */}
-        {activeSubTab === 'upgrade' && (
+        {/* SUBTAB: Reseller Subscription */}
+        {activeSubTab === 'reseller' && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }} 
             animate={{ opacity: 1, y: 0 }} 
             exit={{ opacity: 0 }}
             className="space-y-8"
           >
-            {/* Value Proposition Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Agent Membership Option */}
-              <div className="bg-white border border-slate-100 rounded-[2.5rem] p-8 space-y-6 shadow-sm flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-                    <TrendingUp size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-extrabold text-slate-900">VIP Agent Tier</h3>
-                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">ONBOARDING FEE: ₦1,500</p>
-                  </div>
-                  <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                    Excellent for VTU retailers who service immediate friends, family, and neighborhood clients. Instant cashbacks and optimized network routes.
-                  </p>
-                  
-                  {/* Perk list */}
-                  <ul className="space-y-2 text-xs font-semibold text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Flat 3.0% Guaranteed Cashback on all recharges</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Access to Reseller POS Quick Terminal console</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>0.5% Cash Bonus on bulk bank capital transfers</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Priority operator route validation clearance</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <button
-                  disabled={isUpgrading || (user?.role === 'agent' || user?.role === 'reseller')}
-                  onClick={() => handleUpgrade('agent')}
-                  className={cn(
-                    "w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all",
-                    user?.role === 'agent' ? "bg-green-50 text-green-600 font-bold" :
-                    user?.role === 'reseller' ? "bg-slate-100 text-slate-400 font-bold cursor-not-allowed" :
-                    "bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-100 cursor-pointer"
-                  )}
-                >
-                  {isUpgrading ? "Processing..." :
-                   user?.role === 'agent' ? "You are a VIP Agent" :
-                   user?.role === 'reseller' ? "Tier Level Exceeded" :
-                   "Subscribe to Agent Tier (₦1,500)"}
-                </button>
+            <div className="max-w-xl mx-auto bg-amber-500/5 border border-amber-200 rounded-[2.5rem] p-8 space-y-6 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 right-0 bg-amber-400 text-slate-950 px-4 py-1.5 rounded-bl-2xl text-[9px] font-black tracking-widest uppercase">
+                Monthly Subscription
               </div>
 
-              {/* Reseller Membership Option */}
-              <div className="bg-amber-500/5 border border-amber-200 rounded-[2.5rem] p-8 space-y-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
-                <div className="absolute top-0 right-0 bg-amber-400 text-slate-950 px-4 py-1.5 rounded-bl-2xl text-[9px] font-black tracking-widest uppercase">
-                  Best Value Rank
+              <div className="space-y-4">
+                <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center">
+                  <Sparkles size={24} />
                 </div>
-                
-                <div className="space-y-4">
-                  <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center">
-                    <Sparkles size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-extrabold text-slate-900">Elite Reseller Rank</h3>
-                    <p className="text-xs text-amber-700 font-bold uppercase tracking-wider mt-1">ONBOARDING FEE: ₦3,500</p>
-                  </div>
-                  <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                    Built for wholesale distributors with active clienteles. Leverage bulk rates, mark up retail costs, and earn maximum profit commissions!
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-900">Reseller Access</h3>
+                  <p className="text-xs text-amber-700 font-bold uppercase tracking-wider mt-1">
+                    ₦{(resellerStatus?.monthly_fee ?? 1000).toLocaleString()} / MONTH
                   </p>
-                  
-                  {/* Perk list */}
-                  <ul className="space-y-2 text-xs font-semibold text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-amber-600 animate-pulse" />
-                      <span className="font-extrabold text-amber-950">Maximize 4.0% Cashback on every transaction</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Custom Markup Margin setting for billing clients</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Earn 1.5% loyalty cache back on bulk credits</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-green-500" />
-                      <span>Exclusive printable receipts for branding invoice</span>
-                    </li>
-                  </ul>
                 </div>
+                <p className="text-xs text-slate-500 leading-relaxed font-medium">
+                  Subscribe to unlock {(resellerStatus?.discount_percent ?? 20)}% off retail price on every data plan.
+                  Renews manually each month -- no auto-charging. If it lapses, you keep your
+                  discount for a short grace period before pricing reverts to standard.
+                </p>
 
-                <button
-                  disabled={isUpgrading || user?.role === 'reseller'}
-                  onClick={() => handleUpgrade('reseller')}
-                  className={cn(
-                    "w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all",
-                    user?.role === 'reseller' ? "bg-amber-100 text-amber-700 font-bold" :
-                    "bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-200 cursor-pointer"
-                  )}
-                >
-                  {isUpgrading ? "Processing..." :
-                   user?.role === 'reseller' ? "You are an Elite Reseller" :
-                   "Subscribe to Reseller Tier (₦3,500)"}
-                </button>
+                <ul className="space-y-2 text-xs font-semibold text-slate-600">
+                  <li className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-amber-600 animate-pulse" />
+                    <span className="font-extrabold text-amber-950">
+                      {(resellerStatus?.discount_percent ?? 20)}% off retail price on all data plans
+                    </span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-green-500" />
+                    <span>Access to the POS Sales Console</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-green-500" />
+                    <span>3-day grace period if you're a little late renewing</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-green-500" />
+                    <span>Cancel anytime -- just don't renew next month</span>
+                  </li>
+                </ul>
               </div>
 
-            </div>
+              {resellerStatus?.active && resellerStatus.reseller_expires_at && (
+                <div className="bg-white border border-amber-100 rounded-2xl p-4 text-xs font-semibold text-slate-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Status</span>
+                    <span className={cn("font-bold", resellerStatus.status === 'grace' ? "text-orange-600" : "text-emerald-600")}>
+                      {resellerStatus.status === 'grace' ? 'Grace period' : 'Active'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Renews / expires</span>
+                    <span className="font-mono">{new Date(resellerStatus.reseller_expires_at).toLocaleDateString()}</span>
+                  </div>
+                  {resellerStatus.status === 'active' && (
+                    <div className="flex justify-between">
+                      <span>Days remaining</span>
+                      <span className="font-mono">{resellerStatus.days_remaining}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
-            {/* Matrix comparison table */}
-            <div className="bg-white border border-slate-100 rounded-[2.5rem] p-6 shadow-sm overflow-x-auto">
-              <h4 className="text-sm font-black uppercase tracking-wider text-slate-400 mb-4 pl-2">Perks Matrix Comparison</h4>
-              <table className="w-full text-left text-xs text-slate-600 min-w-[500px]">
-                <thead>
-                  <tr className="border-b border-slate-50 text-[10px] text-slate-400 font-extrabold uppercase uppercase">
-                    <th className="py-2.5 pl-2">Benefit Feature</th>
-                    <th className="py-2.5">Standard User</th>
-                    <th className="py-2.5 text-blue-600">VIP Agent</th>
-                    <th className="py-2.5 text-amber-600">Elite Reseller</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50 font-semibold">
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="py-3 pl-2 font-medium">Data / Airtime Cashback</td>
-                    <td>2.0%</td>
-                    <td className="text-blue-600">3.0%</td>
-                    <td className="text-amber-700 font-bold">4.0%</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="py-3 pl-2 font-medium">Electricity & Utility Cashback</td>
-                    <td>2.0%</td>
-                    <td className="text-blue-600">3.0%</td>
-                    <td className="text-amber-700 font-bold">4.0%</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="py-3 pl-2 font-medium">POS Quick Terminal Support</td>
-                    <td className="text-slate-300">No</td>
-                    <td className="text-emerald-600">Yes</td>
-                    <td className="text-emerald-600">Yes</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="py-3 pl-2 font-medium">Custom Client Mark-up Profit</td>
-                    <td className="text-slate-300">No</td>
-                    <td className="text-slate-400">Fixed</td>
-                    <td className="text-emerald-600 font-bold">Unlimited Custom</td>
-                  </tr>
-                  <tr className="hover:bg-slate-50/50">
-                    <td className="py-3 pl-2 font-medium">Bulk Funding Loyalty Bonus</td>
-                    <td>None</td>
-                    <td>Up to 1.0%</td>
-                    <td className="text-amber-700 font-bold">Up to 1.5% Cashback</td>
-                  </tr>
-                </tbody>
-              </table>
+              <button
+                disabled={isSubscribing || isLoadingStatus}
+                onClick={handleSubscribe}
+                className="w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-200 cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {isSubscribing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Processing...
+                  </>
+                ) : resellerStatus?.status === 'active' ? (
+                  <>
+                    <RefreshCw size={14} /> Renew Early (extends {(resellerStatus?.monthly_fee ?? 1000) && '30 days'})
+                  </>
+                ) : resellerStatus?.status === 'grace' ? (
+                  <>
+                    <RefreshCw size={14} /> Renew Now (₦{(resellerStatus?.monthly_fee ?? 1000).toLocaleString()})
+                  </>
+                ) : (
+                  `Subscribe (₦${(resellerStatus?.monthly_fee ?? 1000).toLocaleString()})`
+                )}
+              </button>
             </div>
           </motion.div>
         )}
 
-        {/* SUBTAB 2: Reseller POS Sales Console Terminal */}
+        {/* SUBTAB: Reseller POS Sales Console Terminal */}
         {activeSubTab === 'terminal' && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }} 
@@ -641,8 +634,12 @@ export default function ResellerPortal() {
                           setSalePlan(e.target.value);
                           const chosen = liveDataPlans.find((p: any) => String(p.id) === e.target.value);
                           if (chosen) {
-                            setSaleCost(String(chosen.cost_price ?? chosen.selling_price ?? 0));
-                            setCustomerPrice(String((chosen.selling_price ?? 0) + 50)); // default markup
+                            const retail = Number(chosen.selling_price ?? 0);
+                            // Reflect the live reseller discount in the wholesale-cost field so
+                            // the markup calculator below starts from the real discounted price.
+                            const discounted = discountPercent > 0 ? Math.round(retail * (1 - discountPercent)) : retail;
+                            setSaleCost(String(discounted));
+                            setCustomerPrice(String(retail));
                           }
                         }}
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-blue-500"
@@ -673,7 +670,7 @@ export default function ResellerPortal() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
-                      Wholesale Cost Cost (₦)
+                      Your Cost (₦){saleType === 'data' && discountPercent > 0 ? ' -- after reseller discount' : ''}
                     </label>
                     <input
                       required
@@ -708,21 +705,13 @@ export default function ResellerPortal() {
                 {saleCost && (
                   <div className="p-4 bg-emerald-500/5 border border-emerald-100 rounded-2xl divide-y divide-emerald-100/30 text-xs text-slate-600 font-semibold space-y-2">
                     <div className="flex justify-between">
-                      <span>Wholesale Cost Deduction:</span>
+                      <span>Your cost:</span>
                       <span className="font-mono">{formatCurrency(Number(saleCost))}</span>
                     </div>
-                    <div className="flex justify-between pt-2">
-                      <span>Cashback rebate earned ({userRate * 100}% rate):</span>
-                      <span className="text-emerald-700 font-bold font-mono">+ {formatCurrency(Number(saleCost) * userRate)}</span>
-                    </div>
-                    <div className="flex justify-between pt-2">
-                      <span>Markup Margin spread profit:</span>
-                      <span className="text-emerald-700 font-bold font-mono">+ {formatCurrency(Math.max(0, Number(customerPrice || saleCost) - Number(saleCost)))}</span>
-                    </div>
                     <div className="flex justify-between pt-2 border-t border-dashed border-emerald-200 text-sm font-black text-slate-900">
-                      <span>Total Net Profit:</span>
+                      <span>Markup Profit:</span>
                       <span className="text-emerald-700 font-mono">
-                        {formatCurrency((Number(saleCost) * userRate) + Math.max(0, Number(customerPrice || saleCost) - Number(saleCost)))}
+                        {formatCurrency(Math.max(0, Number(customerPrice || saleCost) - Number(saleCost)))}
                       </span>
                     </div>
                   </div>
@@ -777,10 +766,6 @@ export default function ResellerPortal() {
                       <span className="text-slate-400 font-medium">Margin markup margin</span>
                       <span className="font-extrabold font-mono text-emerald-600">+ {formatCurrency(saleReceipt.markupProfit)}</span>
                     </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-400 font-medium">Wholesale cashback</span>
-                      <span className="font-extrabold font-mono text-emerald-600">+ {formatCurrency(saleReceipt.cashbackEarned)}</span>
-                    </div>
                     <div className="py-2.5 flex justify-between bg-white border border-slate-100 rounded-xl p-2.5 shadow-sm mt-2">
                       <span className="text-slate-900 font-black">Customer Invoice Charge</span>
                       <span className="font-black text-slate-900 font-mono text-sm">{formatCurrency(saleReceipt.customerCharge)}</span>
@@ -822,7 +807,7 @@ export default function ResellerPortal() {
           </motion.div>
         )}
 
-        {/* SUBTAB 3: Bulk Capital funding with bonuses */}
+        {/* SUBTAB: Bulk Capital funding */}
         {activeSubTab === 'bulk-fund' && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }} 
@@ -930,7 +915,7 @@ export default function ResellerPortal() {
           </motion.div>
         )}
 
-        {/* SUBTAB 4: Margin Calculator & Perks */}
+        {/* SUBTAB: Margin Calculator & Perks */}
         {activeSubTab === 'ledger' && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }} 
@@ -943,15 +928,16 @@ export default function ResellerPortal() {
               
               <div className="md:col-span-7 space-y-4">
                 <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest rounded-lg">PROFIT SIMULATOR</span>
-                <h3 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Project Your Monthly Earnings Capital</h3>
+                <h3 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Project Your Monthly Data Savings</h3>
                 <p className="text-xs text-slate-500 leading-relaxed font-sans">
-                  Adjust simulated sales ticket turnovers to see live margins, cashbacks, and markup profits compounding.
+                  Adjust your simulated monthly data sales turnover to see how much your
+                  {' '}{(resellerStatus?.discount_percent ?? 20)}% reseller discount is worth on retail markup alone.
                 </p>
 
                 {/* Range turnover inputs */}
                 <div className="space-y-3 pt-4">
                   <div className="flex justify-between text-xs font-black text-slate-400 uppercase">
-                    <span>Projected Monthly VTU Turn-over sales (₦)</span>
+                    <span>Projected Monthly Data Turn-over sales (₦)</span>
                     <span className="text-blue-600 font-bold font-mono text-sm">{formatCurrency(Number(projVol))}</span>
                   </div>
                   <input
@@ -970,67 +956,51 @@ export default function ResellerPortal() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pt-4">
-                  <div className="p-4 bg-slate-50 rounded-2xl text-center">
-                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider mb-2">Commission rate cashbacks</p>
-                    <h4 className="text-xl font-mono font-black text-slate-900">{formatCurrency(Number(projVol) * userRate)}</h4>
-                  </div>
+                <div className="grid grid-cols-1 gap-4 pt-4">
                   <div className="p-4 bg-emerald-500/5 border border-emerald-100 rounded-2xl text-center">
-                    <p className="text-[10px] text-emerald-800 font-black uppercase tracking-wider mb-2">Estimated retail mark-ups</p>
-                    <h4 className="text-xl font-mono font-black text-emerald-600">{formatCurrency(Number(projVol) * 0.05)}</h4>
+                    <p className="text-[10px] text-emerald-800 font-black uppercase tracking-wider mb-2">
+                      Discount value at {(resellerStatus?.discount_percent ?? 20)}% off retail
+                    </p>
+                    <h4 className="text-xl font-mono font-black text-emerald-600">
+                      {formatCurrency(Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100))}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Minus the ₦{(resellerStatus?.monthly_fee ?? 1000).toLocaleString()} monthly subscription fee
+                    </p>
                   </div>
                 </div>
               </div>
 
-              {/* Graphical representation side */}
+              {/* Net breakdown side */}
               <div className="md:col-span-5 flex flex-col justify-between bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
                 <div className="space-y-3">
-                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 font-sans">Visual Compounding trends</h4>
-                  
-                  {/* BEAUTIFUL SVG PROGRESS CHART */}
-                  <div className="h-32 w-full pt-4 flex items-end justify-between relative select-none">
-                    <svg className="absolute inset-0 w-full h-full text-blue-600" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <path 
-                        d="M0,90 Q25,80 50,45 T100,20 L100,100 L0,100 Z" 
-                        fill="currentColor" 
-                        fillOpacity="0.05" 
-                      />
-                      <path 
-                        d="M0,90 Q25,80 50,45 T100,20" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        strokeWidth="3" 
-                        strokeLinecap="round" 
-                      />
-                    </svg>
-                    
-                    {/* Graph Pillars/Points */}
-                    {[1, 2, 3, 4, 5].map((index) => {
-                      const heights = [20, 35, 55, 75, 95];
-                      return (
-                        <div key={index} className="flex flex-col items-center gap-1.5 z-10 shrink-0">
-                          <span className="text-[9px] font-bold text-blue-600 bg-white border border-slate-100 px-1 py-0.5 rounded shadow-sm">
-                            {(heights[index - 1] * Number(projVol) * (userRate + 0.05) / 100 / 12).toFixed(0)}₦
-                          </span>
-                          <div className="w-1.5 bg-blue-600/35 rounded-full" style={{ height: `${heights[index - 1] * 0.5}px` }} />
-                          <span className="text-[8px] text-slate-400 font-black uppercase">W{index}</span>
-                        </div>
-                      );
-                    })}
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 font-sans">How the numbers work</h4>
+                  <div className="space-y-2 text-xs font-semibold text-slate-600">
+                    <div className="flex justify-between">
+                      <span>Retail price paid without a subscription</span>
+                      <span className="font-mono">{formatCurrency(Number(projVol))}</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-600">
+                      <span>Reseller discount ({resellerStatus?.discount_percent ?? 20}%)</span>
+                      <span className="font-mono font-bold">
+                        - {formatCurrency(Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100))}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-red-500">
+                      <span>Monthly subscription fee</span>
+                      <span className="font-mono font-bold">- {formatCurrency(resellerStatus?.monthly_fee ?? 1000)}</span>
+                    </div>
                   </div>
-
-                  <p className="text-[10px] text-slate-400 font-medium text-center italic mt-2">
-                    compounding profits over a active 5-week commercial distribution period
-                  </p>
                 </div>
 
                 <div className="pt-4 border-t border-slate-200/60 text-center">
-                  <p className="text-xs text-slate-500 font-medium font-sans">Overall Compounded Net Earnings</p>
+                  <p className="text-xs text-slate-500 font-medium font-sans">Net Monthly Savings</p>
                   <h3 className="text-2xl font-mono font-black text-blue-600 mt-1">
-                    {formatCurrency(Number(projVol) * (userRate + 0.05))}
+                    {formatCurrency(Math.max(0,
+                      (Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100)) - (resellerStatus?.monthly_fee ?? 1000)
+                    ))}
                   </h3>
                 </div>
-
               </div>
 
             </div>
