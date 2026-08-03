@@ -394,6 +394,36 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
         </div>
       </header>
 
+      {/* Signature stats band — same identity as the login screen */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-[#4F2AC9] to-[#1E1650] py-10 px-4">
+        <div
+          className="absolute inset-0 opacity-[0.06] pointer-events-none"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)',
+            backgroundSize: '42px 42px',
+          }}
+        />
+        <div className="max-w-7xl mx-auto relative z-10 flex flex-wrap justify-center sm:justify-between items-center gap-x-16 gap-y-6 text-white">
+          <div className="text-center sm:text-left">
+            <b className="block text-3xl sm:text-4xl font-black">50k+</b>
+            <span className="text-xs sm:text-sm text-indigo-200 font-semibold">Active resellers</span>
+          </div>
+          <div className="text-center sm:text-left">
+            <b className="block text-3xl sm:text-4xl font-black">99.9%</b>
+            <span className="text-xs sm:text-sm text-indigo-200 font-semibold">Delivery success</span>
+          </div>
+          <div className="text-center sm:text-left">
+            <b className="block text-3xl sm:text-4xl font-black">&lt;10s</b>
+            <span className="text-xs sm:text-sm text-indigo-200 font-semibold">Avg. delivery time</span>
+          </div>
+          <div className="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-indigo-100 bg-white/10 border border-white/15 px-3 py-1.5 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            All providers online
+          </div>
+        </div>
+      </section>
+
       {/* Supported Carrier Logos Segment */}
       <section className="py-12 bg-white border-y border-slate-100/80">
         <div className="max-w-7xl mx-auto px-4">
