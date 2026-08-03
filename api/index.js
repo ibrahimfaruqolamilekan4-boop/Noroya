@@ -4,11 +4,17 @@
  *
  * IMPORTANT: this must be a STATIC top-level import, not a dynamic import().
  * Vercel's Node builder (esbuild) only bundles/transpiles files it can trace
- * via static import analysis. A dynamic import('../server.ts') at runtime is
- * NOT included in the deployed function output, so it 404s/fails to resolve
- * in production even though it works locally (ERR_MODULE_NOT_FOUND).
+ * via static import analysis.
+ *
+ * IMPORTANT #2: do NOT write the `.ts` extension in this import path.
+ * esbuild does not rewrite an explicitly-written `.ts` extension, so the
+ * compiled output would still literally contain the string '../server.ts'.
+ * At runtime Node tries to resolve that exact path and fails with
+ * ERR_MODULE_NOT_FOUND, because Node has no compiler attached at runtime
+ * to understand a .ts file. Importing without an extension lets the
+ * bundler resolve + inline the compiled module correctly.
  */
-import getExpressApp from '../server.ts';
+import getExpressApp from '../server';
 
 let appPromise = null;
 
