@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server.ts",
+    "dev": "tsx server.ts",
     "build": "vite build",
-    "start": "node server.ts",
+    "start": "tsx server.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -33,6 +33,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.2.0",
     "tailwindcss": "latest",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.6"
   }
