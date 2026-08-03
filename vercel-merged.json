@@ -13,11 +13,6 @@
       "destination": "/index.html"
     }
   ],
-  "functions": {
-    "api/index.js": {
-      "includeFiles": "server.ts"
-    }
-  },
   "headers": [
     {
       "source": "/sw.js",
