@@ -3550,19 +3550,42 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         // Deduct price from balance via the guarded RPC (never a raw UPDATE — the
         // guard_balance trigger silently reverts 'balance' on any raw UPDATE that
         // doesn't go through deduct_balance()/increment_balance()).
+        //
+        // CRITICAL: if this deduction fails, we do NOT silently continue and tell the
+        // user "success" -- the provider has already delivered the purchase at this
+        // point, so a swallowed failure here means real product was given away for
+        // free. Surface it loudly instead: log it as a reconciliation case support
+        // needs to chase, and tell the user plainly what happened.
         const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
           user_uuid: profile.id,
           amount: finalPrice,
         });
 
-        if (deductErr || !deductOk) {
-          console.error("[Supabase Balance Deduct Error]:", deductErr?.message);
-        }
-
-        // Log transaction
         const referenceCode = responseBody?.reference || responseBody?.id || `TRX-BIGI-UTIL-${Date.now()}`;
         const transactionId = `bigi_util_${Date.now()}`;
         const descriptionText = `${provider.toUpperCase()} ${reqType.toUpperCase()} purchase to ${number} (Simulated/Live)`;
+
+        if (deductErr || !deductOk) {
+          console.error(
+            "[Supabase Balance Deduct Error] Provider already delivered but wallet was NOT debited -- needs manual reconciliation:",
+            deductErr?.message, { userId: profile.id, email: profile.email || userEmail, amount: finalPrice, referenceCode }
+          );
+          try {
+            await supabase.from('transactions').insert({
+              userId: profile.id, user_id: profile.id,
+              user_email: profile.email || userEmail,
+              type: reqType, amount: finalPrice, status: 'undebited_delivery',
+              description: `RECONCILE: ${descriptionText} -- delivered but wallet debit failed`,
+              reference: referenceCode, platform: "bigisub", payment_method: "wallet",
+              created_at: new Date().toISOString(), createdAt: new Date().toISOString(),
+            });
+          } catch (_) { /* non-fatal -- the console.error above is the real record */ }
+
+          return res.status(500).json({
+            error: "Your order was delivered, but we could not debit your wallet due to a system error. This has been flagged for support to reconcile. Please contact support with this reference.",
+            reference: referenceCode,
+          });
+        }
 
         try {
           await supabase.from('transactions').insert({
