@@ -3,18 +3,16 @@
  * All /api/* requests are routed here and delegated to Express
  *
  * IMPORTANT: this must be a STATIC top-level import, not a dynamic import().
- * Vercel's Node builder (esbuild) only bundles/transpiles files it can trace
- * via static import analysis.
  *
- * IMPORTANT #2: do NOT write the `.ts` extension in this import path.
- * esbuild does not rewrite an explicitly-written `.ts` extension, so the
- * compiled output would still literally contain the string '../server.ts'.
- * At runtime Node tries to resolve that exact path and fails with
- * ERR_MODULE_NOT_FOUND, because Node has no compiler attached at runtime
- * to understand a .ts file. Importing without an extension lets the
- * bundler resolve + inline the compiled module correctly.
+ * IMPORTANT #2: the explicit `.ts` extension below IS required. Vercel's
+ * current Node runtime does NOT bundle this function through esbuild — it
+ * ships server.ts as raw source (see vercel.json's functions.includeFiles)
+ * and executes it directly via Node's native TypeScript type-stripping.
+ * Node's ESM resolver never guesses extensions, so an extensionless
+ * '../server' import fails at runtime with ERR_MODULE_NOT_FOUND. Do not
+ * remove this extension again — that exact regression has happened twice.
  */
-import getExpressApp from '../server';
+import getExpressApp from '../server.ts';
 
 let appPromise = null;
 
