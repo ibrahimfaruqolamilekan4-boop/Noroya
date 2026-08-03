@@ -1,2866 +1,483 @@
-import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  LayoutDashboard, 
-  Smartphone, 
-  CreditCard, 
-  History, 
-  Users, 
-  Settings, 
-  Wallet, 
-  LogOut, 
-  Bell,
-  ArrowUpRight,
-  ArrowDownLeft,
-  ChevronRight,
-  TrendingUp,
-  Zap,
-  Phone,
-  CheckCircle2,
-  AlertCircle,
-  Database,
-  X,
-  Share2,
-  Copy,
-  Gift,
-  Menu,
-  ShieldCheck,
-  Sun,
-  Moon,
-  MessageSquare,
-  PhoneCall,
-  Send,
-  Trophy,
-  Tv,
-  Briefcase,
-  Wifi,
-  Sparkles,
-  Monitor,
-  Lightbulb,
-  GraduationCap,
-  Dices,
-  RefreshCw,
-  Download,
-  Search,
-  Filter
-} from 'lucide-react';
-import { cn, formatCurrency } from '../lib/utils';
-import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
-import { useAuth } from '../contexts/AuthContext';
-import { subscribeToTransactions, subscribeToServicePlans } from '../lib/firestore';
-import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { toast } from 'react-hot-toast';
-import { supabase } from '../lib/supabase';
-import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NORODATA — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --blue:#434BEE;
+    --blue-dark:#2F35C4;
+    --blue-light:#EEF0FF;
+    --navy:#0A0630;
+    --bg:#F5F6FC;
+    --card:#FFFFFF;
+    --border:#E4E6F5;
+    --mint:#17B26A;
+    --mint-bg:#E9FBF2;
+    --amber:#B7791F;
+    --amber-bg:#FFF6E5;
+    --rose:#D1436B;
+    --rose-bg:#FDECF1;
+    --purple:#7C4FE0;
+    --purple-bg:#F1ECFD;
+    --slate:#666B8C;
+    --slate-light:#9FA3C2;
+    --sidebar-w:264px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Inter',sans-serif;
+    background:var(--bg);
+    color:var(--navy);
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{ font-family:'Space Grotesk',sans-serif; }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+  a{ text-decoration:none; color:inherit; }
+  button{ font-family:inherit; cursor:pointer; }
 
-import ServicePurchase from './ServicePurchase';
-import PayBillsSection from './PayBillsSection';
-import AdminPanelSection from './AdminPanelSection';
-import ElectricitySection from './ElectricitySection';
-import BettingSection from './BettingSection';
-import CableTvSection from './CableTvSection';
-import ResellerPortal from './ResellerPortal';
-import TransactionHistory from './TransactionHistory';
+  /* ---------------- sidebar ---------------- */
+  .sidebar{
+    position:fixed; top:0; left:0; bottom:0; width:var(--sidebar-w);
+    background:#0A0630;
+    background:linear-gradient(190deg, #100A44 0%, #0A0630 70%);
+    color:#fff; padding:26px 18px; overflow-y:auto;
+    display:flex; flex-direction:column;
+    z-index:40;
+    transition:transform .25s ease;
+  }
+  .side-brand{ display:flex; align-items:center; gap:10px; padding:4px 10px 26px; }
+  .side-brand img{ width:32px; height:32px; border-radius:9px; }
+  .side-brand span{ font-weight:600; font-size:16px; }
 
-// Admin WhatsApp contacts — edit labels/numbers here any time.
-// Format: country code + number, no leading 0 or +
-const ADMIN_CONTACTS = [
-  { label: 'Admin 1', number: '2348143889102' },
-  { label: 'Admin 2', number: '2347034519634' },
-  { label: 'Admin 3', number: '2349059530817' },
-];
+  .nav-group-label{
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.09em;
+    text-transform:uppercase; color:#6B70B0; padding:14px 10px 8px;
+  }
+  .nav-item{
+    display:flex; align-items:center; gap:11px;
+    padding:10px 12px; border-radius:10px; margin-bottom:2px;
+    font-size:14px; font-weight:500; color:#C2C4EE;
+    transition:background .15s ease, color .15s ease;
+  }
+  .nav-item svg{ width:18px; height:18px; flex-shrink:0; opacity:.85; }
+  .nav-item:hover{ background:rgba(255,255,255,.06); color:#fff; }
+  .nav-item.active{
+    background:var(--blue); color:#fff;
+    box-shadow:0 6px 16px -6px rgba(67,75,238,.7);
+  }
+  .nav-item.active svg{ opacity:1; }
+  .nav-item.danger{ color:#F3A6BE; }
+  .nav-item.danger:hover{ background:rgba(209,67,107,.12); color:#F3A6BE; }
 
-export default function Dashboard({ user, onLogout }: { user: UserProfile, onLogout: () => void }) {
-  const { signOut, setSimulatedUser } = useAuth();
-  const [activeTab, setActiveTab] = React.useState('dashboard');
-  const [defaultBillService, setDefaultBillService] = React.useState<'cable' | 'electricity' | 'exam' | 'betting' | null>(null);
+  .side-foot{
+    margin-top:auto; padding-top:16px; border-top:1px solid rgba(255,255,255,.08);
+  }
+  .plan-card{
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+    border-radius:12px; padding:12px; font-size:12px; color:#B7BAF2;
+  }
+  .plan-card b{ display:block; color:#fff; font-size:13px; margin-bottom:2px; }
 
-  const setTabAndService = (tab: string, serviceId?: any) => {
-    setActiveTab(tab);
-    if (tab === 'bills' && serviceId) {
-      setDefaultBillService(serviceId);
-    } else if (tab !== 'bills') {
-      setDefaultBillService(null);
-    }
-  };
-  const [transactions, setTransactions] = React.useState<Transaction[]>([]);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const [selectedReceiptTx, setSelectedReceiptTx] = React.useState<Transaction | null>(null);
-  const [isDarkMode, setIsDarkMode] = React.useState(false);
-  const [showSupportHub, setShowSupportHub] = React.useState(false);
-  const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    // Check local announcements
-    const storedAnn = localStorage.getItem('vtu_latest_announcement');
-    if (storedAnn) {
-      setBroadcastAlert(storedAnn);
-    }
-  }, [activeTab]);
-
-  // Auto-logout after 15 minutes of inactivity for security
-  React.useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    const INACTIVITY_TIME = 15 * 60 * 1000; // 15 minutes
-
-    const handleAutoLogout = () => {
-      toast.error("Logged out automatically due to 15 minutes of inactivity.", {
-        duration: 5000,
-      });
-      handleLoggedOut();
-    };
-
-    const resetTimer = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(handleAutoLogout, INACTIVITY_TIME);
-    };
-
-    // Event listeners to detect activity
-    const activityEvents = [
-      'mousedown', 'mousemove', 'keypress',
-      'scroll', 'touchstart', 'click'
-    ];
-
-    activityEvents.forEach(event => {
-      window.addEventListener(event, resetTimer);
-    });
-
-    // Start initial timer
-    resetTimer();
-
-    return () => {
-      clearTimeout(timeoutId);
-      activityEvents.forEach(event => {
-        window.removeEventListener(event, resetTimer);
-      });
-    };
-  }, []);
-
-  React.useEffect(() => {
-    const unsub = subscribeToTransactions(user.uid, (data) => {
-      setTransactions(data as Transaction[]);
-    });
-    return () => unsub();
-  }, [user.uid]);
-
-  // Automated Monnify account-generation completely dropped
-
-  const sidebarItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-    { id: 'buy-data', label: 'Buy Data', icon: <Smartphone size={20} /> },
-    { id: 'buy-airtime', label: 'Buy Airtime', icon: <Zap size={20} /> },
-    { id: 'electricity', label: 'Electricity Bills', icon: <Zap size={20} /> },
-    { id: 'cable', label: 'Cable TV', icon: <Tv size={20} /> },
-    { id: 'betting', label: 'Fund Betting', icon: <Trophy size={20} /> },
-    { id: 'bills', label: 'Pay Bills', icon: <CreditCard size={20} /> },
-    { id: 'history', label: 'Transactions', icon: <History size={20} /> },
-    { id: 'reseller', label: 'Reseller Portal', icon: <Briefcase size={20} /> },
-    { id: 'referrals', label: 'Referrals', icon: <Users size={20} /> },
-    { id: 'settings', label: 'Account Settings', icon: <Settings size={20} /> },
-  ];
-
-  if (user.role === 'admin') {
-    sidebarItems.push({ id: 'admin', label: 'Admin Control', icon: <ShieldCheck size={20} /> });
+  /* ---------------- main ---------------- */
+  .main{ margin-left:var(--sidebar-w); min-height:100vh; }
+  .topbar{
+    position:sticky; top:0; z-index:30;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 32px; background:rgba(245,246,252,.85); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border);
+  }
+  .topbar h1{ font-size:19px; font-weight:600; margin:0; }
+  .menu-btn{
+    display:none; border:1px solid var(--border); background:#fff; border-radius:9px;
+    width:36px; height:36px; align-items:center; justify-content:center; margin-right:12px;
+  }
+  .top-left{ display:flex; align-items:center; }
+  .top-right{ display:flex; align-items:center; gap:10px; }
+  .icon-btn{
+    width:38px; height:38px; border-radius:10px; border:1px solid var(--border);
+    background:#fff; display:flex; align-items:center; justify-content:center; position:relative;
+  }
+  .icon-btn svg{ width:17px; height:17px; color:var(--slate); }
+  .icon-btn .ping{
+    position:absolute; top:7px; right:7px; width:7px; height:7px; border-radius:50%;
+    background:var(--rose); border:1.5px solid #fff;
+  }
+  .avatar{
+    width:38px; height:38px; border-radius:10px; background:var(--blue-light); color:var(--blue);
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;
   }
 
-  const handleLoggedOut = () => {
-    signOut();
-    onLogout();
-  };
+  .content{ padding:28px 32px 60px; }
 
-  return (
-    <div className={cn(
-      "flex h-screen overflow-hidden transition-colors duration-200 font-sans",
-      isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#F3F4FB] text-slate-900"
-    )}>
-      {/* Sidebar - Desktop */}
-      <aside className="hidden md:flex flex-col w-64 shrink-0 relative overflow-hidden bg-gradient-to-b from-[#161049] via-[#0F0B33] to-[#08061F] text-white">
-        <div className="absolute inset-0 opacity-[0.07] pointer-events-none" style={{backgroundImage: 'radial-gradient(circle at 20% 0%, #fff 0%, transparent 60%)'}} />
-        <div className="p-6 flex items-center gap-3 relative z-10">
-          <div className="w-9 h-9 bg-gradient-to-br from-indigo-400 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/50">
-            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <span className="text-xl font-black tracking-tight font-display text-white">
-            Noroyasub
-          </span>
-        </div>
+  /* wallet hero */
+  .wallet{
+    background:linear-gradient(120deg, var(--blue) 0%, #2E33B8 100%);
+    border-radius:20px; padding:26px 28px; color:#fff;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:20px;
+    margin-bottom:26px;
+    position:relative; overflow:hidden;
+  }
+  .wallet::after{
+    content:""; position:absolute; right:-40px; top:-60px; width:220px; height:220px;
+    background:radial-gradient(circle, rgba(255,255,255,.14), transparent 70%);
+  }
+  .wallet-left span{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:#C7CBFF; }
+  .wallet-left h2{ font-size:32px; margin:6px 0 0; font-weight:700; }
+  .wallet-actions{ display:flex; gap:10px; position:relative; z-index:2; }
+  .btn-fund{
+    background:#fff; color:var(--blue); border:none; padding:11px 18px; border-radius:10px;
+    font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:7px;
+  }
+  .btn-ghost{
+    background:rgba(255,255,255,.12); color:#fff; border:1px solid rgba(255,255,255,.3);
+    padding:11px 18px; border-radius:10px; font-weight:600; font-size:13.5px;
+  }
 
-        <nav className="flex-1 px-4 space-y-1 relative z-10">
-          {sidebarItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setTabAndService(item.id)}
-              className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-semibold",
-                activeTab === item.id
-                  ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-900/40"
-                  : "text-indigo-200/70 hover:bg-white/5 hover:text-white"
-              )}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </nav>
+  .section-head{ display:flex; align-items:center; justify-content:space-between; margin:8px 0 14px; }
+  .section-head h3{ font-size:15px; font-weight:600; margin:0; display:flex; align-items:center; gap:8px; }
+  .section-head a{ font-size:13px; color:var(--blue); font-weight:600; }
 
-        <div className="p-4 border-t border-white/10 relative z-10">
-          <button 
-            onClick={handleLoggedOut}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 transition-all text-sm font-extrabold"
-          >
-            <LogOut size={20} />
-            Logout Account
-          </button>
-        </div>
-      </aside>
+  .services-grid{
+    display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-bottom:30px;
+  }
+  .service-card{
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:20px 18px; display:flex; flex-direction:column; gap:14px;
+    transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .service-card:hover{ transform:translateY(-2px); box-shadow:0 10px 24px -14px rgba(10,6,48,.25); border-color:var(--border); }
+  .service-ic{ width:42px; height:42px; border-radius:12px; display:flex; align-items:center; justify-content:center; }
+  .service-ic svg{ width:20px; height:20px; }
+  .service-card b{ font-size:14px; font-weight:600; }
+  .service-card span{ font-size:12px; color:var(--slate); }
 
-      {/* Sliding Mobile Sidebar Navigation Sheet Overlay */}
-      <AnimatePresence>
-        {isMobileMenuOpen && (
-          <div className="fixed inset-0 z-[60] md:hidden">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsMobileMenuOpen(false)}
-              className="absolute inset-0 bg-slate-950/20 backdrop-blur-sm"
-            />
-            
-            <motion.aside
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="absolute top-0 bottom-0 left-0 w-72 p-6 flex flex-col shadow-2xl bg-gradient-to-b from-[#161049] via-[#0F0B33] to-[#08061F] text-white"
-            >
-              <div className="flex justify-between items-center mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-indigo-400 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/50">
-                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </div>
-                  <span className="text-lg font-black tracking-tight font-display text-white">Noroyasub</span>
-                </div>
-                <button onClick={() => setIsMobileMenuOpen(false)} className="p-1 px-1.5 bg-white/10 rounded-lg text-white">
-                  <X size={18} />
-                </button>
-              </div>
+  .bg-blue{ background:var(--blue-light); color:var(--blue); }
+  .bg-mint{ background:var(--mint-bg); color:var(--mint); }
+  .bg-amber{ background:var(--amber-bg); color:var(--amber); }
+  .bg-rose{ background:var(--rose-bg); color:var(--rose); }
+  .bg-purple{ background:var(--purple-bg); color:var(--purple); }
 
-              <nav className="flex-1 space-y-1">
-                {sidebarItems.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => { setTabAndService(item.id); setIsMobileMenuOpen(false); }}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-bold",
-                      activeTab === item.id
-                        ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-900/40"
-                        : "text-indigo-200/70 hover:bg-white/5 hover:text-white"
-                    )}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                ))}
-              </nav>
+  .lower-grid{ display:grid; grid-template-columns:1.5fr 1fr; gap:20px; }
+  @media (max-width:1100px){ .lower-grid{ grid-template-columns:1fr; } .services-grid{ grid-template-columns:repeat(2,1fr); } }
 
-              <div className="pt-4 border-t border-white/10">
-                <button 
-                  onClick={handleLoggedOut}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 font-bold transition-all text-sm"
-                >
-                  <LogOut size={20} />
-                  Logout Account
-                </button>
-              </div>
-            </motion.aside>
-          </div>
-        )}
-      </AnimatePresence>
+  .panel{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:20px 22px; }
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden font-sans">
-        {/* Header toolbar */}
-        <header className={cn(
-          "h-16 px-6 flex items-center justify-between transition-colors duration-200 shrink-0 border-b",
-          isDarkMode ? "bg-slate-900 border-slate-800 text-slate-100" : "bg-white/90 backdrop-blur-md border-slate-100 text-slate-950"
-        )}>
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 -ml-2 text-slate-500">
-              <Menu size={22} className={isDarkMode ? "text-slate-300" : "text-slate-600"} />
-            </button>
-            <h2 className="text-lg font-extrabold capitalize select-none">{activeTab.replace('-', ' ')}</h2>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            {/* Aesthetics Dark Mode Toggle button */}
-            <button 
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className={cn(
-                "p-2.5 rounded-xl transition-all border",
-                isDarkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-yellow-300" : "bg-slate-50 hover:bg-slate-100 border-slate-150 text-slate-600"
-              )}
-              title="Toggle Contrast Mode"
-            >
-              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+  .tx-row{
+    display:flex; align-items:center; gap:12px; padding:12px 0;
+    border-bottom:1px solid var(--border);
+  }
+  .tx-row:last-child{ border-bottom:none; }
+  .tx-ic{ width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .tx-ic svg{ width:17px; height:17px; }
+  .tx-mid{ flex:1; min-width:0; }
+  .tx-mid b{ display:block; font-size:13.5px; font-weight:600; }
+  .tx-mid span{ font-size:12px; color:var(--slate-light); }
+  .tx-amt{ font-family:'IBM Plex Mono',monospace; font-size:13.5px; font-weight:500; text-align:right; }
+  .tx-amt.out{ color:var(--navy); }
+  .tx-amt.in{ color:var(--mint); }
+  .tx-status{ display:block; font-size:11px; color:var(--slate-light); text-align:right; margin-top:2px; }
 
-            <button className="p-2.5 text-slate-500 hover:bg-slate-50 rounded-xl relative border border-transparent">
-              <Bell size={18} className={isDarkMode ? "text-slate-300" : "text-slate-600"} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-indigo-600 rounded-full border-2 border-white" />
-            </button>
-            
-            <div className={cn("hidden sm:flex items-center gap-3 pl-4 border-l", isDarkMode ? "border-slate-800" : "border-slate-100")}>
-              <div className="text-right select-none">
-                <p className="text-sm font-extrabold">{user.fullName}</p>
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">{user.role}</p>
-              </div>
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-bold">
-                {user.fullName[0].toUpperCase()}
-              </div>
-            </div>
-          </div>
-        </header>
+  .zones{ display:flex; flex-wrap:wrap; gap:8px; }
+  .zone-pill{
+    font-size:12.5px; font-weight:500; padding:7px 13px; border-radius:100px;
+    background:var(--bg); border:1px solid var(--border); color:var(--slate);
+  }
 
-        {/* Dynamic Alert Broadcast System Banner */}
-        {broadcastAlert && (
-          <div className="px-6 p-4 bg-indigo-600 text-white flex justify-between items-center transition-all">
-            <div className="flex items-center gap-2.5 text-xs font-semibold">
-              <span className="animate-bounce font-sans">📢</span>
-              <span><strong>News Broadcast:</strong> {broadcastAlert}</span>
-            </div>
-            <button 
-              onClick={() => { setBroadcastAlert(null); localStorage.removeItem('vtu_latest_announcement'); }} 
-              className="p-1.5 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all ml-4 shrink-0"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
+  .provider-row{ display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .provider-row:last-child{ border-bottom:none; }
+  .provider-row .name{ font-weight:500; }
+  .status-ok{ display:flex; align-items:center; gap:6px; color:var(--mint); font-size:12px; font-weight:600; }
+  .status-ok .dot{ width:6px; height:6px; border-radius:50%; background:var(--mint); }
 
-        {/* Scrollable Panel Area with Light/Dark Theme contrast backgrounds hooks */}
-        <div className={cn(
-          "flex-1 overflow-y-auto p-6 md:p-8 transition-colors duration-250",
-          isDarkMode ? "bg-slate-950 text-slate-100" : "bg-[#F3F4FB] text-[#1A1A1A]"
-        )}>
-          <div className="max-w-5xl mx-auto space-y-8">
-            {activeTab === 'dashboard' && (
-              <DashboardOverview 
-                user={user} 
-                setTab={setTabAndService} 
-                transactions={transactions} 
-                onSelectTx={setSelectedReceiptTx} 
-              />
-            )}
-            {activeTab === 'buy-data' && <ServicePurchase type="data" />}
-            {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
-            {activeTab === 'electricity' && <ElectricitySection />}
-            {activeTab === 'cable' && <CableTvSection />}
-            {activeTab === 'betting' && <BettingSection />}
-            {activeTab === 'reseller' && <ResellerPortal />}
-            {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
-            {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
-            {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
-            {activeTab === 'settings' && <SettingsSection user={user} />}
-            {activeTab === 'admin' && <AdminPanelSection />}
-          </div>
-        </div>
-      </main>
+  /* mobile */
+  @media (max-width:900px){
+    .sidebar{ transform:translateX(-100%); box-shadow:20px 0 40px rgba(0,0,0,.2); }
+    .sidebar.open{ transform:translateX(0); }
+    .main{ margin-left:0; }
+    .menu-btn{ display:flex; }
+    .topbar{ padding:14px 18px; }
+    .content{ padding:20px 18px 50px; }
+    .services-grid{ grid-template-columns:repeat(2,1fr); }
+    .wallet{ padding:22px; }
+    .wallet-left h2{ font-size:26px; }
+  }
+  .scrim{ position:fixed; inset:0; background:rgba(10,6,48,.4); z-index:35; display:none; }
+  .scrim.show{ display:block; }
 
-      {/* Floating 24/7 client live chat support assistant hub button */}
-      <div className="fixed right-6 bottom-6 z-40 print:hidden font-sans">
-        <button 
-          onClick={() => setShowSupportHub(!showSupportHub)}
-          className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-full flex items-center justify-center shadow-2xl shadow-indigo-900/30 hover:scale-110 active:scale-95 transition-all outline-none"
-          title="Consult Live Hub Support Chat"
-        >
-          {showSupportHub ? <X size={24} /> : <MessageSquare size={24} />}
+  /* ---------------- transfer modal ---------------- */
+  .modal-scrim{
+    position:fixed; inset:0; background:rgba(10,6,48,.45); z-index:60;
+    display:none; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-scrim.show{ display:flex; }
+  .modal{
+    background:#fff; border-radius:18px; width:100%; max-width:400px;
+    padding:26px 24px; box-shadow:0 30px 60px -20px rgba(10,6,48,.4);
+  }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+  .modal-head h3{ font-size:17px; font-weight:600; margin:0; }
+  .modal-close{ border:none; background:var(--bg); width:30px; height:30px; border-radius:9px; display:flex; align-items:center; justify-content:center; color:var(--slate); }
+  .modal-close svg{ width:15px; height:15px; }
+  .modal .field label{ display:block; font-size:12.5px; font-weight:600; margin-bottom:7px; }
+  .modal .input-wrap{ position:relative; margin-bottom:16px; }
+  .modal input, .modal select{
+    width:100%; padding:12px 14px; border:1.5px solid var(--border); border-radius:11px;
+    font-size:14.5px; color:var(--navy); font-family:'Inter',sans-serif; background:#fff;
+  }
+  .modal input:focus, .modal select:focus{ outline:none; border-color:var(--blue); box-shadow:0 0 0 4px rgba(67,75,238,.12); }
+  .modal-note{
+    display:flex; gap:8px; background:var(--blue-light); color:var(--blue-dark);
+    padding:10px 12px; border-radius:10px; font-size:12px; margin-bottom:18px; line-height:1.5;
+  }
+  .modal-note svg{ width:15px; height:15px; flex-shrink:0; margin-top:1px; }
+  .modal .btn-primary{
+    width:100%; padding:13px 0; border:none; border-radius:11px; background:var(--blue); color:#fff;
+    font-weight:600; font-size:14.5px; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+
+  /* ---------------- whatsapp support ---------------- */
+  .wa-fab{
+    position:fixed; right:22px; bottom:22px; z-index:50;
+    display:flex; align-items:center; gap:10px;
+    background:#1FAF5A; color:#fff; border:none;
+    padding:13px 18px 13px 14px; border-radius:100px;
+    box-shadow:0 14px 28px -10px rgba(20,140,70,.55);
+    font-weight:600; font-size:13.5px;
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .wa-fab:hover{ transform:translateY(-2px); box-shadow:0 18px 34px -10px rgba(20,140,70,.6); }
+  .wa-fab .wa-ic{
+    width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,.18);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .wa-fab .wa-ic svg{ width:16px; height:16px; }
+  .wa-fab .wa-text{ display:flex; flex-direction:column; align-items:flex-start; line-height:1.25; }
+  .wa-fab .wa-text small{ font-weight:400; font-size:10.5px; opacity:.85; }
+
+  @media (max-width:640px){
+    .wa-fab .wa-text{ display:none; }
+    .wa-fab{ padding:14px; border-radius:50%; }
+    .wa-fab .wa-ic{ width:22px; height:22px; background:transparent; }
+    .wa-fab .wa-ic svg{ width:22px; height:22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scrim" id="scrim" onclick="closeMenu()"></div>
+
+<aside class="sidebar" id="sidebar">
+  <div class="side-brand">
+    <img src="data:image/png;base64,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" alt="">
+    <span>NORODATA</span>
+  </div>
+
+  <div class="nav-group-label">Menu</div>
+  <a class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>Dashboard</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/></svg>Buy Data</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>Buy Airtime</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>Electricity Bills</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M12 18v3"/></svg>Cable TV</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M5 3h14v4a7 7 0 0 1-14 0V3Z"/><path d="M5 5H3a2 2 0 0 0 2 4M19 5h2a2 2 0 0 1-2 4"/></svg>Fund Betting</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18"/></svg>Pay Bills</a>
+
+  <div class="nav-group-label">Account</div>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18M3 12l4-4M3 12l4 4"/><path d="M21 6v12"/></svg>Transactions</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M3 12h18M3 17h11"/></svg>Reseller Portal</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="9" r="3.2"/><circle cx="17" cy="9" r="2.6"/><path d="M2.5 20c1-3.4 3-5 5.5-5s4.5 1.6 5.5 5M14 15.3c2 .2 3.5 1.8 4.5 4.7"/></svg>Referrals</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>Account Settings</a>
+  <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z"/><path d="m9 12 2 2 4-4"/></svg>Admin Control</a>
+
+  <div class="side-foot">
+    <a class="nav-item danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>Log out</a>
+    <div class="plan-card" style="margin-top:12px;">
+      <b>Reseller tier: Gold</b>
+      Lower rates unlock automatically as your volume grows.
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <div class="top-left">
+      <button class="menu-btn" onclick="openMenu()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <h1>Dashboard</h1>
+    </div>
+    <div class="top-right">
+      <button class="icon-btn" title="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      </button>
+      <button class="icon-btn" title="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <span class="ping"></span>
+      </button>
+      <div class="avatar">FI</div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <div class="wallet">
+      <div class="wallet-left">
+        <span>Wallet balance</span>
+        <h2>₦24,650.00</h2>
+      </div>
+      <div class="wallet-actions">
+        <button class="btn-fund">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+          Fund wallet
         </button>
-
-      {/* Premium Digital E-Receipt Modal */}
-      <AnimatePresence>
-        {selectedReceiptTx && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedReceiptTx(null)}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 flex flex-col space-y-6 print:p-0 print:shadow-none print:border-none"
-            >
-              <div className="text-center space-y-2 mt-4">
-                <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center mx-auto shadow-sm">
-                  <CheckCircle2 size={24} />
-                </div>
-                <div>
-                  <h4 className="font-sans font-black text-slate-900 tracking-tight text-xl">Transaction Receipt</h4>
-                  <p className="text-[10px] text-green-600 font-extrabold uppercase tracking-widest mt-0.5">Approved & Clear</p>
-                </div>
-              </div>
-
-              {/* Amount visual area */}
-              <div className="bg-slate-50 border border-slate-100/80 rounded-[2rem] p-6 text-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount Charged</p>
-                <p className="text-3xl font-black text-slate-900 tracking-tight mt-1">
-                  {formatCurrency(selectedReceiptTx.amount)}
-                </p>
-                {selectedReceiptTx.cashbackEarned && selectedReceiptTx.cashbackEarned > 0 ? (
-                  <div className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 rounded-full border border-amber-100 mt-3 text-[10px] text-amber-800 font-bold tracking-tight animate-pulse mx-auto">
-                    ⚡ ₦{Number(selectedReceiptTx.cashbackEarned).toFixed(2)} Cashback Credited
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Detailed specs */}
-              <div className="space-y-3.5 px-1 text-sm font-sans text-slate-800">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider">Transaction ID</span>
-                  <span className="font-mono font-extrabold text-slate-800">{selectedReceiptTx.reference}</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider">Type</span>
-                  <span className="font-extrabold text-slate-800 uppercase">{selectedReceiptTx.type}</span>
-                </div>
-                <div className="flex justify-between items-start text-xs text-right">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider text-left shrink-0">Description</span>
-                  <span className="font-extrabold text-slate-800 max-w-[220px] leading-relaxed break-words">{selectedReceiptTx.description}</span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider">Date</span>
-                  <span className="font-extrabold text-slate-800">
-                    {new Date(selectedReceiptTx.createdAt).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-400 font-bold uppercase tracking-wider">Status Code</span>
-                  <span className="px-2 py-0.5 bg-green-500 text-white rounded font-extrabold uppercase tracking-wide text-[9px]">
-                    {selectedReceiptTx.status}
-                  </span>
-                </div>
-              </div>
-
-              {/* Action buttons */}
-              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100 print:hidden">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(`Receipt ID: ${selectedReceiptTx.reference}\nAmount: ₦${selectedReceiptTx.amount}\nDate: ${new Date(selectedReceiptTx.createdAt).toLocaleString()}\nStatus: SUCCESS`);
-                    toast.success("Receipt details copied to clipboard!");
-                  }}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5 transition-all text-xs tracking-tight"
-                >
-                  Copy Details
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-indigo-200/60 text-xs tracking-tight"
-                >
-                  Print E-Receipt
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedReceiptTx(null)}
-                className="text-center font-bold text-slate-400 text-xs hover:text-slate-600 pt-1 print:hidden select-none outline-none"
-              >
-                Dismiss
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-        {/* Help Hub Options */}
-        <AnimatePresence>
-          {showSupportHub && (
-            <motion.div 
-              initial={{ opacity: 0, y: 15, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 15, scale: 0.95 }}
-              className={cn(
-                "absolute bottom-20 right-0 w-72 rounded-[2rem] p-6 border shadow-2xl space-y-4",
-                isDarkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-100 text-slate-900"
-              )}
-            >
-              <div>
-                <h5 className="font-extrabold text-sm text-slate-900 leading-none">Noroya Help Hub</h5>
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase mt-1">24/7 Client Support services</p>
-              </div>
-
-              <div className="space-y-2 text-xs">
-                {/* WHATSAPP LINKS — 3 admins */}
-                {ADMIN_CONTACTS.map((admin) => (
-                  <a
-                    key={admin.number}
-                    href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
-                    target="_blank" rel="noreferrer"
-                    className="flex items-center gap-3 p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl transition-all font-bold"
-                  >
-                    <MessageSquare size={16} /> WhatsApp — {admin.label}
-                  </a>
-                ))}
-
-                {/* TELEGRAM LINK */}
-                <a 
-                  href="https://t.me/noroya_data_group" 
-                  target="_blank" rel="noreferrer"
-                  className="flex items-center gap-3 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-2xl transition-all font-bold"
-                >
-                  <Send size={16} /> Telegram Support channel
-                </a>
-
-                {/* CALL LINE */}
-                <a 
-                  href="tel:+2348123456789"
-                  className="flex items-center gap-3 p-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-2xl transition-all font-bold"
-                >
-                  <PhoneCall size={16} /> Telephone Support Line
-                </a>
-              </div>
-
-              <p className="text-[10px] text-slate-400 leading-normal text-center bg-slate-50 p-2.5 rounded-xl">Our automated dispatch clear monitors and solves claims inside minutes.</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-    </div>
-  );
-}
-
-
-// TransactionHistory has been migrated to its own modular component file: /src/components/TransactionHistory.tsx
-
-
-interface ReferralUser {
-  uid: string;
-  fullName: string;
-  email: string;
-  createdAt: any;
-}
-
-function ReferralSection({ user, transactions }: { user: UserProfile, transactions: Transaction[] }) {
-  const [referredUsers, setReferredUsers] = React.useState<ReferralUser[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [copiedLink, setCopiedLink] = React.useState(false);
-  const [copiedCode, setCopiedCode] = React.useState(false);
-
-  React.useEffect(() => {
-    const q = query(
-      collection(db, 'users', user.uid, 'referrals'),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: ReferralUser[] = [];
-      snapshot.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() } as any);
-      });
-      setReferredUsers(list);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Referrals Sync Error: ", error);
-      setLoading(false);
-    });
-
-    return () => unsub();
-  }, [user.uid]);
-
-  // Compute commissions
-  const commissionTx = transactions.filter(tx => 
-    tx.type === 'funding' && 
-    (tx.description?.toLowerCase().includes('referral commission') || tx.description?.toLowerCase().includes('2% referral'))
-  );
-  
-  const totalEarnedCommission = commissionTx.reduce((sum, tx) => sum + tx.amount, 0);
-
-  // Calculate commission earned per referred user
-  const getCommissionFromUser = (fullName: string) => {
-    return commissionTx
-      .filter(tx => tx.description?.toLowerCase().includes(fullName.toLowerCase()))
-      .reduce((sum, tx) => sum + tx.amount, 0);
-  };
-
-  const referralLink = `${window.location.origin}?ref=${user.referralCode}`;
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(referralLink);
-    setCopiedLink(true);
-    toast.success("Referral signup link copied to clipboard!");
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
-
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(user.referralCode);
-    setCopiedCode(true);
-    toast.success("Referral code copied to clipboard!");
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
-
-  const shareText = `Hey! Join me on Noroya Data to get unbeatable discounts on data bundles and airtime top-ups. Sign up using my referral link: ${referralLink}`;
-  const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
-  const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent("Join me on Noroya Data for VTU discounts!")}`;
-  const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
-
-  return (
-    <div className="space-y-8 font-sans">
-      {/* Hero Card */}
-      <div className="bg-gradient-to-br from-indigo-600 via-violet-600 to-violet-700 rounded-[32px] p-8 md:p-10 text-white shadow-2xl shadow-indigo-200/60 relative overflow-hidden">
-        <div className="relative z-10 max-w-xl space-y-6">
-          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-3.5 py-1.5 rounded-full text-xs font-black tracking-wide uppercase">
-            <Gift size={14} className="text-yellow-300 animate-pulse" /> Noroya Partner Program
-          </div>
-          <h3 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">Refer & Earn 2% Commissions</h3>
-          <p className="text-indigo-100 text-sm md:text-base leading-relaxed font-medium">
-            Invite your friends to Noroya Data and earn a <span className="text-white font-bold underline decoration-yellow-400 decoration-2">2% cash commission</span> on every single data and airtime purchase they make — for life!
-          </p>
-          
-          {/* Actions panel */}
-          <div className="grid sm:grid-cols-2 gap-4 pt-2">
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col justify-center border border-white/15 relative group">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-200 mb-1">Your Unique Code</span>
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-mono font-black tracking-wider text-white">{user.referralCode}</span>
-                <button 
-                  onClick={handleCopyCode}
-                  className={cn(
-                    "p-1.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
-                    copiedCode 
-                      ? "bg-green-500 text-white shadow-lg shadow-green-500/20 scale-105" 
-                      : "bg-white/10 hover:bg-white/20 text-white"
-                  )}
-                >
-                  {copiedCode ? <CheckCircle2 size={13} className="text-white" /> : <Copy size={13} />} {copiedCode ? 'Copied!' : 'Copy'}
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col justify-center border border-white/15 relative group">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-200 mb-1">Your Referral Link</span>
-              <div className="flex items-center justify-between">
-                <span className="text-xs truncate max-w-[120px] md:max-w-[140px] font-mono opacity-85">{referralLink}</span>
-                <button 
-                  onClick={handleCopyLink}
-                  className={cn(
-                    "p-1.5 px-3 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer",
-                    copiedLink 
-                      ? "bg-green-500 text-white shadow-lg shadow-green-500/20 scale-105" 
-                      : "bg-white text-indigo-600 hover:bg-indigo-50"
-                  )}
-                >
-                  {copiedLink ? <CheckCircle2 size={13} className="text-white" /> : <Copy size={13} />} {copiedLink ? 'Copied!' : 'Copy Link'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 pt-2 border-t border-white/10">
-            <span className="text-xs text-indigo-200 font-bold uppercase tracking-wider">Direct Sharing:</span>
-            <div className="flex gap-2">
-              <a href={whatsappUrl} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-full bg-green-500 hover:bg-green-600 flex items-center justify-center text-white transition-all hover:scale-110 shadow" title="Share via WhatsApp">
-                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98-.208.118zM17.65 14.9c-.312-.158-1.848-.911-2.134-1.015-.285-.104-.493-.158-.7.158-.207.314-.805 1.015-.987 1.222-.18.207-.363.233-.675.076-1.111-.556-1.921-.979-2.613-2.164-.176-.301-.176-.563-.021-.718.14-.139.312-.363.468-.545.155-.182.207-.312.311-.52.104-.208.052-.39-.026-.547-.078-.156-.7-1.688-.959-2.311-.252-.607-.508-.525-.7-.525-.18 0-.389-.011-.597-.011-.207 0-.547.078-.832.39-.285.312-1.09 1.066-1.09 2.6s1.117 3.016 1.272 3.223c.156.208 2.2 3.36 5.33 4.717.745.322 1.325.515 1.777.659.749.238 1.428.205 1.967.125.6-.09 1.847-.753 2.107-1.444.26-.692.26-1.287.182-1.411-.078-.125-.286-.203-.597-.362z"/></svg>
-              </a>
-              <a href={telegramUrl} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-full bg-sky-500 hover:bg-sky-600 flex items-center justify-center text-white transition-all hover:scale-110 shadow" title="Share via Telegram">
-                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M22.05 1.577c-.57-.27-9.524 3.98-17.765 7.42-1.12.467-1.11 1.1-.19 1.385l4.56 1.42 1.4 4.305c.13.4.45.68.85.68h.04c.4 0 .75-.24.95-.59l1.66-2.52 3.86 2.85c.67.5 1.47.12 1.72-.69L23.95 2.87c.21-.71-.31-1.3-.9-1.293zM18.8 6.42l-8.4 7.6-.2 3.1-.9-3.2-1.9-.6L18.8 6.42z"/></svg>
-              </a>
-              <a href={twitterUrl} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-full bg-slate-900 hover:bg-black border border-white/5 flex items-center justify-center text-white transition-all hover:scale-110 shadow" title="Share via Twitter">
-                <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-              </a>
-            </div>
-          </div>
-        </div>
-        <Users className="absolute -bottom-10 -right-10 w-72 h-72 text-white/5 pointer-events-none" />
-      </div>
-
-      {/* Statistics board */}
-      <div className="grid md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-            <Users size={24} />
-          </div>
-          <div>
-            <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider mb-0.5">Total Referrals</p>
-            <p className="text-2xl font-black text-slate-800 tracking-tight leading-none">{referredUsers.length}</p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="w-12 h-12 rounded-2xl bg-green-50 text-green-600 flex items-center justify-center">
-            <CheckCircle2 size={24} />
-          </div>
-          <div>
-            <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider mb-0.5">Active Partners</p>
-            <p className="text-2xl font-black text-slate-800 tracking-tight leading-none">
-              {referredUsers.length} Users
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-[2rem] border border-slate-100/80 shadow-sm flex items-center gap-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <Gift size={24} />
-          </div>
-          <div>
-            <p className="text-slate-400 text-[10px] font-extrabold uppercase tracking-wider mb-0.5">Earned Commission</p>
-            <p className="text-2xl font-black text-slate-800 tracking-tight leading-none">{formatCurrency(totalEarnedCommission)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Referrals table / list */}
-      <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-          <div>
-            <h4 className="font-extrabold text-slate-900">Your Referred Network</h4>
-            <p className="text-xs text-slate-500 font-medium">Referred users who registered with your invitation link or code.</p>
-          </div>
-          <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{referredUsers.length} Total</span>
-        </div>
-
-        {loading ? (
-          <div className="p-12 text-center text-slate-500 font-medium text-sm">Synchronizing referred friends list...</div>
-        ) : referredUsers.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                  <th className="p-4 pl-6">Client Name / Email</th>
-                  <th className="p-4">Registration Date</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 pr-6 text-right">Commission Earned (2%)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-sans">
-                {referredUsers.map((refUser) => {
-                  const comm = getCommissionFromUser(refUser.fullName);
-                  return (
-                    <tr key={refUser.uid} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-4 pl-6">
-                        <div className="font-bold text-slate-800">{refUser.fullName}</div>
-                        <div className="text-xs text-slate-400 font-medium">{refUser.email}</div>
-                      </td>
-                      <td className="p-4 text-slate-500 font-medium whitespace-nowrap text-xs">
-                        {refUser.createdAt 
-                          ? new Date(refUser.createdAt.seconds * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-                          : "Processing..."}
-                      </td>
-                      <td className="p-4">
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-600 bg-green-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> Active
-                        </span>
-                      </td>
-                      <td className="p-4 pr-6 text-right font-extrabold text-indigo-600 font-mono">
-                        {formatCurrency(comm)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="py-16 text-center space-y-4 max-w-sm mx-auto">
-            <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
-              <Gift size={28} />
-            </div>
-            <div>
-              <h5 className="font-extrabold text-slate-900">No Referrals Registered Yet</h5>
-              <p className="text-xs text-slate-500 leading-relaxed font-semibold mt-1">
-                Your partnership yields are empty. Copy your invitation link above and share it with friends to start earning recurring bonuses!
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SettingsSection({ user }: { user: UserProfile }) {
-  const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
-  const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
-  const [isUpdating, setIsUpdating] = React.useState(false);
-
-  const handleUpdateSecurity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (transactionPin && (transactionPin.length !== 4 || !/^\d+$/.test(transactionPin))) {
-      toast.error("Transaction PIN must be exactly 4 numeric digits!");
-      return;
-    }
-    if (phoneNumber && (phoneNumber.length < 10 || phoneNumber.length > 11)) {
-      toast.error("Please enter a valid Nigerian Phone Number (10 or 11 digits)!");
-      return;
-    }
-
-    setIsUpdating(true);
-    try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        phoneNumber,
-        transactionPin
-      }, { merge: true });
-      toast.success("Security profile updated successfully! 🔐");
-    } catch (error: any) {
-      toast.error("Failed to update security credentials: " + error.message);
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  return (
-    <div className="space-y-8 max-w-2xl font-sans">
-      <div className="bg-white rounded-[2rem] border border-slate-100 divide-y divide-slate-50 shadow-sm">
-        {/* Profile Information Block */}
-        <div className="p-8">
-          <h3 className="font-extrabold text-xl mb-6 text-slate-900 uppercase tracking-tight">Profile Information</h3>
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-slate-400 ml-1">Full Identity Name</label>
-                <input readOnly value={user.fullName} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 select-all focus:outline-none" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-slate-400 ml-1">Secure Email Address</label>
-                <input readOnly value={user.email} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 select-all focus:outline-none" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Security & Credentials Update Form */}
-        <form onSubmit={handleUpdateSecurity} className="p-8 space-y-6">
-          <div>
-            <h3 className="font-extrabold text-xl mb-1 text-slate-900 uppercase tracking-tight">Security Credentials</h3>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">Keep your communication and payment codes synchronized.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex justify-between">
-                <span>Phone Number</span>
-                {phoneNumber && <span className="text-[9px] font-mono text-slate-400">{phoneNumber.length}/11 Digits</span>}
-              </label>
-              <input 
-                type="tel"
-                maxLength={11}
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                placeholder="e.g. 08123456789" 
-                className="w-full bg-slate-50 border-2 border-slate-100 hover:border-slate-200 focus:border-black rounded-xl px-4 py-3 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-black/10 transition-all text-black"
-              />
-            </div>
-            
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex justify-between">
-                <span>Transaction PIN (4-Digits) 🔑</span>
-                {transactionPin && <span className="text-[9px] font-mono text-emerald-600 font-bold">Configured</span>}
-              </label>
-              <input 
-                type="password"
-                maxLength={4}
-                value={transactionPin}
-                onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="4-digit security PIN" 
-                className="w-full bg-slate-50 border-2 border-slate-100 hover:border-slate-200 focus:border-black rounded-xl px-4 py-3 text-xs font-black tracking-widest focus:outline-none focus:ring-1 focus:ring-black/10 transition-all text-black"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="submit"
-              disabled={isUpdating}
-              className="bg-black hover:bg-slate-900 text-white font-black text-xs uppercase tracking-wider px-6 py-3.5 rounded-xl shadow-[3px_3px_0px_0px_rgba(30,41,59,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(30,41,59,1)] transition-all cursor-pointer disabled:opacity-50 select-none text-center"
-            >
-              {isUpdating ? "Saving Changes..." : "Secure Update Profile"}
-            </button>
-          </div>
-        </form>
-        
-        {user.role === 'user' && (
-          <div className="p-8">
-            <h3 className="font-extrabold text-xl mb-1 text-indigo-600 uppercase tracking-tight">Upgrade to Reseller</h3>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-6">Get data bundles at discounted wholesale prices and earn more profits.</p>
-            <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <p className="font-bold text-slate-900">Premium Reseller Account</p>
-                <p className="text-xs text-slate-600 font-bold font-mono">ONE-TIME UPGRADE FEE: ₦2,500.00</p>
-              </div>
-              <button className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-100 cursor-pointer">
-                Upgrade Now
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-[2rem] border border-slate-100 p-8 space-y-4 shadow-sm">
-        <h3 className="font-extrabold text-xl text-rose-600 uppercase tracking-tight">Danger Zone</h3>
-        <p className="text-slate-500 text-xs font-bold uppercase tracking-wide leading-relaxed">Once you terminate or wipe your account portfolio data inside our system, there is no recovering it. Please exercise caution.</p>
-        <button className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-6 py-3.5 rounded-xl text-xs font-black uppercase tracking-wider border border-rose-200 transition-all cursor-pointer">
-          Wipe Client Portfolio Account
+        <button class="btn-ghost" onclick="openTransfer()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 7h11m0 0-4-4m4 4-4 4M17 17H6m0 0 4 4m-4-4 4-4"/></svg>
+          Transfer
         </button>
+        <button class="btn-ghost">View history</button>
       </div>
     </div>
-  );
-}
 
-function DashboardOverview({ 
-  user, 
-  setTab, 
-  transactions, 
-  onSelectTx
-}: { 
-  user: UserProfile, 
-  setTab: (tab: string, serviceId?: any) => void, 
-  transactions: Transaction[], 
-  onSelectTx?: (tx: Transaction) => void
-}) {
-  const { setSimulatedUser } = useAuth();
-  const [plans, setPlans] = React.useState<ServicePlan[]>([]);
-  const [selectedNetwork, setSelectedNetwork] = React.useState<'All' | NetworkType>('All');
-  const [selectedCategory, setSelectedCategory] = React.useState<string>('ALL');
-  const [selectedPlan, setSelectedPlan] = React.useState<ServicePlan | null>(null);
-  const [phoneNumber, setPhoneNumber] = React.useState('');
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-
-  // New Airtime State hooks
-  const [serviceType, setServiceType] = React.useState<'data' | 'airtime'>('data');
-  const [airtimeNetwork, setAirtimeNetwork] = React.useState<NetworkType | null>(null);
-  const [airtimePhone, setAirtimePhone] = React.useState('');
-  const [airtimeAmount, setAirtimeAmount] = React.useState('');
-  const [isBuyingAirtime, setIsBuyingAirtime] = React.useState(false);
-  const [showAirtimeConfirmModal, setShowAirtimeConfirmModal] = React.useState(false);
-
-  const [currentBalance, setCurrentBalance] = React.useState(0);
-  const [isUpdating, setIsUpdating] = React.useState(false);
-
-  // ── WALLET TRANSFER STATE ──────────────────────────────────────────────
-  const [showTransferModal, setShowTransferModal] = React.useState(false);
-  const [transferUid, setTransferUid] = React.useState('');
-  const [transferAmount, setTransferAmount] = React.useState('');
-  const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
-  const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
-  const [transferLoading, setTransferLoading] = React.useState(false);
-
-  React.useEffect(() => {
-    setCurrentBalance(user?.wallet_balance || user?.balance || 0);
-  }, [user?.wallet_balance, user?.balance]);
-
-  // Refresh balance from Supabase
-  const refreshBalance = async () => {
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    if (!authUser) return;
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('wallet_balance')
-      .eq('id', authUser.id)
-      .single();
-
-    if (profile) {
-      setCurrentBalance(profile.wallet_balance || 0);
-    }
-  };
-
-  React.useEffect(() => {
-    const userId = (user as any)?.id || user?.uid;
-    refreshBalance(); // initial load
-
-    if (!userId) return;
-
-    // Real-time subscription
-    const channel = supabase
-      .channel('profile-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `id=eq.${userId}`
-        },
-        (payload: any) => {
-          if (payload.new && payload.new.wallet_balance !== undefined) {
-            setCurrentBalance(payload.new.wallet_balance);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.uid, (user as any)?.id]);
-
-  // Optimistic purchase handler for data bundle
-  const handleBuyData = async (
-    phoneParam?: string,
-    amountParam?: number,
-    networkParam?: string,
-    planCodeParam?: string | number
-  ) => {
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    console.log("Logged in user ID:", authUser?.id);
-    console.log("User object:", authUser);
-
-    if (!authUser) {
-      toast.error("Please log in again");
-      return;
-    }
-
-    const userId = authUser.id;
-    console.log("Profile check before purchase");
-
-    const phone = phoneParam || phoneNumber;
-    const amount = amountParam || (selectedPlan ? Number(selectedPlan.price || selectedPlan.amount) : 0);
-    const network = networkParam || (selectedPlan ? String(selectedPlan.network || selectedPlan.network_type) : '');
-    const planCode = planCodeParam || (selectedPlan ? (selectedPlan.peyflex_variation_id || selectedPlan.peyflex_id || selectedPlan.apiPlanId || selectedPlan.id) : '');
-
-    if (!phone || !amount || !network || !planCode) {
-      return toast.error("Missing required fields for data purchase");
-    }
-
-    setIsUpdating(true);
-    const oldBalance = currentBalance;
-
-    // Optimistic UI update
-    setCurrentBalance(prev => Math.max(0, prev - amount));
-
-    try {
-      const result = await purchaseDataBundle(userId, phone, amount, network, planCode);
-      toast.success("Data bundle purchased successfully! 🎉");
-      return result;
-    } catch (error: any) {
-      setCurrentBalance(oldBalance); // rollback
-      toast.error(error.message || "Transaction failed");
-      throw error;
-    } finally {
-      setIsUpdating(false);
-      setTimeout(refreshBalance, 1200); // final server sync
-    }
-  };
-
-  // ── WALLET TRANSFER HANDLERS ───────────────────────────────────────────
-  const handleLookupRecipient = async () => {
-    if (!transferUid.trim()) {
-      toast.error("Please enter a recipient UID");
-      return;
-    }
-    setTransferLoading(true);
-    try {
-      const { data, error } = await supabase.rpc('lookup_recipient', {
-        target_uid: transferUid.trim()
-      });
-      if (error) throw error;
-      if (data.status === 'error') {
-        toast.error(data.message);
-        return;
-      }
-      setTransferRecipient(data.data);
-      setTransferStep('confirm');
-    } catch (err: any) {
-      toast.error(err.message || "Failed to find recipient");
-    } finally {
-      setTransferLoading(false);
-    }
-  };
-
-  const handleConfirmTransfer = async () => {
-    const amt = Number(transferAmount);
-    if (!amt || amt <= 0) {
-      toast.error("Please enter a valid amount");
-      return;
-    }
-    setTransferLoading(true);
-    const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    try {
-      const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferUid.trim(),
-        p_amount: amt,
-        p_reference: reference
-      });
-      if (error) throw error;
-
-      if (data.status === 'success') {
-        toast.success(`₦${amt.toLocaleString()} sent to ${data.recipient_email}!`);
-        setShowTransferModal(false);
-        setTransferStep('input');
-        setTransferUid('');
-        setTransferAmount('');
-        setTransferRecipient(null);
-        refreshBalance();
-      } else if (data.status === 'insufficient_funds') {
-        toast.error(`Insufficient balance. You have ₦${data.balance}, need ₦${data.required}.`);
-      } else {
-        toast.error(data.message || "Transfer failed");
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Transfer failed");
-    } finally {
-      setTransferLoading(false);
-    }
-  };
-
-  // Secure Flutterwave State declarations
-  const [showFundModal, setShowFundModal] = React.useState(false);
-  const [fundingTab, setFundingTab] = React.useState<'paystack' | 'flutterwave'>('flutterwave');
-  const [opayAmount, setOpayAmount] = React.useState('2000');
-  const [opayLoading, setOpayLoading] = React.useState(false);
-  const [fwLoading, setFwLoading] = React.useState(false);
-
-  const handleFlutterwaveFundSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amt = Number(opayAmount);
-    if (!amt || amt <= 0) {
-      toast.error("Please enter a valid funding amount");
-      return;
-    }
-    setFwLoading(true);
-
-    const reference = `NOR-FW-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    // Dynamically load Flutterwave custom checkout Production script (Explicitly targeted)
-    const loadScript = (): Promise<boolean> => {
-      return new Promise((resolve) => {
-        if ((window as any).FlutterwaveCheckout) {
-          resolve(true);
-          return;
-        }
-        const script = document.createElement("script");
-        script.src = "https://checkout.flutterwave.com/v3.js";
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-      });
-    };
-
-    const scriptLoaded = await loadScript();
-    if (!scriptLoaded) {
-      toast.error(
-        "Flutterwave failed to load! If you are using Brave Browser, an adblocker (like uBlock), AdGuard DNS, or a VPN, please temporarily disable them, refresh the page, and try again.",
-        { duration: 10000 }
-      );
-      setFwLoading(false);
-      return;
-    }
-
-    try {
-      // 1. Fetch live public key from server configuration helper
-      const pKeyResp = await fetch('/api/v1/payment/config').catch(() => null);
-      let flutterwavePublicKey = '';
-      if (pKeyResp && pKeyResp.ok) {
-        const configData = await pKeyResp.json();
-        flutterwavePublicKey = configData.flutterwavePublicKey || '';
-      }
-
-      // Fallback fallback fallback to client-side env variable if server key not configured
-      if (!flutterwavePublicKey) {
-        flutterwavePublicKey = (import.meta as any).env?.VITE_FLUTTERWAVE_PUBLIC_KEY || 'FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxxxxx-X';
-      }
-
-      // Strip accidental quotes and whitespace
-      flutterwavePublicKey = flutterwavePublicKey.replace(/^["']|["']$/g, "").trim();
-
-      // Format validation for Flutterwave key to prevent misconfigurations
-      if (flutterwavePublicKey.startsWith("FLWSECK")) {
-        setFwLoading(false);
-        toast.error("SECURITY WARNING: You have configured a Flutterwave SECRET key (FLWSECK-) instead of a PUBLIC key! Flutterwave Checkout only accepts the PUBLIC key in the frontend. Please verify your Railway dashboard environment variables.", {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (flutterwavePublicKey.startsWith("pk_") || flutterwavePublicKey.startsWith("sk_")) {
-        setFwLoading(false);
-        toast.error("CONFIGURATION ERROR: You configured a Paystack key under your Flutterwave setting! Please replace 'FLUTTERWAVE_PUBLIC_KEY' in your secrets dashboard with a real Flutterwave PUBLIC key (starts with 'FLWPUBK-').", {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (!flutterwavePublicKey.startsWith("FLWPUBK") && flutterwavePublicKey !== 'FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxxxxx-X') {
-        setFwLoading(false);
-        toast.error(`INVALID KEY FORMAT: Your Flutterwave Public Key starts with '${flutterwavePublicKey.substring(0, 10)}...'. A valid public key must start with 'FLWPUBK-'. Please correct this in your Railway environment settings.`, {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (!flutterwavePublicKey || flutterwavePublicKey.includes("PASTE_YOUR") || flutterwavePublicKey.includes("xxxxxxxxxxxx") || flutterwavePublicKey.includes("FLWPUBK_TEST-xxxx")) {
-        setFwLoading(false);
-        toast.error("Flutterwave Public Key is not configured. Please add a valid 'FLUTTERWAVE_PUBLIC_KEY' in your Secrets settings under the App Settings.", {
-          duration: 8000
-        });
-        return;
-      }
-
-      const verifyFlutterwavePaymentOnServer = async (transactionId: string) => {
-        setFwLoading(false);
-        toast.loading("Processing wallet credit on client side...", { id: "fw-verify-loader" });
-        try {
-          const currentUserId = user.uid;
-          const topUpAmount = amt;
-          const updatedBalance = user.balance + topUpAmount;
-
-          console.log(`[Frontend Wallet Credit] Direct credit of ₦${topUpAmount} requested for user ${currentUserId}. New balance: ${updatedBalance}`);
-
-          // 1. Hardcode a Direct Supabase Update for Testing / Live
-          const { data: updateData, error: updateError } = await supabase
-            .from('profiles')
-            .update({ 
-              wallet_balance: updatedBalance,
-            })
-            .eq('id', currentUserId);
-
-          if (updateError) {
-            console.error("Database failed to update profiles table:", updateError.message);
-          } else {
-            console.log("Wallet successfully updated in Supabase profiles!");
-          }
-
-          // 2. Direct Supabase Update for users table as backup
-          try {
-            await supabase
-              .from('users')
-              .update({ 
-                balance: updatedBalance,
-                wallet_balance: updatedBalance,
-                available_balance: updatedBalance
-              })
-              .eq('id', currentUserId);
-          } catch (err) {
-            console.warn("Failed to update users table:", err);
-          }
-
-          // 3. Direct Supabase Update for accounts table as backup
-          try {
-            await supabase
-              .from('accounts')
-              .update({ 
-                balance: updatedBalance,
-                wallet_balance: updatedBalance,
-                available_balance: updatedBalance
-              })
-              .eq('id', currentUserId);
-          } catch (err) {
-            console.warn("Failed to update accounts table:", err);
-          }
-
-          // 4. Force Firestore user document synchronization
-          try {
-            const { doc: fsDoc, updateDoc: fsUpdateDoc } = await import('firebase/firestore');
-            const { db: fsDb } = await import('../lib/firebase');
-            await fsUpdateDoc(fsDoc(fsDb, 'users', currentUserId), {
-              balance: updatedBalance,
-              wallet_balance: updatedBalance,
-              available_balance: updatedBalance
-            });
-            console.log("Firestore user database updated direct from client callback!");
-          } catch (fsErr) {
-            console.warn("Firestore update skipped/failed:", fsErr);
-          }
-
-          // 5. Force State Refresh directly to sync visually
-          const updatedProfile = {
-            ...user,
-            balance: updatedBalance,
-            wallet_balance: updatedBalance,
-            available_balance: updatedBalance
-          };
-          setSimulatedUser(updatedProfile);
-
-          toast.dismiss("fw-verify-loader");
-          toast.success(`Successfully topped-up ₦${topUpAmount.toLocaleString()} via Flutterwave!`, {
-            duration: 7500,
-            icon: '🚀'
-          });
-
-          setShowFundModal(false);
-          setOpayAmount('2000');
-
-          // Send verification in background for transaction logging, ignore return status
-          fetch('/api/payments/verify-flutterwave', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              transactionId,
-              reference,
-              amount: topUpAmount,
-              email: user.email,
-              userId: user.uid
-            })
-          }).catch((err) => console.log("Background server billing process skipped:", err));
-
-        } catch (err: any) {
-          toast.dismiss("fw-verify-loader");
-          console.error("Failed client-side balance update flow:", err);
-          toast.error("Internal failure processing client-side transaction credit flow.");
-        }
-      };
-
-      // 2. Invoke standard Flutterwave checkout popup modal inline client implementation
-      try {
-        (window as any).FlutterwaveCheckout({
-          public_key: flutterwavePublicKey,
-          tx_ref: reference,
-          amount: amt,
-          currency: "NGN",
-          country: "NG",
-          payment_options: "card, banktransfer",
-          customer: {
-            email: user.email,
-            phone_number: (user as any).phone_number || (user as any).phone || user.phoneNumber || "08000000000",
-            name: (user as any).name || (user as any).full_name || user.fullName || "Nooraya Customer"
-          },
-          customizations: {
-            title: "Nooraya Digital VTU Wallet Funding",
-            description: "Wallet balance top-up via Flutterwave Standard Gateway",
-            logo: "https://checkout.flutterwave.com/assets/img/flutterwave-badge.svg",
-          },
-          callback: function (response: any) {
-            console.log("[Flutterwave Inline Callback Response]:", response);
-            if (response.status === "successful" || response.status === "success" || response.tx_ref) {
-              const tranId = response.transaction_id || response.txid || "simulated";
-              verifyFlutterwavePaymentOnServer(String(tranId));
-            } else {
-              setFwLoading(false);
-              toast.error("Flutterwave payment process was not marked as successful.");
-            }
-          },
-          onclose: function () {
-            setFwLoading(false);
-            toast("Flutterwave secure payment cancelled.", { icon: 'ℹ️' });
-          }
-        });
-      } catch (checkoutErr: any) {
-        console.error("Flutterwave checkout modal invocation failed:", String(checkoutErr));
-        toast.error(`Flutterwave Checkout Error: ${checkoutErr.message || checkoutErr}`);
-        setFwLoading(false);
-      }
-
-    } catch (err: any) {
-      console.error("Flutterwave initialization/parameters error:", String(err));
-      toast.error(`Flutterwave Initialization error: ${err.message}`);
-      setFwLoading(false);
-    }
-  };
-
-  const handlePaystackFundSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amt = Number(opayAmount);
-    if (!amt || amt <= 0) {
-      toast.error("Please enter a valid funding amount");
-      return;
-    }
-    setOpayLoading(true);
-
-    const amountInKobo = amt * 100;
-    const reference = `PSTK-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    const paystackPop = (window as any).PaystackPop;
-    if (!paystackPop) {
-      toast.error("Paystack inline popup SDK script failed to load. Please verify your connection.");
-      setOpayLoading(false);
-      return;
-    }
-
-    try {
-      // Dynamically load live Paystack public key from secure backend config endpoint
-      const pKeyResp = await fetch('/api/v1/payment/config').catch(() => null);
-      let paystackPublicKey = 'pk_live_your_actual_key_here'; // Default live seat if API has issue
-      if (pKeyResp && pKeyResp.ok) {
-        const configData = await pKeyResp.json();
-        paystackPublicKey = configData.publicKey || configData.paystackPublicKey || paystackPublicKey;
-      } else {
-        // Look for client-side injected environment variables as robust fallback
-        paystackPublicKey = ((import.meta as any).env?.VITE_PAYSTACK_LIVE_PUBLIC_KEY || (import.meta as any).env?.VITE_PAYSTACK_PUBLIC_KEY || paystackPublicKey);
-      }
-
-      // Strip accidental quotes and whitespace
-      paystackPublicKey = paystackPublicKey.replace(/^["']|["']$/g, "").trim();
-
-      // Format validation for Paystack key to prevent misconfigurations
-      if (paystackPublicKey.startsWith("sk_")) {
-        setOpayLoading(false);
-        toast.error("SECURITY WARNING: You have configured a Paystack SECRET key (sk_-) instead of a PUBLIC key! Paystack Checkout only accepts the PUBLIC key in the frontend. Please verify your Railway dashboard environment variables.", {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (paystackPublicKey.startsWith("FLW")) {
-        setOpayLoading(false);
-        toast.error("CONFIGURATION ERROR: You configured a Flutterwave key under your Paystack setting! Please replace 'PAYSTACK_PUBLIC_KEY' in your secrets dashboard with a real Paystack PUBLIC key (starts with 'pk_').", {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (!paystackPublicKey.startsWith("pk_") && paystackPublicKey !== 'pk_live_your_actual_key_here') {
-        setOpayLoading(false);
-        toast.error(`INVALID KEY FORMAT: Your Paystack Public Key starts with '${paystackPublicKey.substring(0, 10)}...'. A valid public key must start with 'pk_live_'. Please correct this in your Railway environment settings.`, {
-          duration: 10000
-        });
-        return;
-      }
-
-      if (!paystackPublicKey || paystackPublicKey.includes("actual_key") || paystackPublicKey.includes("xxxxxx") || paystackPublicKey.includes("PASTE_YOUR")) {
-        setOpayLoading(false);
-        toast.error("Paystack Public Key is not configured. Please add a valid 'PAYSTACK_PUBLIC_KEY' in your Secrets settings under the App Settings.", {
-          duration: 8000
-        });
-        return;
-      }
-
-      const verifyPayment = async (referenceCode: string) => {
-        setOpayLoading(false);
-        toast.loading("Verifying transaction securely...", { id: "paystack-loader" });
-        try {
-          const res = await fetch('/api/v1/payment-webhook', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-paystack-signature': 'local-bypass'
-            },
-            body: JSON.stringify({
-              event: 'charge.success',
-              data: {
-                reference: referenceCode,
-                amount: amountInKobo,
-                customer: {
-                  email: user.email
-                },
-                status: 'success',
-                metadata: {
-                  userId: user.uid
-                }
-              },
-              userId: user.uid
-            })
-          });
-
-          const data = await res.json().catch(() => ({}));
-          toast.dismiss("paystack-loader");
-
-          if (res.ok) {
-            toast.success(`Successfully topped-up ₦${amt.toLocaleString()} via Paystack!`, {
-              duration: 6500,
-              icon: '🎉'
-            });
-
-            // Trigger instant dashboard UI refresh for simulated users
-            if (localStorage.getItem('vtu_simulated_user')) {
-              const updatedProfile = {
-                ...user,
-                balance: user.balance + amt,
-                wallet_balance: (user.wallet_balance || 0) + amt,
-                available_balance: (user.available_balance || 0) + amt
-              };
-              setSimulatedUser(updatedProfile);
-            }
-
-            setShowFundModal(false);
-            setOpayAmount('2000');
-          } else {
-            toast.error(data.error || "Verification response from backend returned an error.");
-          }
-        } catch (err) {
-          toast.dismiss("paystack-loader");
-          toast.error("Error communicating with servers for transaction validation.");
-        }
-      };
-
-      function handleWalletCredit(ref: any) {
-        if (!ref) {
-          toast.error("No transaction reference received from Paystack secure tunnel.");
-          return;
-        }
-        const txRef = ref.reference || ref.trxref || (typeof ref === 'string' ? ref : "");
-        if (txRef) {
-          verifyPayment(txRef);
-        } else {
-          verifyPayment(ref);
-        }
-      }
-
-      const handler = paystackPop.setup({
-        key: paystackPublicKey,
-        email: user.email,
-        amount: amountInKobo,
-        currency: 'NGN',
-        ref: reference,
-        callback: function(ref: any) { handleWalletCredit(ref); },
-        onSuccess: function(ref: any) { handleWalletCredit(ref); },
-        onClose: function() {
-          setOpayLoading(false);
-          toast.error("Paystack checkout cancelled by user.");
-        }
-      });
-
-      handler.openIframe();
-    } catch (err: any) {
-      toast.error(`Paystack initialization issue: ${err.message}`);
-      setOpayLoading(false);
-    }
-  };
-
-  // Monnify simulator transfer completely dropped
-
-  React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paymentResult = params.get('payment');
-    const ref = params.get('ref');
-    const amt = params.get('amount');
-
-    if (paymentResult === 'success' && ref) {
-      toast.success(`Successfully funded wallet with ${formatCurrency(Number(amt || 0))}!`, {
-        duration: 5000,
-        icon: '🎉'
-      });
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (paymentResult === 'cancelled') {
-      toast.error("OPay checkout cancelled by user.", { duration: 4500 });
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, []);
-
-  const handleOpenFundModal = (forceRef: boolean = false) => {
-    setShowFundModal(true);
-  };
-
-  const handleDeductWallet = async () => {
-    const isSimulated = localStorage.getItem('vtu_simulated_user') !== null;
-    toast.loading("Adjusting balance to ₦0...", { id: 'deduct-wallet-loader' });
-    
-    try {
-      if (isSimulated) {
-        const stored = localStorage.getItem('vtu_simulated_user');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          parsed.balance = 0;
-          setSimulatedUser(parsed);
-        }
-        toast.dismiss('deduct-wallet-loader');
-        toast.success("Simulated balance successfully set to ₦0!", { icon: '💸' });
-      } else {
-        const response = await fetch('/api/wallet/reset-balance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            targetBalance: 0
-          })
-        });
-        
-        const res = await response.json();
-        toast.dismiss('deduct-wallet-loader');
-        if (response.ok && res.success) {
-          toast.success("Deduction successful! Wallet balance is now ₦0.", { icon: '💸' });
-        } else {
-          toast.error("Failed to adjust wallet balance: " + (res.error || "Internal Error"));
-        }
-      }
-    } catch (err: any) {
-      toast.dismiss('deduct-wallet-loader');
-      toast.error("Network Error: " + err.message);
-    }
-  };
-
-
-
-  // Daily Lucky Spin system hooks & logic
-  const [spinning, setSpinning] = React.useState(false);
-  const [lastSpinTime, setLastSpinTime] = React.useState<number | null>(null);
-  const [spinResult, setSpinResult] = React.useState<string | null>(null);
-  const [timeLeftToSpin, setTimeLeftToSpin] = React.useState<string>('');
-
-  React.useEffect(() => {
-    const key = `noroya_last_spin_${user.uid}`;
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      setLastSpinTime(Number(stored));
-    }
-  }, [user.uid]);
-
-  React.useEffect(() => {
-    if (!lastSpinTime) {
-      setTimeLeftToSpin('');
-      return;
-    }
-    const updateTimer = () => {
-      const now = Date.now();
-      const nextAllowed = lastSpinTime + 24 * 60 * 60 * 1000;
-      const diff = nextAllowed - now;
-      if (diff <= 0) {
-        setLastSpinTime(null);
-        localStorage.removeItem(`noroya_last_spin_${user.uid}`);
-        setTimeLeftToSpin('');
-      } else {
-        const hrs = Math.floor(diff / (1000 * 60 * 60));
-        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const secs = Math.floor((diff % (100 * 60)) / 1000); // fix typo, modulo 60
-        const correctedSecs = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeLeftToSpin(`${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${correctedSecs.toString().padStart(2, '0')}`);
-      }
-    };
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [lastSpinTime, user.uid]);
-
-  const handleSpinWheel = async () => {
-    if (lastSpinTime && (Date.now() - lastSpinTime < 24 * 60 * 60 * 1000)) {
-      toast.error("Daily spin already claimed. See you tomorrow!");
-      return;
-    }
-
-    setSpinning(true);
-    setSpinResult(null);
-
-    // Dynamic, weighted payouts (₦10 - ₦250)
-    const rewards = [
-      { amount: 10, label: "₦10.00 Cash", weight: 0.50 },
-      { amount: 20, label: "₦20.00 Cashback", weight: 0.25 },
-      { amount: 55, label: "₦55.00 Lucky Cash", weight: 0.15 },
-      { amount: 100, label: "₦100.00 Super Jackpot", weight: 0.08 },
-      { amount: 250, label: "₦250.00 Mega Cash", weight: 0.02 }
-    ];
-
-    const r = Math.random();
-    let sum = 0;
-    let selectedReward = rewards[0];
-    for (const reward of rewards) {
-      sum += reward.weight;
-      if (r <= sum) {
-        selectedReward = reward;
-        break;
-      }
-    }
-
-    // Interactive rotation feeling delay (1.8s)
-    await new Promise(resolve => setTimeout(resolve, 1800));
-
-    try {
-      const response = await fetch('/api/vtu/daily-bonus', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          wonAmount: selectedReward.amount
-        })
-      });
-
-      if (response.ok) {
-        setSpinResult(selectedReward.label);
-        const now = Date.now();
-        setLastSpinTime(now);
-        localStorage.setItem(`noroya_last_spin_${user.uid}`, String(now));
-        toast.success(`You won ${selectedReward.label}! Added instantly to balance.`);
-      } else {
-        const errData = await response.json();
-        toast.error(errData.error || "Rewards network busy, please trigger spin again!");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to register bonus payout.");
-    } finally {
-      setSpinning(false);
-    }
-  };
-
-  // Subscribe to service plans from Firestore
-  React.useEffect(() => {
-    console.log("Attempting to connect to Firestore collection: 'data_plans'...");
-    const q = query(collection(db, "data_plans"));
-    
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      console.log(`Firestore metadata: metadata.fromCache = ${querySnapshot.metadata.fromCache}`);
-      const plansList: ServicePlan[] = [];
-      const now = new Date();
-      
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        let expiresAtDate: Date | null = null;
-        if (data.expiresAt) {
-          if (typeof data.expiresAt.toDate === 'function') {
-            expiresAtDate = data.expiresAt.toDate();
-          } else {
-            expiresAtDate = new Date(data.expiresAt);
-          }
-        }
-        
-        if (!expiresAtDate || expiresAtDate > now) {
-          const name = data.plan_name || data.name || data.planName || `${data.network_type || data.network || ''} Plan`;
-          const price = Number(data.retail_price || data.price || data.amount || 0);
-          const network = String(data.network_type || data.network || 'MTN').toUpperCase();
-          const type = data.type || 'data';
-
-          const pt = String(data.planType || data.plan_category || '').toUpperCase();
-          const pNameUpper = String(name).toUpperCase();
-          let planCategory = "GIFTING";
-          if (pt.includes("SME") || pNameUpper.includes("SME")) {
-            planCategory = "SME";
-          } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-            planCategory = "CG";
-          }
-
-          plansList.push({
-            id: doc.id,
-            ...data,
-            name,
-            plan_name: name,
-            price,
-            retail_price: price,
-            amount: price,
-            network_type: network,
-            network: network,
-            plan_category: planCategory,
-            planType: planCategory,
-            type
-          } as any);
-        }
-      });
-
-      console.log(`Successfully loaded ${plansList.length} un-expired plans in Dashboard from Firestore:`, plansList);
-      setPlans(plansList);
-    }, (error) => {
-      console.error("CRITICAL FIRESTORE ERROR UNABLE TO READ DATA:", error.code, error.message);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Filter plans to display in client buy data screen with robust case-insensitive matching & 7-day lifespans
-  const filteredPlans = plans.filter(plan => {
-    const isNetworkMatch = selectedNetwork === 'All' || !selectedNetwork || plan.network_type?.toUpperCase() === selectedNetwork?.toUpperCase();
-    const isCategoryMatch = selectedCategory?.toUpperCase() === 'ALL' || plan.plan_category?.toUpperCase() === selectedCategory?.toUpperCase();
-    
-    // Expired plan filtering
-    let isExpired = false;
-    if (plan.expiresAt) {
-      let expiryTime: number;
-      if (plan.expiresAt && plan.expiresAt.seconds) {
-        expiryTime = plan.expiresAt.seconds * 1000;
-      } else {
-        expiryTime = new Date(plan.expiresAt).getTime();
-      }
-      if (!isNaN(expiryTime) && expiryTime < Date.now()) {
-        isExpired = true;
-      }
-    }
-
-    return isNetworkMatch && isCategoryMatch && !isExpired;
-  });
-
-  const handleInstantPurchase = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPlan) return;
-    
-    if (phoneNumber.trim().length < 10) {
-      toast.error("Please enter a valid phone number (at least 10 digits)");
-      return;
-    }
-
-    if (user.balance < selectedPlan.price) {
-      toast.error("Insufficient wallet balance. Please fund your wallet first.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const response = await fetch('/api/vtu/purchase', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: user.uid,
-          type: 'data',
-          network: selectedPlan.network,
-          phoneNumber: phoneNumber.trim(),
-          plan: selectedPlan.name,
-          amount: selectedPlan.price
-        })
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        toast.success(`Purchase successful! ${selectedPlan.name} sent to ${phoneNumber}`);
-        setSelectedPlan(null);
-        setPhoneNumber('');
-      } else {
-        const baseMsg = data.error || data.provider_message || "Purchase failed";
-        toast.error(baseMsg, { duration: 6000 });
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to complete purchase. Check server logs or network status.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleInstantAirtimePurchase = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!airtimeNetwork) {
-      toast.error("Please select a network carrier.");
-      return;
-    }
-    const amt = Number(airtimeAmount);
-    if (!amt || amt <= 0) {
-      toast.error("Please enter a valid amount.");
-      return;
-    }
-    if (airtimePhone.trim().length < 10) {
-      toast.error("Please enter a valid phone number (at least 10 digits)");
-      return;
-    }
-    if (user.balance < amt) {
-      toast.error("Insufficient wallet balance. Please fund your wallet first.");
-      return;
-    }
-
-    setIsBuyingAirtime(true);
-    try {
-      const response = await fetch('/api/vtu/purchase', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: user.uid,
-          type: 'airtime',
-          network: airtimeNetwork,
-          phoneNumber: airtimePhone.trim(),
-          plan: `${airtimeNetwork} Airtime`,
-          amount: amt
-        })
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        toast.success(`Airtime purchase successful! ₦${amt} airtime sent to ${airtimePhone}`);
-        setAirtimeNetwork(null);
-        setAirtimePhone('');
-        setAirtimeAmount('');
-        setShowAirtimeConfirmModal(false);
-      } else {
-        const baseMsg = data.error || data.provider_message || "Airtime purchase failed";
-        toast.error(baseMsg, { duration: 6000 });
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to complete purchase. Check server logs or network status.");
-    } finally {
-      setIsBuyingAirtime(false);
-    }
-  };
-
-  const getCarrierStyles = (network: string) => {
-    const netUpper = String(network || '').toUpperCase();
-    switch (netUpper) {
-      case 'MTN':
-        return {
-          bg: 'bg-yellow-50/70 border-yellow-300 text-yellow-800',
-          badge: 'bg-yellow-400 text-slate-900',
-          hover: 'hover:border-yellow-400 hover:shadow-yellow-50'
-        };
-      case 'AIRTEL':
-        return {
-          bg: 'bg-red-50/70 border-red-200 text-red-800',
-          badge: 'bg-red-600 text-white',
-          hover: 'hover:border-red-400 hover:shadow-red-50'
-        };
-      case 'GLO':
-        return {
-          bg: 'bg-green-50/70 border-green-200 text-green-800',
-          badge: 'bg-green-600 text-white',
-          hover: 'hover:border-green-400 hover:shadow-green-50'
-        };
-      case '9MOBILE':
-        return {
-          bg: 'bg-emerald-50/70 border-emerald-200 text-emerald-800',
-          badge: 'bg-emerald-800 text-white',
-          hover: 'hover:border-emerald-400 hover:shadow-emerald-50'
-        };
-      default:
-        return {
-          bg: 'bg-slate-50 border-slate-200 text-slate-800',
-          badge: 'bg-slate-500 text-white',
-          hover: 'hover:border-slate-300'
-        };
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      {/* Wallet Card */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Wallet Card */}
-        <div className="bg-gradient-to-br from-[#4338CA] via-[#4F2AC9] to-[#1E1650] rounded-[2rem] p-6 text-white shadow-xl shadow-indigo-900/30 relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5" id="vtu_wallet_card">
-          <div className="absolute -top-16 -right-10 w-56 h-56 rounded-full bg-white/10 blur-2xl pointer-events-none" />
-          <div className="relative z-10">
-            <span className="bg-amber-400 text-slate-900 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-4">
-              💰 Account Liquid Assets
-            </span>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Available Balance</p>
-            <h3 className="text-4xl font-extrabold tracking-tight mb-6 text-white">
-              {formatCurrency(currentBalance)}
-              {isUpdating && <span className="text-sm ml-2 animate-pulse"> → Updating</span>}
-            </h3>
-          </div>
-          
-          <div className="relative z-10 flex gap-3 flex-wrap">
-            <button 
-              onClick={() => handleOpenFundModal()} 
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-indigo-900/40 select-none cursor-pointer"
-            >
-              <ArrowDownLeft size={16} /> Fund Wallet
-            </button>
-            <button 
-              onClick={() => setShowTransferModal(true)} 
-              className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
-            >
-              Transfer
-            </button>
-          </div>
-          
-          <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-indigo-600/10 rounded-full border border-white/5 pointer-events-none" />
-        </div>
-
-        {/* Referrals Card */}
-        <div className="bg-white border border-slate-100 rounded-[2rem] p-6 text-slate-800 shadow-md flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="flex justify-between items-start">
-            <div>
-              <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-3">
-                📈 Referral Earnings
-              </span>
-              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Commissions</p>
-              <h3 className="text-2xl font-black text-slate-900">
-                {formatCurrency(
-                  transactions
-                    .filter(t => t.type === 'funding' && t.description.includes('Referral Commission'))
-                    .reduce((sum, t) => sum + t.amount, 0)
-                )}
-              </h3>
-            </div>
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-              <Users className="text-slate-700 text-slate-700" size={20} />
-            </div>
-          </div>
-          <div className="mt-4">
-            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Referral Code / Transfer ID</p>
-            <div className="flex gap-2">
-              <div className="flex-1 bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl text-xs font-mono font-black text-slate-800 select-all tracking-wider text-center flex items-center justify-center">
-                {user.referralCode}
-              </div>
-              <button 
-                onClick={() => {
-                  navigator.clipboard.writeText(user.referralCode);
-                  toast.success("Code copied to clipboard!");
-                }} 
-                className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Daily Lucky Spin Card */}
-        <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-[2rem] p-6 text-slate-800 shadow-md relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="relative z-10 flex flex-col h-full justify-between">
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-2 flex items-center gap-1">
-                  <span className="animate-pulse">🎁</span> Daily Free Reward
-                </span>
-                <h3 className="text-lg font-black tracking-tight text-slate-900">Lucky Spin Wheel</h3>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-amber-100">
-                <Gift className="text-amber-600 animate-bounce" size={20} />
-              </div>
-            </div>
-
-            {/* Spinner display feedback */}
-            <div className="my-3 flex flex-col items-center justify-center min-h-[60px]">
-              {spinning ? (
-                <div className="flex flex-col items-center space-y-1">
-                  <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-[11px] text-amber-700 font-bold animate-pulse">Spinning the lucky wheel...</p>
-                </div>
-              ) : spinResult ? (
-                <div className="text-center animate-bounce">
-                  <p className="text-[10px] text-amber-600 font-extrabold uppercase tracking-wider">Congratulations!</p>
-                  <p className="text-xl font-extrabold text-amber-700 leading-tight mt-1">{spinResult}</p>
-                </div>
-              ) : timeLeftToSpin ? (
-                <div className="text-center">
-                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">Next spin unlocks in</p>
-                  <p className="text-xl font-mono font-black text-slate-700 tracking-widest mt-1">{timeLeftToSpin}</p>
-                </div>
-              ) : (
-                <div className="text-center px-2">
-                  <p className="text-xs text-slate-600 leading-relaxed font-semibold">
-                    Get up to <strong>₦250.00</strong> free wallet bonus today! Processes instantly.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              disabled={spinning || !!timeLeftToSpin}
-              onClick={handleSpinWheel}
-              className={cn(
-                "w-full font-black rounded-xl py-3 text-xs uppercase tracking-wider transition-all select-none border cursor-pointer",
-                spinning 
-                  ? "bg-slate-200 text-slate-400 border-slate-200 cursor-not-allowed shadow-none" 
-                  : timeLeftToSpin 
-                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed shadow-none" 
-                    : "bg-[#FFCC00] text-black hover:bg-yellow-400 border-yellow-400 hover:shadow-md"
-              )}
-            >
-              {spinning ? "Spinning..." : timeLeftToSpin ? "Locked for today" : "Spin & Claim Cash"}
-            </button>
-          </div>
-        </div>
+    <div class="section-head"><h3>Quick billing services</h3></div>
+    <div class="services-grid">
+      <div class="service-card">
+        <div class="service-ic bg-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0M12 12v.01"/></svg></div>
+        <div><b>Data bundles</b><br><span>All networks, best rates</span></div>
       </div>
-
-      {/* WhatsApp Live Support desk */}
-      <div className="bg-white border border-slate-100 rounded-[2rem] p-6 text-slate-800 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 select-none transition-all duration-300 hover:shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 text-xl shrink-0">
-            💬
-          </div>
-          <div className="text-left font-sans">
-            <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-wider leading-snug">Nooraya Live customer support</h4>
-            <p className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Need immediate assistance, have order queries, or require help? We are online.</p>
-          </div>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-          {ADMIN_CONTACTS.map((admin) => (
-            <a
-              key={admin.number}
-              href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-center inline-flex justify-center items-center gap-1.5 no-underline shadow-md shadow-emerald-200/60 hover:-translate-y-0.5"
-            >
-              💬 {admin.label}
-            </a>
-          ))}
-        </div>
+      <div class="service-card">
+        <div class="service-ic bg-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></div>
+        <div><b>Airtime top-up</b><br><span>Instant credit, any amount</span></div>
       </div>
-
-      {/* Available Data & Airtime Purchases Tabbed Section */}
-      <div className="space-y-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setServiceType('data')}
-              className={cn(
-                "px-5 py-2.5 rounded-2xl text-sm font-extrabold transition-all flex items-center gap-2 border",
-                serviceType === 'data' 
-                  ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200/60" 
-                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-              )}
-            >
-              <Smartphone size={16} /> Data Bundles
-            </button>
-            <button
-              onClick={() => setServiceType('airtime')}
-              className={cn(
-                "px-5 py-2.5 rounded-2xl text-sm font-extrabold transition-all flex items-center gap-2 border",
-                serviceType === 'airtime' 
-                  ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200/60" 
-                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-              )}
-            >
-              <Zap size={16} /> Airtime Top-Up
-            </button>
-          </div>
-
-          {serviceType === 'data' && (
-            <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-start sm:items-center">
-              {/* Network Carrier Filter Tabs */}
-              <div className="flex flex-wrap gap-2 bg-slate-100/80 p-1 rounded-2xl border border-slate-200">
-                {(['All', 'MTN', 'Airtel', 'Glo', '9mobile'] as const).map((networkOpt) => (
-                  <button
-                    key={networkOpt}
-                    type="button"
-                    onClick={() => setSelectedNetwork(networkOpt)}
-                    className={cn(
-                      "px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                      selectedNetwork?.toUpperCase() === networkOpt.toUpperCase()
-                        ? "bg-white text-indigo-600 shadow-sm"
-                        : "text-slate-600 hover:text-slate-900"
-                    )}
-                  >
-                    {networkOpt}
-                  </button>
-                ))}
-              </div>
-
-              {/* Plan Category Filter Tabs */}
-              <div className="flex flex-wrap gap-2 bg-indigo-50/60 p-1 rounded-2xl border border-indigo-100/30">
-                {(['ALL', 'SME', 'GIFTING', 'CG'] as const).map((catOpt) => (
-                  <button
-                    key={catOpt}
-                    type="button"
-                    onClick={() => setSelectedCategory(catOpt)}
-                    className={cn(
-                      "px-4 py-2 rounded-xl text-xs font-extrabold transition-all tracking-tight",
-                      selectedCategory === catOpt
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-indigo-700/80 hover:text-indigo-950"
-                    )}
-                  >
-                    {catOpt === 'CG' ? 'Corporate Gifting (CG)' : catOpt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {serviceType === 'data' ? (
-          plans.length === 0 ? (
-            <div className="bg-white rounded-[2rem] p-8 border border-slate-100 text-center space-y-4">
-              <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
-                <Database size={28} />
-              </div>
-              <div className="max-w-md mx-auto">
-                <h4 className="font-bold text-lg">No Service Plans Available</h4>
-                <p className="text-sm text-slate-500 mt-1">There are no data bundles available right now. Please check back later or add them manually in the admin panel.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredPlans.map((plan) => {
-                const theme = getCarrierStyles(plan.network);
-                return (
-                  <div
-                    key={plan.id}
-                    className={cn(
-                      "bg-white border rounded-[2rem] p-6 transition-all flex flex-col justify-between cursor-pointer shadow-sm relative overflow-hidden group/card",
-                      theme.hover
-                    )}
-                    onClick={() => setSelectedPlan(plan)}
-                  >
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black tracking-wide uppercase shadow-sm", theme.badge)}>
-                          {plan.network}
-                        </span>
-                        <span className="text-xs text-slate-400 font-bold font-mono">
-                          {plan.duration || '30 Days'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-3.5">
-                        <div className={cn(
-                          "w-11 h-11 rounded-full flex items-center justify-center font-black text-xs tracking-tight shadow-sm shrink-0 border border-black/5",
-                          plan.network === 'MTN' && "bg-yellow-400 text-slate-900",
-                          plan.network === 'Airtel' && "bg-red-600 text-white",
-                          plan.network === 'Glo' && "bg-green-600 text-white",
-                          plan.network === '9mobile' && "bg-emerald-950 text-white"
-                        )}>
-                          {plan.network === '9mobile' ? '9m' : plan.network}
-                        </div>
-                        <div>
-                          <h4 className="text-lg font-extrabold text-slate-900 tracking-tight group-hover/card:text-indigo-600 transition-colors">
-                            {plan.name}
-                          </h4>
-                          <p className="text-xs text-slate-400 mt-0.5">High-speed network connection</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-6 mt-4 border-t border-slate-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Our Price</p>
-                        <p className="text-2xl font-black text-slate-900 tracking-tight">
-                          {formatCurrency(plan.price)}
-                        </p>
-                      </div>
-                      <span className="bg-slate-100 text-slate-700 group-hover/card:bg-indigo-600 group-hover/card:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
-                        Buy Plan
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : (
-          /* Instant Airtime Recharge Form Widget */
-          <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm max-w-xl mx-auto space-y-6">
-            <div>
-              <h4 className="font-extrabold text-slate-900 text-xl tracking-tight">Instant Airtime Recharge</h4>
-              <p className="text-xs text-slate-400 mt-1">Recharge any national carrier number securely using your wallet balance.</p>
-            </div>
-
-            <form 
-              onSubmit={(e) => { 
-                e.preventDefault(); 
-                if (!airtimeNetwork) {
-                  toast.error("Please select a network carrier.");
-                  return;
-                }
-                const amt = Number(airtimeAmount);
-                if (!amt || amt <= 0) {
-                  toast.error("Please enter a valid recharge amount.");
-                  return;
-                }
-                if (airtimePhone.trim().length < 10) {
-                  toast.error("Please enter a valid recipient phone number.");
-                  return;
-                }
-                if (user.balance < amt) {
-                  toast.error("Insufficient wallet balance.");
-                  return;
-                }
-                setShowAirtimeConfirmModal(true); 
-              }} 
-              className="space-y-6"
-            >
-              {/* Select Carrier */}
-              <div className="space-y-3">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-wider block ml-1">Select Network carrier</label>
-                <div className="grid grid-cols-4 gap-3">
-                  {(['MTN', 'Airtel', 'Glo', '9mobile'] as const).map((nw) => {
-                    const nwStyles = getCarrierStyles(nw);
-                    const isSelected = airtimeNetwork === nw;
-                    return (
-                      <button
-                        type="button"
-                        key={nw}
-                        onClick={() => setAirtimeNetwork(nw)}
-                        className={cn(
-                          "py-3 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 font-bold text-xs",
-                          isSelected 
-                            ? "border-indigo-600 bg-indigo-50/40 shadow-sm text-indigo-600" 
-                            : "border-slate-150 hover:border-slate-300 bg-slate-50/20 text-slate-600"
-                        )}
-                      >
-                        <span className={cn("px-2.5 py-0.5 rounded-full text-[8.5px] font-black tracking-wide uppercase shadow-sm", nwStyles.badge)}>
-                          {nw}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Recipient Phone Number */}
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-wider block ml-1">Recipient Phone Number</label>
-                <div className="relative font-sans">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Phone size={18} />
-                  </div>
-                  <input
-                    required
-                    type="tel"
-                    placeholder="e.g. 08123456789"
-                    value={airtimePhone}
-                    onChange={(e) => setAirtimePhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
-                  />
-                </div>
-              </div>
-
-              {/* Amount Inputs */}
-              <div className="space-y-3">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-wider block ml-1">Recharge Amount (₦)</label>
-                <div className="relative font-sans">
-                  <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-slate-400 text-lg">₦</span>
-                  <input
-                    required
-                    type="number"
-                    min="50"
-                    max="50000"
-                    placeholder="100 - 50,000"
-                    value={airtimeAmount}
-                    onChange={(e) => setAirtimeAmount(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
-                  />
-                </div>
-
-                {/* Quick amount chips */}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {[100, 200, 500, 1000, 2000, 5000].map((amt) => (
-                    <button
-                      type="button"
-                      key={amt}
-                      onClick={() => setAirtimeAmount(String(amt))}
-                      className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-slate-700 rounded-xl text-xs font-bold transition-all"
-                    >
-                      ₦{amt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Balance Check Summary */}
-              {airtimeAmount && Number(airtimeAmount) > 0 && (
-                <div className={cn(
-                  "flex items-center gap-3 p-4 rounded-xl text-xs border font-sans",
-                  user.balance >= Number(airtimeAmount) 
-                    ? "bg-green-50/50 border-green-200 text-green-800 text-green-800" 
-                    : "bg-rose-50/50 border-rose-200 text-rose-800 text-rose-800"
-                )}>
-                  <AlertCircle size={18} className={cn("flex-shrink-0", user.balance >= Number(airtimeAmount) ? "text-green-600" : "text-rose-600")} />
-                  <div>
-                    <p className="font-bold">Transaction Pre-check</p>
-                    <p className="text-[11px] opacity-90 mt-0.5 font-semibold">
-                      Your balance: <strong>{formatCurrency(user.balance)}</strong>. 
-                      {user.balance >= Number(airtimeAmount) 
-                        ? " Sufficient wallet funds available to complete." 
-                        : " Warning: Insufficient balance. Please fund wallet first."
-                      }
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Pay Button */}
-              <button
-                type="submit"
-                disabled={!airtimeNetwork || !airtimePhone || !airtimeAmount || Number(airtimeAmount) <= 0 || user.balance < Number(airtimeAmount)}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-indigo-200/60 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
-              >
-                Continue to Payment
-              </button>
-            </form>
-          </div>
-        )}
+      <div class="service-card">
+        <div class="service-ic bg-mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M12 18v3"/></svg></div>
+        <div><b>Cable TV</b><br><span>GOtv, DStv, StarTimes</span></div>
       </div>
-
-      {/* Modern Services Grid */}
-      <div>
-        <h3 className="text-sm font-black uppercase tracking-[0.1em] mb-4 text-slate-800 flex items-center gap-2">
-          <span>⚡</span> Quick Billing Services
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
-          <QuickAction onClick={() => setTab('buy-data')} icon={<Wifi />} label="Data Bundles" color="blue" />
-          <QuickAction onClick={() => setTab('buy-airtime')} icon={<Sparkles />} label="Airtime Top-Up" color="purple" />
-          <QuickAction onClick={() => setTab('cable')} icon={<Monitor />} label="Cable TV" color="green" />
-          <QuickAction onClick={() => setTab('electricity')} icon={<Lightbulb />} label="Electricity" color="amber" />
-          <QuickAction onClick={() => setTab('bills', 'exam')} icon={<GraduationCap />} label="Exam PINs" color="orange" />
-          <QuickAction onClick={() => setTab('betting')} icon={<Dices />} label="Betting Top-Up" color="red" />
-        </div>
+      <div class="service-card">
+        <div class="service-ic bg-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></div>
+        <div><b>Electricity</b><br><span>Prepaid & postpaid tokens</span></div>
       </div>
-
-      {/* Recent Transactions */}
-      <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-          <h3 className="font-bold text-slate-800">Recent Transactions</h3>
-          <button onClick={() => setTab('history')} className="text-indigo-600 text-sm font-bold hover:underline cursor-pointer">View All</button>
-        </div>
-        <div className="divide-y divide-slate-50">
-          {transactions.slice(0, 4).map(tx => (
-            <TransactionItem 
-              key={tx.id}
-              label={tx.description} 
-              date={new Date(tx.createdAt).toLocaleDateString()} 
-              amount={tx.type === 'funding' ? tx.amount : -tx.amount} 
-              status={tx.status} 
-              onClick={() => onSelectTx?.(tx)}
-            />
-          ))}
-          {transactions.length === 0 && (
-            <div className="p-8 text-center text-slate-400 text-sm">No recent transactions.</div>
-          )}
-        </div>
+      <div class="service-card">
+        <div class="service-ic bg-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4Z"/></svg></div>
+        <div><b>Exam pins</b><br><span>WAEC, NECO, JAMB</span></div>
       </div>
-
-      {/* Instant Select-Plan and Purchase Modal */}
-      <AnimatePresence>
-        {selectedPlan && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedPlan(null)}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-
-            {/* Modal Body */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10"
-            >
-              {/* Header */}
-              <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <div className={cn("w-10 h-10 rounded-full flex items-center justify-center text-white", {
-                    'bg-yellow-400': selectedPlan.network === 'MTN',
-                    'bg-red-600': selectedPlan.network === 'Airtel',
-                    'bg-green-600': selectedPlan.network === 'Glo',
-                    'bg-emerald-800': selectedPlan.network === '9mobile'
-                  })}>
-                    <Smartphone size={20} />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-slate-900">Purchase {selectedPlan.network} Bundle</h4>
-                    <p className="text-xs text-slate-400 font-medium font-sans">Fast automatic delivery</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setSelectedPlan(null)}
-                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Form Content */}
-              <form onSubmit={handleInstantPurchase} className="p-8 space-y-6">
-                {/* Plan Info Details card */}
-                <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl flex justify-between items-center">
-                  <div>
-                    <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Plan Name</p>
-                    <p className="font-extrabold text-slate-800 text-lg">{selectedPlan.name}</p>
-                    <p className="text-xs text-slate-500 font-sans">Duration: {selectedPlan.duration || '30 Days'}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Price</p>
-                    <p className="text-2xl font-black text-indigo-600 tracking-tight font-sans">
-                      {formatCurrency(selectedPlan.price)}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Input Recipient Phone Number */}
-                <div className="space-y-2">
-                  <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Target Phone Number</label>
-                  <div className="relative font-sans">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                      <Phone size={18} />
-                    </div>
-                    <input
-                      required
-                      type="tel"
-                      placeholder="e.g. 08123456789"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-6 py-4 font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600 text-lg"
-                    />
-                  </div>
-                </div>
-
-                {/* Balance validation indicator */}
-                <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-indigo-50/50 border border-indigo-100 text-indigo-800">
-                  <AlertCircle size={18} className="text-indigo-600 flex-shrink-0" />
-                  <div>
-                    <p className="font-bold font-sans">Wallet Balance Check</p>
-                    <p className="text-[11px] text-indigo-700/80 font-sans">
-                      Current balance: <strong>{formatCurrency(user.balance)}</strong>. 
-                      {user.balance >= selectedPlan.price ? " Balance is sufficient!" : " Insufficient balance. Please fund."}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Submit button */}
-                <button
-                  type="submit"
-                  disabled={isSubmitting || user.balance < selectedPlan.price}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all shadow-xl shadow-indigo-200/60 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? "Processing Transaction..." : `Pay ${formatCurrency(selectedPlan.price)}`}
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Airtime Confirmation Modal */}
-        {showAirtimeConfirmModal && airtimeNetwork && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAirtimeConfirmModal(false)}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-6 space-y-6"
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
-                  <AlertCircle size={24} />
-                </div>
-                <div className="space-y-1 bg-white">
-                  <h4 className="font-extrabold text-slate-900 text-lg">Confirm Airtime Recharge</h4>
-                  <p className="text-xs text-slate-500 font-medium">Please verify numbers and amounts carefully.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowAirtimeConfirmModal(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors ml-auto"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-3 font-sans">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">Type</span>
-                  <span className="font-extrabold text-slate-800">Airtime Purchase</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">Network</span>
-                  <span className="font-extrabold text-slate-800">{airtimeNetwork}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">Phone</span>
-                  <span className="font-mono font-extrabold text-slate-800">{airtimePhone}</span>
-                </div>
-                <div className="pt-3 border-t border-slate-200/60 flex justify-between items-center text-base">
-                  <span className="text-slate-500 font-extrabold text-sm uppercase tracking-wider">Charge Amount</span>
-                  <span className="text-xl font-black text-indigo-600 tracking-tight">
-                    {formatCurrency(Number(airtimeAmount))}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAirtimeConfirmModal(false)}
-                  className="bg-slate-55 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5 transition-all text-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={isBuyingAirtime}
-                  onClick={handleInstantAirtimePurchase}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 transition-all shadow-lg shadow-indigo-200/60 text-sm disabled:opacity-55"
-                >
-                  {isBuyingAirtime ? "Sending..." : "Confirm & Recharge"}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Dynamic Paystack Automated Wallet Funding Modal */}
-        {showFundModal && (
-          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            {/* Backdrop cover overlay */}
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={() => setShowFundModal(false)}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-
-            {/* Modal Body */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden relative border border-slate-100 shadow-2xl z-10"
-            >
-              {/* Header */}
-              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-white border-2 border-black flex items-center justify-center text-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                    <Wallet size={20} />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-slate-900 uppercase tracking-tight text-sm">
-                      Select Payment Channel
-                    </h4>
-                    <p className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">
-                      Instantly credit your wallet balance
-                    </p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowFundModal(false)}
-                  className="p-2 border-2 border-black bg-white text-black hover:bg-slate-100 rounded-xl transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              {/* Accounts Content List */}
-              <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto bg-white">
-                <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-6 font-sans">
-                  <div className="text-slate-700 text-xs leading-relaxed font-bold bg-indigo-50/70 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
-                    🦋 Fund your secure wallet instantly with **Flutterwave**. Your balance is credited automatically across our cloud nodes upon secure server validation.
-                  </div>
-
-                    {/* Amount Input */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">Top-up Amount (₦)</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-700 font-black text-lg">₦</span>
-                        <input
-                          type="text"
-                          required
-                          value={opayAmount}
-                          onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
-                          placeholder="e.g. 2000"
-                          className="w-full bg-slate-50 border-2 border-black focus:border-[#5B21B6] rounded-xl py-4 pl-10 pr-4 font-mono font-extrabold text-slate-900 text-lg focus:outline-none transition-all placeholder:text-slate-300"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Quick presets */}
-                    <div className="grid grid-cols-4 gap-2">
-                      {['1000', '2000', '5000', '10000'].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setOpayAmount(preset)}
-                          className={cn(
-                            "py-2.5 px-1 text-xs font-black border-2 border-black rounded-xl transition-all font-mono cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none",
-                            opayAmount === preset
-                              ? "bg-[#FFCC00] text-black"
-                              : "bg-white text-slate-600 hover:text-slate-900"
-                          )}
-                        >
-                          ₦{Number(preset).toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Balance forecast */}
-                    <div className="p-4 rounded-xl bg-slate-50 border-2 border-black space-y-2 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      <div className="flex justify-between items-center text-xs font-bold">
-                        <span className="text-slate-500 font-sans uppercase">Current Balance:</span>
-                        <span className="font-extrabold font-mono text-slate-900">{formatCurrency(user.balance)}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs border-t border-slate-200 pt-2 font-bold">
-                        <span className="text-[#5B21B6] uppercase">Projected Balance:</span>
-                        <span className="font-black font-mono text-[#5B21B6] text-sm">
-                          {formatCurrency(user.balance + Number(opayAmount || 0))}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Submit button */}
-                    <button
-                      type="submit"
-                      disabled={fwLoading || !opayAmount || Number(opayAmount) <= 0}
-                      className="w-full bg-black border-2 border-black hover:bg-slate-800 disabled:bg-slate-300 disabled:border-slate-300 text-white font-black uppercase tracking-wider py-4 rounded-xl transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer text-xs"
-                    >
-                      {fwLoading ? (
-                        <>
-                          <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                          <span>INITIALIZING FLUTTERWAVE GATEWAY...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>🦋 INITIALIZE FLUTTERWAVE CHECKOUT</span>
-                        </>
-                      )}
-                    </button>
-
-
-                    <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-[#DBE2EF] border-2 border-black text-slate-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                      <AlertCircle size={18} className="text-[#5B21B6] flex-shrink-0" />
-                      <div>
-                        <p className="font-extrabold block">Instant Verification</p>
-                        <p className="text-[10px] leading-relaxed font-bold text-slate-700">
-                          Flutterwave verifies transactions live. Do not refresh or exit checkout mid-payment.
-                        </p>
-                      </div>
-                    </div>
-                  </form>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Wallet Transfer Modal */}
-        {showTransferModal && (
-          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={() => { setShowTransferModal(false); setTransferStep('input'); }}
-              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden relative border border-slate-100 shadow-2xl z-10 p-8 space-y-6"
-            >
-              <div className="flex justify-between items-center">
-                <h4 className="font-extrabold text-slate-900 text-xl">Transfer Funds</h4>
-                <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="p-2 text-slate-400 hover:bg-slate-50 rounded-full">
-                  <X size={20} />
-                </button>
-              </div>
-
-              {transferStep === 'input' && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient Referral Code</label>
-                    <input
-                      value={transferUid}
-                      onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
-                      placeholder="e.g. NOROYA-25J7Q"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Amount (₦)</label>
-                    <input
-                      type="number"
-                      value={transferAmount}
-                      onChange={(e) => setTransferAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
-                    />
-                  </div>
-                  <button
-                    onClick={handleLookupRecipient}
-                    disabled={transferLoading || !transferUid || !transferAmount}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
-                  >
-                    {transferLoading ? "Checking..." : "Continue"}
-                  </button>
-                </div>
-              )}
-
-              {transferStep === 'confirm' && transferRecipient && (
-                <div className="space-y-4">
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-2">
-                    <p className="text-xs text-slate-400 font-bold uppercase">Sending to</p>
-                    <p className="font-extrabold text-slate-900">{transferRecipient.full_name || transferRecipient.email}</p>
-                    <p className="text-xs text-slate-500">{transferRecipient.uid}</p>
-                    <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
-                      <span className="text-xs text-slate-400 font-bold uppercase">Amount</span>
-                      <span className="text-xl font-black text-indigo-600">₦{Number(transferAmount).toLocaleString()}</span>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => setTransferStep('input')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5">
-                      Back
-                    </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
-                      {transferLoading ? "Sending..." : "Confirm"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-const imgToast = (item: string) => {
-  toast(`${item === 'cable' ? 'Cable TV decoder recharge' : 'Prepaid Electricity token purchase'} is coming soon!`, { id: item + '-toast', icon: 'ℹ️' });
-};
-
-function QuickAction({ icon, label, color, onClick }: { icon: React.ReactNode, label: string, color: string, onClick: () => void }) {
-  const colorMap: any = {
-    blue: "bg-indigo-50 text-indigo-600",
-    amber: "bg-green-50 text-green-600",
-    purple: "bg-purple-100/60 text-purple-700",
-    green: "bg-emerald-50 text-emerald-700",
-    red: "bg-rose-50 text-rose-600",
-    orange: "bg-orange-50 text-orange-600",
-  };
-
-  return (
-    <button 
-      onClick={onClick} 
-      className="flex flex-col items-center justify-between gap-3 p-5 rounded-[2rem] bg-white border border-slate-100 text-slate-800 shadow-sm hover:shadow-md hover:border-slate-200 transition-all group select-none cursor-pointer w-full"
-    >
-      <div className={cn("p-4 rounded-2xl font-bold tracking-wider group-hover:scale-105 transition-transform shrink-0", colorMap[color])}>
-        {React.cloneElement(icon as React.ReactElement, { size: 24 })}
-      </div>
-      <span className="text-xs font-extrabold uppercase tracking-wider text-center block mt-1 leading-tight text-slate-700">{label}</span>
-    </button>
-  );
-}
-
-
-function TransactionItem({ label, date, amount, status, reference, onClick }: { label: string, date: string, amount: number, status: string, reference?: string, key?: string | number, onClick?: () => void }) {
-  return (
-    <div onClick={onClick} className={cn("p-4 flex items-center justify-between hover:bg-slate-100/50 transition-colors", onClick && "cursor-pointer")}>
-      <div className="flex items-center gap-4">
-        <div className={cn(
-          "w-10 h-10 rounded-full flex items-center justify-center",
-          amount > 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600 bg-red-50/70 text-red-600"
-        )}>
-          {amount > 0 ? <ArrowDownLeft size={20} /> : <ArrowUpRight size={20} />}
-        </div>
-        <div>
-          <p className="font-bold text-sm">{label}</p>
-          <div className="flex items-center gap-2 mt-0.5 font-sans text-xs">
-            <p className="text-slate-500">{date}</p>
-            {reference && (
-              <>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
-                <p className="text-[10px] font-mono text-slate-400 font-bold uppercase">Ref: {reference}</p>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="text-right">
-        <p className={cn("font-bold text-sm", amount > 0 ? "text-green-600" : "text-slate-900")}>
-          {amount > 0 ? '+' : ''}{formatCurrency(Math.abs(amount))}
-        </p>
-        <p className={cn(
-          "text-[10px] uppercase font-bold",
-          status === 'completed' ? 'text-green-500' : 'text-red-500'
-        )}>{status}</p>
+      <div class="service-card">
+        <div class="service-ic bg-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4M5 3h14v4a7 7 0 0 1-14 0V3Z"/></svg></div>
+        <div><b>Betting top-up</b><br><span>SportyBet, Bet9ja, 1xBet</span></div>
       </div>
     </div>
-  );
-}
 
+    <div class="lower-grid">
+      <div class="panel">
+        <div class="section-head" style="margin-top:0;">
+          <h3>Recent transactions</h3>
+          <a href="#">View all</a>
+        </div>
 
-function ServicePlaceholder({ name }: { name: string }) {
-  return (
-    <div className="bg-white rounded-[2rem] p-12 border border-slate-100 text-center space-y-4">
-      <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600">
-        <Smartphone size={40} />
+        <div class="tx-row">
+          <div class="tx-ic bg-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12a7 7 0 0 1 14 0"/></svg></div>
+          <div class="tx-mid"><b>2GB data — MTN SME</b><span>090•••4521 · Today, 11:32 AM</span></div>
+          <div><span class="tx-amt out">−₦1,150</span><span class="tx-status">Delivered</span></div>
+        </div>
+        <div class="tx-row">
+          <div class="tx-ic bg-mint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></div>
+          <div class="tx-mid"><b>Wallet funding</b><span>Bank transfer · Today, 10:58 AM</span></div>
+          <div><span class="tx-amt in">+₦10,000</span><span class="tx-status">Successful</span></div>
+        </div>
+        <div class="tx-row">
+          <div class="tx-ic bg-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></div>
+          <div class="tx-mid"><b>Electricity token — IKEDC</b><span>4521 •••• 09 · Yesterday, 6:14 PM</span></div>
+          <div><span class="tx-amt out">−₦5,000</span><span class="tx-status">Delivered</span></div>
+        </div>
+        <div class="tx-row">
+          <div class="tx-ic bg-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></div>
+          <div class="tx-mid"><b>Airtime — Glo</b><span>080•••7712 · Yesterday, 2:47 PM</span></div>
+          <div><span class="tx-amt out">−₦500</span><span class="tx-status">Delivered</span></div>
+        </div>
       </div>
-      <h3 className="text-2xl font-bold">{name}</h3>
-      <p className="text-slate-500">This feature is being connected to the service provider API.</p>
-      <button className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-indigo-200/60">
-        Refresh Status
+
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <div class="panel">
+          <div class="section-head" style="margin-top:0;"><h3>Provider status</h3></div>
+          <div class="provider-row"><span class="name">MTN SME</span><span class="status-ok"><span class="dot"></span>Online</span></div>
+          <div class="provider-row"><span class="name">Glo Data</span><span class="status-ok"><span class="dot"></span>Online</span></div>
+          <div class="provider-row"><span class="name">Airtel Gifting</span><span class="status-ok"><span class="dot"></span>Online</span></div>
+          <div class="provider-row"><span class="name">9mobile Data</span><span class="status-ok"><span class="dot"></span>Online</span></div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head" style="margin-top:0;"><h3>Supported zones</h3></div>
+          <div class="zones">
+            <span class="zone-pill">Abuja</span><span class="zone-pill">Ikeja</span><span class="zone-pill">Eko</span>
+            <span class="zone-pill">Benin</span><span class="zone-pill">Enugu</span><span class="zone-pill">Kano</span>
+            <span class="zone-pill">Jos</span><span class="zone-pill">Yola</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Transfer modal -->
+<div class="modal-scrim" id="transferScrim" onclick="if(event.target===this) closeTransfer()">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Transfer wallet funds</h3>
+      <button class="modal-close" onclick="closeTransfer()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
     </div>
-  );
-}
+
+    <div class="modal-note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+      Transfers go instantly to any NORODATA username. Double-check the recipient — transfers can't be reversed.
+    </div>
+
+    <form onsubmit="return false;">
+      <div class="field">
+        <label>Recipient username</label>
+        <div class="input-wrap">
+          <input type="text" placeholder="e.g. faruq_ibrahim" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Amount (₦)</label>
+        <div class="input-wrap">
+          <input type="number" placeholder="0.00" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Transaction PIN</label>
+        <div class="input-wrap">
+          <input type="password" maxlength="4" placeholder="4-digit PIN" required>
+        </div>
+      </div>
+      <button class="btn-primary" type="submit">
+        Send transfer
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- WhatsApp support -->
+<a class="wa-fab" href="https://wa.me/2340000000000" target="_blank" rel="noopener" title="Chat with the admin on WhatsApp">
+  <span class="wa-ic">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.33 4.95L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.96 6.45 17.5 2 12.04 2Zm0 18.02h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.14.82.84-3.06-.2-.31a8.2 8.2 0 0 1-1.27-4.38c0-4.55 3.7-8.24 8.26-8.24 2.2 0 4.28.86 5.84 2.42a8.19 8.19 0 0 1 2.42 5.83c0 4.55-3.71 8.25-8.26 8.25Zm4.53-6.18c-.25-.12-1.46-.72-1.69-.8-.23-.08-.39-.12-.56.12-.16.25-.64.8-.78.96-.14.17-.29.19-.53.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.24-1.47-1.38-1.72-.15-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.12-.15.16-.25.24-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.42h-.48c-.16 0-.43.06-.65.31-.23.25-.86.84-.86 2.04s.88 2.37 1 2.53c.12.17 1.74 2.65 4.22 3.72.59.25 1.05.4 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.46-.6 1.66-1.17.21-.58.21-1.08.15-1.18-.06-.1-.23-.16-.48-.28Z"/></svg>
+  </span>
+  <span class="wa-text">Talk to admin<small>Complaints & support · WhatsApp</small></span>
+</a>
+
+<script>
+  function openMenu(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('scrim').classList.add('show'); }
+  function closeMenu(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('scrim').classList.remove('show'); }
+  function openTransfer(){ document.getElementById('transferScrim').classList.add('show'); }
+  function closeTransfer(){ document.getElementById('transferScrim').classList.remove('show'); }
+</script>
+
+</body>
+</html>
