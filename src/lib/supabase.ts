@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 
 const getEnv = (key: string): string | null => {
   if (typeof window !== "undefined") {
@@ -61,4 +62,10 @@ if (isServer && serviceRoleKey) {
   console.log("Supabase Client initialized with Anon Key on Server-side (No service role key provided).");
 }
 
-export const supabase = createClient(supabaseUrl, apiKey);
+// Node.js < 22 (Vercel's runtime) lacks native WebSocket support, which the
+// Supabase realtime client requires and throws a fatal error over at
+// construction time if not provided. Supply the `ws` package as the
+// transport on the server; browsers already have native WebSocket and
+// bundlers substitute ws's `browser` field stub automatically, so this is
+// safe to import unconditionally in this isomorphic file.
+export const supabase = createClient(supabaseUrl, apiKey, isServer ? { realtime: { transport: ws as any } } : undefined);
