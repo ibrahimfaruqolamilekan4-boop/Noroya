@@ -984,13 +984,14 @@ async function startServer() {
       // Record the pending transaction now that funds are locked.
       let pendingTxId: number | null = null;
       try {
-        const { data: pendingTx } = await supabase.from('transactions').insert({
-          user_id: pgUuid, userId: pgUuid,
+        const { data: pendingTx, error: pendingTxErr } = await supabase.from('transactions').insert({
+          user_id: pgUuid,
           type: finalType, amount: finalAmount, status: 'pending',
           description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-          reference: localRef, createdAt: new Date().toISOString(),
+          reference: localRef, created_at: new Date().toISOString(),
         }).select('id').maybeSingle();
         pendingTxId = pendingTx?.id ?? null;
+        if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (txErr: any) {
         console.warn("[VTU pending transaction insert warning]:", txErr.message || txErr);
       }
@@ -1215,14 +1216,13 @@ async function startServer() {
         try {
           await supabase.from('transactions').insert([{
             user_id: userUUID,
-            userId: userUUID,
             user_email: email || '',
             type: 'Data Purchase',
             amount: chargeAmount,
             status: 'success',
             recipient: phoneNumber,
             reference: bigisubResponseData.id || bigisubResponseData.reference || 'BIGISUB_TX',
-            createdAt: new Date().toISOString()
+            created_at: new Date().toISOString()
           }]);
         } catch (dbErr) {
           console.warn("[Vendor Buy-Data] Failed to insert transaction record:", dbErr);
@@ -1397,14 +1397,13 @@ async function startServer() {
             .from('transactions')
             .insert([{
               user_id: profile.id,
-              userId: profile.id,
               user_email: email,
               type: type,
               amount: deductAmount,
               recipient: phoneNumber,
               status: 'success',
               reference: mozoResponseData.id || mozoResponseData.reference || 'MOZOSUBZ_TX',
-              createdAt: new Date().toISOString()
+              created_at: new Date().toISOString()
             }]);
         } catch (dbErr) {
           console.warn("[Vendor Recharge] Failed to insert transaction record:", dbErr);
@@ -1878,14 +1877,13 @@ if (Object.keys(updateData).length <= 1) {
       try {
         const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
         await supabase.from('transactions').insert({
-          userId: pgUuid,
           user_id: pgUuid,
           type: service.service_type,
           amount: finalPrice,
           status: 'pending',
           description: `${service.provider_or_network} ${service.item_name} to ${finalPhone || 'Utility'}`,
           reference: localReference,
-          createdAt: new Date().toISOString()
+          created_at: new Date().toISOString()
         });
       } catch (txErr: any) {
         console.warn("[Supabase Utility pending transaction logging skipped]:", txErr.message || txErr);
@@ -2164,13 +2162,14 @@ if (Object.keys(updateData).length <= 1) {
       // ── Log pending transaction, keep the real auto-generated bigint id for later updates ──
       let txDbId: number | null = null;
       try {
-        const { data: pendingTx } = await supabase.from('transactions').insert({
-          user_id: pgUuid, userId: pgUuid,
+        const { data: pendingTx, error: pendingTxErr } = await supabase.from('transactions').insert({
+          user_id: pgUuid,
           type: 'airtime', amount: chargeAmount, status: 'pending',
           description: `Airtime VTU: ₦${parsedAmount} ${network} → ${finalPhone}`,
-          reference: localRef, createdAt: new Date().toISOString()
+          reference: localRef, created_at: new Date().toISOString()
         }).select('id').maybeSingle();
         txDbId = pendingTx?.id ?? null;
+        if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (_) { /* non-fatal */ }
 
       // ── Call the provider now that funds are safely locked ────
@@ -2571,8 +2570,8 @@ if (Object.keys(updateData).length <= 1) {
         const promises = recordsToInsert.map(p => {
           const colName = p.type === "data" ? "data_plans" : (p.type === "exam" || p.type === "education" ? "exam_plans" : "utility_plans");
           return supabase.from('services_config').upsert({ bigisub_identifier_id: p.id, ...p,
-              createdAt: new Date().toISOString(),
-              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }, { onConflict: 'bigisub_identifier_id' });
+              created_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }, { onConflict: 'bigisub_identifier_id' });
         });
         await Promise.all(promises);
       } catch (fbErr) {
@@ -2863,13 +2862,14 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
       let pendingTxId: number | null = null;
       try {
-        const { data: pendingTx } = await supabase.from('transactions').insert({
-          user_id: pgUuid, userId: pgUuid,
+        const { data: pendingTx, error: pendingTxErr } = await supabase.from('transactions').insert({
+          user_id: pgUuid,
           type: finalType, amount: finalAmount, status: 'pending',
           description: `${finalNetwork} ${finalPlan || finalType} to ${finalPhone}`,
-          reference: localRef, createdAt: new Date().toISOString(),
+          reference: localRef, created_at: new Date().toISOString(),
         }).select('id').maybeSingle();
         pendingTxId = pendingTx?.id ?? null;
+        if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (txErr: any) {
         console.warn("[VTU/purchase pending transaction insert warning]:", txErr.message || txErr);
       }
@@ -3572,12 +3572,12 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           );
           try {
             await supabase.from('transactions').insert({
-              userId: profile.id, user_id: profile.id,
+              user_id: profile.id,
               user_email: profile.email || userEmail,
               type: reqType, amount: finalPrice, status: 'undebited_delivery',
               description: `RECONCILE: ${descriptionText} -- delivered but wallet debit failed`,
               reference: referenceCode, platform: "bigisub", payment_method: "wallet",
-              created_at: new Date().toISOString(), createdAt: new Date().toISOString(),
+              created_at: new Date().toISOString(),
             });
           } catch (_) { /* non-fatal -- the console.error above is the real record */ }
 
@@ -3589,7 +3589,6 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
         try {
           await supabase.from('transactions').insert({
-              userId: profile.id,
             user_id: profile.id,
             user_email: profile.email || userEmail,
             type: reqType,
@@ -3600,7 +3599,6 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
             platform: "bigisub",
             payment_method: "wallet",
             created_at: new Date().toISOString(),
-            createdAt: new Date().toISOString()
           });
         } catch (txInsertErr: any) {
           console.error("[Supabase Audit Log Insertion Error]:", txInsertErr.message);
@@ -4162,12 +4160,10 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
             reference: String(txId),
             // Compatibility fields to make sure the app's history dashboard also displays it
             user_id: profile.id,
-            userId: profile.id,
             platform: "flutterwave",
             payment_method: "flutterwave",
             description: `Flutterwave deposit of NGN ${amount}`,
             created_at: new Date().toISOString(),
-            createdAt: new Date().toISOString()
           });
 
         if (insertErr) {
@@ -4245,15 +4241,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           try {
             await supabase.from('transactions').insert({
               user_id: pgUuid,
-              userId: pgUuid,
               type: type || 'funding',
               amount: numericAmount,
               reference: reference || `MOZO-REF-${Date.now()}`,
               status: 'success',
               platform: 'mozosubz',
               description: `Mozosubz wallet funding of ₦${numericAmount}`,
-              createdAt: new Date().toISOString(),
-              created_at: new Date().toISOString()
+              created_at: new Date().toISOString(),
             });
             console.log(`[Mozosubz Webhook] Transaction logged successfully: ${reference}`);
           } catch (txErr: any) {
