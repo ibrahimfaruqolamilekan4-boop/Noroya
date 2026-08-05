@@ -18,3 +18,4 @@ View your app in AI Studio: https://ai.studio/apps/471215e8-9d30-45e7-b1df-edaf4
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+# Noroya Updates
