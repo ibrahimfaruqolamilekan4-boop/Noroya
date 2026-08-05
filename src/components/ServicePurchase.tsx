@@ -486,20 +486,25 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
       {type === 'data' ? (
         network && (
           <div className="space-y-3">
-            <label className="text-sm font-semibold text-slate-300 block">Select Data Bundle</label>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <label className="text-sm font-extrabold text-slate-200 block">Select Data Bundle</label>
+              <span className="text-[11px] bg-indigo-500/10 text-indigo-400 font-bold px-3 py-1 rounded-full border border-indigo-500/20">
+                ⚡ Automated API Delivery
+              </span>
+            </div>
             {fetchingPlans ? (
-              <div className="flex flex-col items-center justify-center py-12 space-y-3 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
-                <Loader2 className="animate-spin text-slate-500" size={32} />
-                <span className="text-sm text-slate-500 font-medium">Fetching best-priced plans...</span>
+              <div className="flex flex-col items-center justify-center py-12 space-y-3 bg-slate-900/60 border border-slate-800 rounded-3xl">
+                <Loader2 className="animate-spin text-indigo-400" size={32} />
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Syncing live plans...</span>
               </div>
             ) : availablePlans.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 px-4 border border-slate-800/80 bg-slate-900/40 rounded-2xl text-center space-y-2">
-                <AlertTriangle className="text-slate-600" size={36} />
-                <h3 className="text-sm font-semibold text-slate-400">No active plans found</h3>
+              <div className="flex flex-col items-center justify-center py-12 px-4 border border-slate-800 bg-slate-900/60 rounded-3xl text-center space-y-2">
+                <AlertTriangle className="text-amber-400" size={36} />
+                <h3 className="text-sm font-bold text-slate-300">No active plans found</h3>
                 <p className="text-xs text-slate-500 max-w-xs">We currently do not have active plans under this category. Please check other options.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
                 {availablePlans.map((plan) => {
                   const finalPrice = getPlanPriceForUser(plan, user);
                   const isSelected = selectedPlan?.id === plan.id;
@@ -510,34 +515,30 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                       type="button"
                       onClick={() => setSelectedPlan(plan)}
                       className={cn(
-                        "relative flex flex-col justify-between p-4 rounded-2xl border text-left transition-all duration-200 min-h-[110px] bg-slate-800/40 hover:bg-slate-800/60",
+                        "relative flex flex-col justify-between p-4.5 rounded-2xl border text-left transition-all duration-200 min-h-[120px] bg-slate-900/80 hover:bg-slate-900 shadow-sm",
                         isSelected 
-                          ? `ring-2 ${activeTheme?.ring} ${activeTheme?.border} bg-slate-800/80` 
-                          : "border-slate-800 hover:border-slate-700/50"
+                          ? `ring-2 ${activeTheme?.ring} ${activeTheme?.border} bg-slate-900 border-indigo-500` 
+                          : "border-slate-800/80 hover:border-slate-700"
                       )}
                     >
                       {isSelected && (
-                        <span className={cn("absolute top-3 right-3 rounded-full p-0.5", activeTheme?.bg, activeTheme?.activeText)}>
-                          <CheckCircle2 size={10} className="stroke-[3]" />
+                        <span className={cn("absolute top-3 right-3 rounded-full p-1", activeTheme?.bg, activeTheme?.activeText)}>
+                          <CheckCircle2 size={12} className="stroke-[3]" />
                         </span>
                       )}
                       
-                      <div className="space-y-1 pr-4">
-                        <span className="text-sm font-bold text-white line-clamp-2 block leading-snug">
+                      <div className="space-y-1.5 pr-4">
+                        <span className="text-sm font-black text-white line-clamp-2 block leading-snug">
                           {plan.name}
                         </span>
-                        <span className="text-[10px] text-slate-500 font-medium block">
+                        <span className="text-[11px] text-slate-400 font-medium block">
                           {plan.validity_days || '30 days'} validity
                         </span>
-                        {(plan as any)?.metadata?.eligibility_warning && (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded mt-1">
-                            <AlertTriangle size={9} /> Eligibility varies
-                          </span>
-                        )}
                       </div>
 
-                      <div className="mt-3">
-                        <span className={cn("text-base font-extrabold block", isSelected ? activeTheme?.text : "text-emerald-400")}>
+                      <div className="mt-4 flex items-baseline justify-between pt-2 border-t border-slate-800/60">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase">Price</span>
+                        <span className={cn("text-base font-black font-mono", isSelected ? activeTheme?.text : "text-emerald-400")}>
                           {formatCurrency(finalPrice)}
                         </span>
                       </div>
@@ -550,20 +551,45 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         )
       ) : (
         network && (
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-300 block">Enter Amount (₦)</label>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-lg">₦</span>
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-extrabold text-slate-200 block">Enter Airtime Amount (₦)</label>
+              <span className="text-[11px] bg-emerald-500/10 text-emerald-400 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                ⚡ Instant 2% Cashback Bonus
+              </span>
+            </div>
+            
+            {/* Quick Amount Selector Pills */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {[100, 200, 500, 1000, 2000, 5000].map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => setAirtimeAmount(String(amt))}
+                  className={cn(
+                    "py-2.5 px-3 rounded-xl text-xs font-black font-mono transition-all border cursor-pointer",
+                    airtimeAmount === String(amt)
+                      ? "bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-900/40"
+                      : "bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700 hover:bg-slate-850"
+                  )}
+                >
+                  ₦{amt.toLocaleString()}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative pt-1">
+              <span className="absolute left-4 top-[calc(50%+2px)] -translate-y-1/2 text-slate-400 font-bold text-lg">₦</span>
               <input
                 type="number"
-                placeholder="0.00"
+                placeholder="Enter custom amount (e.g. 1500)"
                 value={airtimeAmount}
                 onChange={(e) => setAirtimeAmount(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-800 focus:border-slate-700 rounded-2xl py-4 pl-10 pr-4 text-white placeholder-slate-500 font-bold text-lg focus:outline-none focus:ring-1 focus:ring-slate-700 transition-all duration-150"
+                className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-2xl py-4 pl-10 pr-4 text-white placeholder-slate-500 font-black font-mono text-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner"
               />
             </div>
-            <span className="text-[10px] text-slate-500 font-medium block px-1">
-              Minimum airtime value of ₦50 allowed per transaction.
+            <span className="text-[11px] text-slate-400 font-medium block px-1">
+              Minimum airtime value of ₦50 allowed per transaction. Delivered instantly.
             </span>
           </div>
         )

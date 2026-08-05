@@ -88,7 +88,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [selectedReceiptTx, setSelectedReceiptTx] = React.useState<Transaction | null>(null);
-  const [isDarkMode, setIsDarkMode] = React.useState(false);
+  const [isDarkMode, setIsDarkMode] = React.useState(true);
   const [showSupportHub, setShowSupportHub] = React.useState(false);
   const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
 
