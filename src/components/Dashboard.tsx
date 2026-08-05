@@ -42,7 +42,8 @@ import {
   RefreshCw,
   Download,
   Search,
-  Filter
+  Filter,
+  Clock
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
@@ -2368,28 +2369,8 @@ function DashboardOverview({
         </div>
       </div>
 
-      {/* Recent Transactions */}
-      <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
-        <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-          <h3 className="font-extrabold text-slate-900">Recent transactions</h3>
-          <button onClick={() => setTab('history')} className="text-indigo-600 text-xs font-black uppercase tracking-wider hover:underline cursor-pointer">View all</button>
-        </div>
-        <div className="divide-y divide-slate-50">
-          {transactions.slice(0, 4).map(tx => (
-            <TransactionItem 
-              key={tx.id}
-              label={tx.description} 
-              date={new Date(tx.createdAt).toLocaleDateString()} 
-              amount={tx.type === 'funding' ? tx.amount : -tx.amount} 
-              status={tx.status} 
-              onClick={() => onSelectTx?.(tx)}
-            />
-          ))}
-          {transactions.length === 0 && (
-            <div className="p-8 text-center text-slate-400 text-xs">No recent transactions.</div>
-          )}
-        </div>
-      </div>
+      {/* Supabase Transaction History Widget */}
+      <SupabaseTransactionHistoryWidget user={user} onSelectTx={onSelectTx} />
 
       {/* Provider Status & Supported Zones Grid */}
       <div className="grid md:grid-cols-2 gap-6">
@@ -2902,6 +2883,109 @@ function ServicePlaceholder({ name }: { name: string }) {
       <button className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-indigo-200/60">
         Refresh Status
       </button>
+    </div>
+  );
+}
+
+function SupabaseTransactionHistoryWidget({ user, onSelectTx }: { user: UserProfile, onSelectTx?: (tx: Transaction) => void }) {
+  const [txs, setTxs] = React.useState<Transaction[]>([]);
+  const [loading, setLoading] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    const userId = user?.uid || (user as any)?.id;
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(6)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          const normalized = data.map((row: any) => ({
+            ...row,
+            userId: row.user_id || row.userId,
+            createdAt: row.created_at || row.createdAt
+          }));
+          setTxs(normalized);
+        }
+        setLoading(false);
+      });
+  }, [user]);
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm text-center py-8">
+        <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto mb-2" />
+        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Syncing Supabase transactions...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+      <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <h3 className="font-extrabold text-slate-900">Recent transactions</h3>
+          <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-indigo-100">Supabase</span>
+        </div>
+        <button onClick={() => window.location.hash = '#history'} className="text-indigo-600 text-xs font-black uppercase tracking-wider hover:underline cursor-pointer">View all</button>
+      </div>
+      <div className="divide-y divide-slate-50">
+        {txs.map(tx => {
+          const status = (tx.status || 'success').toLowerCase();
+          const isSuccess = status === 'success' || status === 'delivered' || status === 'completed';
+          const isPending = status === 'pending' || status === 'processing';
+          const isFailed = status === 'failed' || status === 'error' || status === 'reversed';
+          
+          return (
+            <div key={tx.id || Math.random()} onClick={() => onSelectTx?.(tx)} className="p-4 hover:bg-slate-50/80 transition-colors flex items-center justify-between cursor-pointer">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-10 h-10 rounded-2xl flex items-center justify-center font-bold shrink-0",
+                  isSuccess && "bg-emerald-50 text-emerald-600",
+                  isPending && "bg-amber-50 text-amber-600",
+                  isFailed && "bg-rose-50 text-rose-600",
+                  !isSuccess && !isPending && !isFailed && "bg-indigo-50 text-indigo-600"
+                )}>
+                  {isSuccess && <CheckCircle2 size={18} />}
+                  {isPending && <Clock size={18} />}
+                  {isFailed && <AlertCircle size={18} />}
+                  {!isSuccess && !isPending && !isFailed && <History size={18} />}
+                </div>
+                <div>
+                  <h4 className="text-xs font-extrabold text-slate-900 line-clamp-1">{tx.description || tx.type || 'VTU Transaction'}</h4>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-slate-400 font-bold">{tx.createdAt ? new Date(tx.createdAt).toLocaleString() : 'Recent'}</span>
+                    <span className={cn(
+                      "text-[9px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider",
+                      isSuccess && "bg-emerald-100 text-emerald-800",
+                      isPending && "bg-amber-100 text-amber-800",
+                      isFailed && "bg-rose-100 text-rose-800"
+                    )}>
+                      {tx.status || 'success'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className={cn(
+                  "text-xs font-mono font-black",
+                  tx.type === 'funding' ? "text-emerald-600" : "text-slate-900"
+                )}>
+                  {tx.type === 'funding' ? '+' : '-'}{formatCurrency(tx.amount || 0)}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+        {txs.length === 0 && (
+          <div className="p-8 text-center text-slate-400 text-xs">No transactions recorded in Supabase yet.</div>
+        )}
+      </div>
     </div>
   );
 }
