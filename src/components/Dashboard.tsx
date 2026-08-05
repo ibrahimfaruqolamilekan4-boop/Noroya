@@ -1910,37 +1910,37 @@ function DashboardOverview({
     <div className="space-y-8">
       {/* Wallet Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Wallet Card */}
-        <div className="bg-slate-950 rounded-[2rem] p-6 text-white shadow-xl relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5 border border-slate-800/50" id="vtu_wallet_card">
-          <div className="absolute -top-12 -right-12 w-48 h-48 bg-indigo-600/10 rounded-full blur-xl pointer-events-none" />
-          <div className="absolute -bottom-16 -left-16 w-52 h-52 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
+        {/* Wallet Card - Exact Norodata Design */}
+        <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-[2.5rem] p-7 text-white shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[220px]" id="vtu_wallet_card">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
           <div className="relative z-10">
-            <span className="bg-amber-400 text-slate-900 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-4">
-              💰 Account Liquid Assets
-            </span>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Available Balance</p>
-            <h3 className="text-4xl font-extrabold tracking-tight mb-6 text-white">
+            <p className="text-blue-100 text-[11px] font-black uppercase tracking-widest mb-1.5 opacity-90">WALLET BALANCE</p>
+            <h3 className="text-4xl md:text-5xl font-black tracking-tight mb-6 text-white font-mono">
               {formatCurrency(currentBalance)}
-              {isUpdating && <span className="text-sm ml-2 animate-pulse"> → Updating</span>}
+              {isUpdating && <span className="text-xs ml-2 font-sans animate-pulse">Syncing...</span>}
             </h3>
           </div>
           
-          <div className="relative z-10 flex gap-3 flex-wrap">
+          <div className="relative z-10 flex gap-2.5 flex-wrap">
             <button 
               onClick={() => handleOpenFundModal()} 
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-indigo-900/40 select-none cursor-pointer"
+              className="bg-white hover:bg-blue-50 text-indigo-700 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md select-none cursor-pointer"
             >
-              <ArrowDownLeft size={16} /> Fund Wallet
+              <ArrowDownLeft size={15} /> Fund wallet
             </button>
             <button 
               onClick={() => setShowTransferModal(true)} 
-              className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
             >
-              Transfer
+              ⇄ Transfer
+            </button>
+            <button 
+              onClick={() => setTab('history')} 
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
+            >
+              View history
             </button>
           </div>
-          
-          <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-indigo-600/10 rounded-full border border-white/5 pointer-events-none" />
         </div>
 
         {/* Referrals Card */}
@@ -2356,23 +2356,23 @@ function DashboardOverview({
       {/* Modern Services Grid */}
       <div>
         <h3 className="text-sm font-black uppercase tracking-[0.1em] mb-4 text-slate-800 flex items-center gap-2">
-          <span>⚡</span> Quick Billing Services
+          <span>⚡</span> Quick billing services
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
-          <QuickAction onClick={() => setTab('buy-data')} icon={<Wifi />} label="Data Bundles" color="blue" />
-          <QuickAction onClick={() => setTab('buy-airtime')} icon={<Sparkles />} label="Airtime Top-Up" color="purple" />
-          <QuickAction onClick={() => setTab('cable')} icon={<Monitor />} label="Cable TV" color="green" />
-          <QuickAction onClick={() => setTab('electricity')} icon={<Lightbulb />} label="Electricity" color="amber" />
-          <QuickAction onClick={() => setTab('bills', 'exam')} icon={<GraduationCap />} label="Exam PINs" color="orange" />
-          <QuickAction onClick={() => setTab('betting')} icon={<Dices />} label="Betting Top-Up" color="red" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <QuickAction onClick={() => setTab('buy-data')} icon={<Wifi />} label="Data bundles" sublabel="All networks, best rates" color="blue" />
+          <QuickAction onClick={() => setTab('buy-airtime')} icon={<Sparkles />} label="Airtime top-up" sublabel="Instant credit, any amount" color="purple" />
+          <QuickAction onClick={() => setTab('cable')} icon={<Monitor />} label="Cable TV" sublabel="GOtv, DStv, StarTimes" color="green" />
+          <QuickAction onClick={() => setTab('electricity')} icon={<Lightbulb />} label="Electricity" sublabel="Prepaid & postpaid tokens" color="amber" />
+          <QuickAction onClick={() => setTab('bills', 'exam')} icon={<GraduationCap />} label="Exam pins" sublabel="WAEC, NECO, JAMB" color="orange" />
+          <QuickAction onClick={() => setTab('betting')} icon={<Dices />} label="Betting top-up" sublabel="SportyBet, Bet9ja, 1xBet" color="red" />
         </div>
       </div>
 
       {/* Recent Transactions */}
       <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
         <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-          <h3 className="font-bold text-slate-800">Recent Transactions</h3>
-          <button onClick={() => setTab('history')} className="text-indigo-600 text-sm font-bold hover:underline cursor-pointer">View All</button>
+          <h3 className="font-extrabold text-slate-900">Recent transactions</h3>
+          <button onClick={() => setTab('history')} className="text-indigo-600 text-xs font-black uppercase tracking-wider hover:underline cursor-pointer">View all</button>
         </div>
         <div className="divide-y divide-slate-50">
           {transactions.slice(0, 4).map(tx => (
@@ -2386,8 +2386,46 @@ function DashboardOverview({
             />
           ))}
           {transactions.length === 0 && (
-            <div className="p-8 text-center text-slate-400 text-sm">No recent transactions.</div>
+            <div className="p-8 text-center text-slate-400 text-xs">No recent transactions.</div>
           )}
+        </div>
+      </div>
+
+      {/* Provider Status & Supported Zones Grid */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Provider status box */}
+        <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
+          <h4 className="font-extrabold text-slate-900 text-sm">Provider status</h4>
+          <div className="divide-y divide-slate-50 text-xs font-bold">
+            <div className="py-2.5 flex justify-between items-center">
+              <span className="text-slate-700">MTN SME</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Online</span>
+            </div>
+            <div className="py-2.5 flex justify-between items-center">
+              <span className="text-slate-700">Glo Data</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Online</span>
+            </div>
+            <div className="py-2.5 flex justify-between items-center">
+              <span className="text-slate-700">Airtel Gifting</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Online</span>
+            </div>
+            <div className="py-2.5 flex justify-between items-center">
+              <span className="text-slate-700">9mobile Data</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Online</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Supported zones box */}
+        <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm space-y-4">
+          <h4 className="font-extrabold text-slate-900 text-sm">Supported zones</h4>
+          <div className="flex flex-wrap gap-2 pt-1">
+            {['Abuja', 'Ikeja', 'Eko', 'Benin', 'Enugu', 'Kano', 'Jos', 'Yola'].map((zone) => (
+              <span key={zone} className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-full text-xs font-bold text-slate-700 transition-colors">
+                {zone}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -2789,7 +2827,7 @@ const imgToast = (item: string) => {
   toast(`${item === 'cable' ? 'Cable TV decoder recharge' : 'Prepaid Electricity token purchase'} is coming soon!`, { id: item + '-toast', icon: 'ℹ️' });
 };
 
-function QuickAction({ icon, label, color, onClick }: { icon: React.ReactNode, label: string, color: string, onClick: () => void }) {
+function QuickAction({ icon, label, sublabel, color, onClick }: { icon: React.ReactNode, label: string, sublabel?: string, color: string, onClick: () => void }) {
   const colorMap: any = {
     blue: "bg-indigo-50 text-indigo-600",
     amber: "bg-green-50 text-green-600",
@@ -2802,12 +2840,15 @@ function QuickAction({ icon, label, color, onClick }: { icon: React.ReactNode, l
   return (
     <button 
       onClick={onClick} 
-      className="flex flex-col items-center justify-between gap-3 p-5 rounded-[2rem] bg-white border border-slate-100 text-slate-800 shadow-sm hover:shadow-md hover:border-slate-200 transition-all group select-none cursor-pointer w-full"
+      className="flex flex-col items-start justify-between p-6 rounded-[2.5rem] bg-white border border-slate-100/80 text-slate-800 shadow-sm hover:shadow-lg hover:border-slate-200 transition-all group select-none cursor-pointer w-full text-left"
     >
-      <div className={cn("p-4 rounded-2xl font-bold tracking-wider group-hover:scale-105 transition-transform shrink-0", colorMap[color])}>
+      <div className={cn("p-4 rounded-2xl font-bold tracking-wider group-hover:scale-105 transition-transform shrink-0 mb-4", colorMap[color])}>
         {React.cloneElement(icon as React.ReactElement, { size: 24 })}
       </div>
-      <span className="text-xs font-extrabold uppercase tracking-wider text-center block mt-1 leading-tight text-slate-700">{label}</span>
+      <div>
+        <h4 className="text-sm font-extrabold text-slate-900 tracking-tight group-hover:text-indigo-600 transition-colors">{label}</h4>
+        {sublabel && <p className="text-[11px] text-slate-400 font-medium mt-0.5">{sublabel}</p>}
+      </div>
     </button>
   );
 }
