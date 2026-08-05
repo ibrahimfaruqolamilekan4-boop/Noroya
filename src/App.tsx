@@ -10,6 +10,7 @@ import Dashboard from './components/Dashboard';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AIChatSupport from './components/AIChatSupport';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -45,6 +46,7 @@ function AppContent() {
       )}
 
       <AIChatSupport />
+      <PWAInstallBanner />
     </div>
   );
 }
