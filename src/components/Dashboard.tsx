@@ -2354,18 +2354,60 @@ function DashboardOverview({
         )}
       </div>
 
-      {/* Modern Services Grid */}
+      {/* Modern Branded Services Grid */}
       <div>
-        <h3 className="text-sm font-black uppercase tracking-[0.1em] mb-4 text-slate-800 flex items-center gap-2">
+        <h3 className="text-sm font-black uppercase tracking-[0.1em] mb-4 text-slate-200 flex items-center gap-2">
           <span>⚡</span> Quick billing services
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <QuickAction onClick={() => setTab('buy-data')} icon={<Wifi />} label="Data bundles" sublabel="All networks, best rates" color="blue" />
-          <QuickAction onClick={() => setTab('buy-airtime')} icon={<Sparkles />} label="Airtime top-up" sublabel="Instant credit, any amount" color="purple" />
-          <QuickAction onClick={() => setTab('cable')} icon={<Monitor />} label="Cable TV" sublabel="GOtv, DStv, StarTimes" color="green" />
-          <QuickAction onClick={() => setTab('electricity')} icon={<Lightbulb />} label="Electricity" sublabel="Prepaid & postpaid tokens" color="amber" />
-          <QuickAction onClick={() => setTab('bills', 'exam')} icon={<GraduationCap />} label="Exam pins" sublabel="WAEC, NECO, JAMB" color="orange" />
-          <QuickAction onClick={() => setTab('betting')} icon={<Dices />} label="Betting top-up" sublabel="SportyBet, Bet9ja, 1xBet" color="red" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <BrandedServiceCard 
+            onClick={() => setTab('buy-data')} 
+            icon={<Wifi size={24} />} 
+            title="Buy Data Bundles" 
+            subtitle="MTN, Glo, Airtel & 9mobile automated gifting & SME plans at discounted rates."
+            badge="Best Rates"
+            gradient="bg-gradient-to-br from-blue-600 to-indigo-700"
+          />
+          <BrandedServiceCard 
+            onClick={() => setTab('buy-airtime')} 
+            icon={<Sparkles size={24} />} 
+            title="Airtime Top-Up" 
+            subtitle="Instant VTU recharge with automatic 2% cashback bonus on every transaction."
+            badge="2% Cashback"
+            gradient="bg-gradient-to-br from-purple-600 to-pink-700"
+          />
+          <BrandedServiceCard 
+            onClick={() => setTab('cable')} 
+            icon={<Monitor size={24} />} 
+            title="Cable TV Subscription" 
+            subtitle="Instant decoder activation for DStv, GOtv, and StarTimes with zero downtime."
+            badge="Instant"
+            gradient="bg-gradient-to-br from-emerald-600 to-teal-700"
+          />
+          <BrandedServiceCard 
+            onClick={() => setTab('electricity')} 
+            icon={<Lightbulb size={24} />} 
+            title="Electricity Bills" 
+            subtitle="Purchase prepaid & postpaid tokens for Ikeja, Eko, Abuja, Ibadan, and more DISCOs."
+            badge="Tokenized"
+            gradient="bg-gradient-to-br from-amber-500 to-orange-600"
+          />
+          <BrandedServiceCard 
+            onClick={() => setTab('bills', 'exam')} 
+            icon={<GraduationCap size={24} />} 
+            title="Exam PINs" 
+            subtitle="Secure scratch cards and result checker PINs for WAEC, NECO, and JAMB."
+            badge="Verified"
+            gradient="bg-gradient-to-br from-indigo-500 to-purple-800"
+          />
+          <BrandedServiceCard 
+            onClick={() => setTab('betting')} 
+            icon={<Dices size={24} />} 
+            title="Betting Wallet Top-Up" 
+            subtitle="Instant funding for SportyBet, Bet9ja, 1xBet, BetKing, and major gaming accounts."
+            badge="Fast"
+            gradient="bg-gradient-to-br from-rose-600 to-red-700"
+          />
         </div>
       </div>
 
@@ -2808,27 +2850,55 @@ const imgToast = (item: string) => {
   toast(`${item === 'cable' ? 'Cable TV decoder recharge' : 'Prepaid Electricity token purchase'} is coming soon!`, { id: item + '-toast', icon: 'ℹ️' });
 };
 
-function QuickAction({ icon, label, sublabel, color, onClick }: { icon: React.ReactNode, label: string, sublabel?: string, color: string, onClick: () => void }) {
-  const colorMap: any = {
-    blue: "bg-indigo-50 text-indigo-600",
-    amber: "bg-green-50 text-green-600",
-    purple: "bg-purple-100/60 text-purple-700",
-    green: "bg-emerald-50 text-emerald-700",
-    red: "bg-rose-50 text-rose-600",
-    orange: "bg-orange-50 text-orange-600",
-  };
-
+function BrandedServiceCard({ 
+  icon, 
+  title, 
+  subtitle, 
+  badge, 
+  gradient, 
+  onClick 
+}: { 
+  icon: React.ReactNode, 
+  title: string, 
+  subtitle: string, 
+  badge?: string, 
+  gradient: string, 
+  onClick: () => void 
+}) {
   return (
-    <button 
-      onClick={onClick} 
-      className="flex flex-col items-start justify-between p-6 rounded-[2.5rem] bg-white border border-slate-100/80 text-slate-800 shadow-sm hover:shadow-lg hover:border-slate-200 transition-all group select-none cursor-pointer w-full text-left"
+    <button
+      onClick={onClick}
+      className={cn(
+        "relative overflow-hidden group rounded-[2.5rem] p-6 text-left transition-all duration-300",
+        "bg-slate-900 border border-slate-800/80 shadow-lg hover:shadow-2xl hover:-translate-y-1.5",
+        "cursor-pointer select-none flex flex-col justify-between min-h-[180px]"
+      )}
     >
-      <div className={cn("p-4 rounded-2xl font-bold tracking-wider group-hover:scale-105 transition-transform shrink-0 mb-4", colorMap[color])}>
-        {React.cloneElement(icon as React.ReactElement, { size: 24 })}
+      {/* Decorative gradient glow blob in background */}
+      <div className={cn("absolute -top-12 -right-12 w-36 h-36 rounded-full blur-2xl opacity-25 group-hover:opacity-40 transition-opacity pointer-events-none", gradient)} />
+      
+      <div className="flex justify-between items-start relative z-10">
+        <div className={cn(
+          "w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-md transition-transform group-hover:scale-110 group-hover:rotate-3",
+          gradient
+        )}>
+          {icon}
+        </div>
+        {badge && (
+          <span className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-white/10 text-white border border-white/10 backdrop-blur-sm">
+            {badge}
+          </span>
+        )}
       </div>
-      <div>
-        <h4 className="text-sm font-extrabold text-slate-900 tracking-tight group-hover:text-indigo-600 transition-colors">{label}</h4>
-        {sublabel && <p className="text-[11px] text-slate-400 font-medium mt-0.5">{sublabel}</p>}
+
+      <div className="relative z-10 mt-6">
+        <h4 className="text-base font-black text-white tracking-tight group-hover:text-indigo-300 transition-colors flex items-center gap-2">
+          {title}
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity text-indigo-400">→</span>
+        </h4>
+        <p className="text-xs text-slate-400 font-medium mt-1 leading-relaxed">
+          {subtitle}
+        </p>
       </div>
     </button>
   );
