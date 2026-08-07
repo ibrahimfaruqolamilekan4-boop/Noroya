@@ -948,6 +948,7 @@ function DashboardOverview({
 
   const [currentBalance, setCurrentBalance] = React.useState(0);
   const [isUpdating, setIsUpdating] = React.useState(false);
+  const [hideBalance, setHideBalance] = React.useState(false);
 
   // ── WALLET TRANSFER STATE ──────────────────────────────────────────────
   const [showTransferModal, setShowTransferModal] = React.useState(false);
