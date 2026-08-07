@@ -43,7 +43,9 @@ import {
   Download,
   Search,
   Filter,
-  Clock
+  Clock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
@@ -91,6 +93,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
   const [isDarkMode, setIsDarkMode] = React.useState(true);
   const [showSupportHub, setShowSupportHub] = React.useState(false);
   const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
+  const [hideBalance, setHideBalance] = React.useState(false);
 
   React.useEffect(() => {
     // Check local announcements
@@ -1911,21 +1914,30 @@ function DashboardOverview({
     <div className="space-y-8">
       {/* Wallet Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Wallet Card - Exact Norodata Design */}
-        <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-[2.5rem] p-7 text-white shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[220px]" id="vtu_wallet_card">
+        {/* Wallet Card - Mozosubz Green Theme */}
+        <div className="bg-gradient-to-r from-emerald-600 via-green-600 to-teal-700 rounded-[2.5rem] p-7 text-white shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[220px]" id="vtu_wallet_card">
           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
-          <div className="relative z-10">
-            <p className="text-blue-100 text-[11px] font-black uppercase tracking-widest mb-1.5 opacity-90">WALLET BALANCE</p>
-            <h3 className="text-4xl md:text-5xl font-black tracking-tight mb-6 text-white font-mono">
-              {formatCurrency(currentBalance)}
-              {isUpdating && <span className="text-xs ml-2 font-sans animate-pulse">Syncing...</span>}
-            </h3>
+          <div className="relative z-10 flex justify-between items-start">
+            <div>
+              <p className="text-emerald-100 text-[11px] font-black uppercase tracking-widest mb-1.5 opacity-90">WALLET BALANCE</p>
+              <h3 className="text-4xl md:text-5xl font-black tracking-tight mb-6 text-white font-mono">
+                {hideBalance ? '********' : formatCurrency(currentBalance)}
+                {isUpdating && <span className="text-xs ml-2 font-sans animate-pulse">Syncing...</span>}
+              </h3>
+            </div>
+            <button 
+              onClick={() => setHideBalance(!hideBalance)}
+              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors cursor-pointer"
+              title={hideBalance ? "Show balance" : "Hide balance"}
+            >
+              {hideBalance ? <EyeOff size={20} /> : <Eye size={20} />}
+            </button>
           </div>
           
           <div className="relative z-10 flex gap-2.5 flex-wrap">
             <button 
               onClick={() => handleOpenFundModal()} 
-              className="bg-white hover:bg-blue-50 text-indigo-700 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md select-none cursor-pointer"
+              className="bg-white hover:bg-emerald-50 text-emerald-800 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md select-none cursor-pointer"
             >
               <ArrowDownLeft size={15} /> Fund wallet
             </button>
