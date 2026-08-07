@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and account balance",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "balance": { "type": "number" },
+        "role": { "type": "string", "enum": ["user", "reseller", "agent", "admin"] },
+        "referralCode": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "balance", "role"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Record of a financial transaction or service purchase",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["data", "airtime", "funding", "transfer", "bill"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "description": { "type": "string" },
+        "details": { "type": "object" },
+        "reference": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "amount", "status", "createdAt"]
+    },
+    "ServicePlan": {
+      "title": "Service Plan",
+      "description": "Available data or airtime plans",
+      "type": "object",
+      "properties": {
+        "network": { "type": "string", "enum": ["MTN", "Airtel", "Glo", "9mobile"] },
+        "type": { "type": "string", "enum": ["data", "airtime"] },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "resellerPrice": { "type": "number" },
+        "agentPrice": { "type": "number" },
+        "duration": { "type": "string" }
+      },
+      "required": ["network", "type", "name", "price"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial records"
+    },
+    "/servicePlans/{planId}": {
+      "schema": "ServicePlan",
+      "description": "Available services"
+    }
+  }
+}
