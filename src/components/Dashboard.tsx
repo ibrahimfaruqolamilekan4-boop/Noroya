@@ -299,7 +299,19 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
             <h2 className="text-lg font-extrabold capitalize select-none">{activeTab.replace('-', ' ')}</h2>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-pwa-install'))}
+              className={cn(
+                "hidden md:flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shadow-sm cursor-pointer",
+                isDarkMode ? "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border-emerald-500/30" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200"
+              )}
+              title="Install PWA App"
+            >
+              <Download size={15} />
+              <span>Install App</span>
+            </button>
+
             {/* Aesthetics Dark Mode Toggle button */}
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
