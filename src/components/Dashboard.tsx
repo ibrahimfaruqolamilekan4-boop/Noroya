@@ -1599,105 +1599,7 @@ function DashboardOverview({
 
 
 
-  // Daily Lucky Spin system hooks & logic
-  const [spinning, setSpinning] = React.useState(false);
-  const [lastSpinTime, setLastSpinTime] = React.useState<number | null>(null);
-  const [spinResult, setSpinResult] = React.useState<string | null>(null);
-  const [timeLeftToSpin, setTimeLeftToSpin] = React.useState<string>('');
 
-  React.useEffect(() => {
-    const key = `noroya_last_spin_${user.uid}`;
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      setLastSpinTime(Number(stored));
-    }
-  }, [user.uid]);
-
-  React.useEffect(() => {
-    if (!lastSpinTime) {
-      setTimeLeftToSpin('');
-      return;
-    }
-    const updateTimer = () => {
-      const now = Date.now();
-      const nextAllowed = lastSpinTime + 24 * 60 * 60 * 1000;
-      const diff = nextAllowed - now;
-      if (diff <= 0) {
-        setLastSpinTime(null);
-        localStorage.removeItem(`noroya_last_spin_${user.uid}`);
-        setTimeLeftToSpin('');
-      } else {
-        const hrs = Math.floor(diff / (1000 * 60 * 60));
-        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const secs = Math.floor((diff % (100 * 60)) / 1000); // fix typo, modulo 60
-        const correctedSecs = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeLeftToSpin(`${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${correctedSecs.toString().padStart(2, '0')}`);
-      }
-    };
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [lastSpinTime, user.uid]);
-
-  const handleSpinWheel = async () => {
-    if (lastSpinTime && (Date.now() - lastSpinTime < 24 * 60 * 60 * 1000)) {
-      toast.error("Daily spin already claimed. See you tomorrow!");
-      return;
-    }
-
-    setSpinning(true);
-    setSpinResult(null);
-
-    // Dynamic, weighted payouts (₦10 - ₦250)
-    const rewards = [
-      { amount: 10, label: "₦10.00 Cash", weight: 0.50 },
-      { amount: 20, label: "₦20.00 Cashback", weight: 0.25 },
-      { amount: 55, label: "₦55.00 Lucky Cash", weight: 0.15 },
-      { amount: 100, label: "₦100.00 Super Jackpot", weight: 0.08 },
-      { amount: 250, label: "₦250.00 Mega Cash", weight: 0.02 }
-    ];
-
-    const r = Math.random();
-    let sum = 0;
-    let selectedReward = rewards[0];
-    for (const reward of rewards) {
-      sum += reward.weight;
-      if (r <= sum) {
-        selectedReward = reward;
-        break;
-      }
-    }
-
-    // Interactive rotation feeling delay (1.8s)
-    await new Promise(resolve => setTimeout(resolve, 1800));
-
-    try {
-      const response = await fetch('/api/vtu/daily-bonus', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          wonAmount: selectedReward.amount
-        })
-      });
-
-      if (response.ok) {
-        setSpinResult(selectedReward.label);
-        const now = Date.now();
-        setLastSpinTime(now);
-        localStorage.setItem(`noroya_last_spin_${user.uid}`, String(now));
-        toast.success(`You won ${selectedReward.label}! Added instantly to balance.`);
-      } else {
-        const errData = await response.json();
-        toast.error(errData.error || "Rewards network busy, please trigger spin again!");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to register bonus payout.");
-    } finally {
-      setSpinning(false);
-    }
-  };
 
   // Subscribe to service plans from Firestore
   React.useEffect(() => {
@@ -2008,64 +1910,7 @@ function DashboardOverview({
           </div>
         </div>
 
-        {/* Daily Lucky Spin Card */}
-        <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-[2rem] p-6 text-slate-800 shadow-md relative overflow-hidden flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="relative z-10 flex flex-col h-full justify-between">
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-2 flex items-center gap-1">
-                  <span className="animate-pulse">🎁</span> Daily Free Reward
-                </span>
-                <h3 className="text-lg font-black tracking-tight text-slate-900">Lucky Spin Wheel</h3>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-amber-100">
-                <Gift className="text-amber-600 animate-bounce" size={20} />
-              </div>
-            </div>
 
-            {/* Spinner display feedback */}
-            <div className="my-3 flex flex-col items-center justify-center min-h-[60px]">
-              {spinning ? (
-                <div className="flex flex-col items-center space-y-1">
-                  <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-[11px] text-amber-700 font-bold animate-pulse">Spinning the lucky wheel...</p>
-                </div>
-              ) : spinResult ? (
-                <div className="text-center animate-bounce">
-                  <p className="text-[10px] text-amber-600 font-extrabold uppercase tracking-wider">Congratulations!</p>
-                  <p className="text-xl font-extrabold text-amber-700 leading-tight mt-1">{spinResult}</p>
-                </div>
-              ) : timeLeftToSpin ? (
-                <div className="text-center">
-                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">Next spin unlocks in</p>
-                  <p className="text-xl font-mono font-black text-slate-700 tracking-widest mt-1">{timeLeftToSpin}</p>
-                </div>
-              ) : (
-                <div className="text-center px-2">
-                  <p className="text-xs text-slate-600 leading-relaxed font-semibold">
-                    Get up to <strong>₦250.00</strong> free wallet bonus today! Processes instantly.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              disabled={spinning || !!timeLeftToSpin}
-              onClick={handleSpinWheel}
-              className={cn(
-                "w-full font-black rounded-xl py-3 text-xs uppercase tracking-wider transition-all select-none border cursor-pointer",
-                spinning 
-                  ? "bg-slate-200 text-slate-400 border-slate-200 cursor-not-allowed shadow-none" 
-                  : timeLeftToSpin 
-                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed shadow-none" 
-                    : "bg-[#FFCC00] text-black hover:bg-yellow-400 border-yellow-400 hover:shadow-md"
-              )}
-            >
-              {spinning ? "Spinning..." : timeLeftToSpin ? "Locked for today" : "Spin & Claim Cash"}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* WhatsApp Live Support desk */}
@@ -2166,74 +2011,62 @@ function DashboardOverview({
         </div>
 
         {serviceType === 'data' ? (
-          plans.length === 0 ? (
-            <div className="bg-white rounded-[2rem] p-8 border border-slate-100 text-center space-y-4">
-              <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
-                <Database size={28} />
-              </div>
-              <div className="max-w-md mx-auto">
-                <h4 className="font-bold text-lg">No Service Plans Available</h4>
-                <p className="text-sm text-slate-500 mt-1">There are no data bundles available right now. Please check back later or add them manually in the admin panel.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredPlans.map((plan) => {
-                const theme = getCarrierStyles(plan.network);
-                return (
-                  <div
-                    key={plan.id}
-                    className={cn(
-                      "bg-white border rounded-[2rem] p-6 transition-all flex flex-col justify-between cursor-pointer shadow-sm relative overflow-hidden group/card",
-                      theme.hover
-                    )}
-                    onClick={() => setSelectedPlan(plan)}
-                  >
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black tracking-wide uppercase shadow-sm", theme.badge)}>
-                          {plan.network}
-                        </span>
-                        <span className="text-xs text-slate-400 font-bold font-mono">
-                          {plan.duration || '30 Days'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-3.5">
-                        <div className={cn(
-                          "w-11 h-11 rounded-full flex items-center justify-center font-black text-xs tracking-tight shadow-sm shrink-0 border border-black/5",
-                          plan.network === 'MTN' && "bg-yellow-400 text-slate-900",
-                          plan.network === 'Airtel' && "bg-red-600 text-white",
-                          plan.network === 'Glo' && "bg-green-600 text-white",
-                          plan.network === '9mobile' && "bg-emerald-950 text-white"
-                        )}>
-                          {plan.network === '9mobile' ? '9m' : plan.network}
-                        </div>
-                        <div>
-                          <h4 className="text-lg font-extrabold text-slate-900 tracking-tight group-hover/card:text-indigo-600 transition-colors">
-                            {plan.name}
-                          </h4>
-                          <p className="text-xs text-slate-400 mt-0.5">High-speed network connection</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-6 mt-4 border-t border-slate-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Our Price</p>
-                        <p className="text-2xl font-black text-slate-900 tracking-tight">
-                          {formatCurrency(plan.price)}
-                        </p>
-                      </div>
-                      <span className="bg-slate-100 text-slate-700 group-hover/card:bg-indigo-600 group-hover/card:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
-                        Buy Plan
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredPlans.map((plan) => {
+              const theme = getCarrierStyles(plan.network);
+              return (
+                <div
+                  key={plan.id}
+                  className={cn(
+                    "bg-white border rounded-[2rem] p-6 transition-all flex flex-col justify-between cursor-pointer shadow-sm relative overflow-hidden group/card",
+                    theme.hover
+                  )}
+                  onClick={() => setSelectedPlan(plan)}
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className={cn("px-3 py-1 rounded-full text-[10px] font-black tracking-wide uppercase shadow-sm", theme.badge)}>
+                        {plan.network}
+                      </span>
+                      <span className="text-xs text-slate-400 font-bold font-mono">
+                        {plan.duration || '30 Days'}
                       </span>
                     </div>
+
+                    <div className="flex items-center gap-3.5">
+                      <div className={cn(
+                        "w-11 h-11 rounded-full flex items-center justify-center font-black text-xs tracking-tight shadow-sm shrink-0 border border-black/5",
+                        plan.network === 'MTN' && "bg-yellow-400 text-slate-900",
+                        plan.network === 'Airtel' && "bg-red-600 text-white",
+                        plan.network === 'Glo' && "bg-green-600 text-white",
+                        plan.network === '9mobile' && "bg-emerald-950 text-white"
+                      )}>
+                        {plan.network === '9mobile' ? '9m' : plan.network}
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-extrabold text-slate-900 tracking-tight group-hover/card:text-indigo-600 transition-colors">
+                          {plan.name}
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-0.5">High-speed network connection</p>
+                      </div>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
-          )
+
+                  <div className="pt-6 mt-4 border-t border-slate-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Our Price</p>
+                      <p className="text-2xl font-black text-slate-900 tracking-tight">
+                        {formatCurrency(plan.price)}
+                      </p>
+                    </div>
+                    <span className="bg-slate-100 text-slate-700 group-hover/card:bg-indigo-600 group-hover/card:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
+                      Buy Plan
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
           /* Instant Airtime Recharge Form Widget */
           <div className="bg-white rounded-[2rem] p-8 border border-slate-100 shadow-sm max-w-xl mx-auto space-y-6">
