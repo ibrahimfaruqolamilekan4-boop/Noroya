@@ -3,7 +3,7 @@ import { Download, X, Smartphone, Share, PlusSquare } from 'lucide-react';
 
 export function PWAInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showBanner, setShowBanner] = useState(false);
+  const [showBanner, setShowBanner] = useState(true);
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
 
@@ -11,30 +11,30 @@ export function PWAInstallBanner() {
     // Check if iOS
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
-    const isInStandaloneMode = ('standalone' in window.navigator) && (window.navigator as any).standalone;
 
-    if (isIosDevice && !isInStandaloneMode) {
+    if (isIosDevice) {
       setIsIOS(true);
-      // Show iOS instruction banner after 3 seconds if not dismissed
-      const dismissed = localStorage.getItem('noroya_ios_dismissed');
-      if (!dismissed) {
-        setShowBanner(true);
-      }
     }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      const dismissed = localStorage.getItem('noroya_pwa_dismissed');
-      if (!dismissed) {
-        setShowBanner(true);
-      }
+      setShowBanner(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
+    const handleOpenInstall = () => {
+      setShowBanner(true);
+      if (isIosDevice) {
+        setShowIOSModal(true);
+      }
+    };
+    window.addEventListener('open-pwa-install', handleOpenInstall);
+
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('open-pwa-install', handleOpenInstall);
     };
   }, []);
 
@@ -44,7 +44,10 @@ export function PWAInstallBanner() {
       return;
     }
 
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+      setShowIOSModal(true);
+      return;
+    }
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
