@@ -1826,91 +1826,110 @@ function DashboardOverview({
   };
 
   return (
-    <div className="space-y-8">
-      {/* Wallet Card */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Wallet Card - Mozosubz Green Theme */}
-        <div className="bg-gradient-to-r from-emerald-600 via-green-600 to-teal-700 rounded-[2.5rem] p-7 text-white shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[220px]" id="vtu_wallet_card">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+    <div className="space-y-8 font-sans">
+      {/* Greeting Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
+            Good morning, {user.fullName?.split(' ')[0] || 'Samuel'} ✦
+          </h2>
+          <p className="text-xs md:text-sm text-slate-500 font-medium mt-0.5">Everything you need, in one calm place.</p>
+        </div>
+        <button 
+          onClick={() => handleOpenFundModal()}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer w-fit"
+        >
+          + Deposit funds
+        </button>
+      </div>
+
+      {/* Wallet Card Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Wallet Card - Mozosubz Green Theme matching screenshot */}
+        <div className="lg:col-span-2 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[250px] border border-slate-800" id="vtu_wallet_card">
+          <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+          
           <div className="relative z-10 flex justify-between items-start">
             <div>
-              <p className="text-emerald-100 text-[11px] font-black uppercase tracking-widest mb-1.5 opacity-90">WALLET BALANCE</p>
-              <h3 className="text-4xl md:text-5xl font-black tracking-tight mb-6 text-white font-mono">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">AVAILABLE WALLET BALANCE</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <h3 className="text-4xl md:text-5xl font-black tracking-tight text-white font-mono">
                 {hideBalance ? '********' : formatCurrency(currentBalance)}
                 {isUpdating && <span className="text-xs ml-2 font-sans animate-pulse">Syncing...</span>}
               </h3>
+              <p className="text-xs text-slate-400 mt-2 font-medium">Wallet is active • Updated just now</p>
             </div>
             <button 
               onClick={() => setHideBalance(!hideBalance)}
-              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors cursor-pointer"
+              className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer border border-white/10"
               title={hideBalance ? "Show balance" : "Hide balance"}
             >
-              {hideBalance ? <EyeOff size={20} /> : <Eye size={20} />}
+              {hideBalance ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
           
-          <div className="relative z-10 flex gap-2.5 flex-wrap">
+          <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 mt-6 border-t border-white/10">
+            <div>
+              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">This month</p>
+              <p className="text-emerald-400 font-extrabold text-sm tracking-tight mt-0.5">+₦82,300 funded</p>
+            </div>
+            
             <button 
               onClick={() => handleOpenFundModal()} 
-              className="bg-white hover:bg-emerald-50 text-emerald-800 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md select-none cursor-pointer"
+              className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 select-none cursor-pointer"
             >
-              <ArrowDownLeft size={15} /> Fund wallet
-            </button>
-            <button 
-              onClick={() => setShowTransferModal(true)} 
-              className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
-            >
-              ⇄ Transfer
-            </button>
-            <button 
-              onClick={() => setTab('history')} 
-              className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
-            >
-              View history
+              Deposit money →
             </button>
           </div>
         </div>
 
-        {/* Referrals Card */}
-        <div className="bg-white border border-slate-100 rounded-[2rem] p-6 text-slate-800 shadow-md flex flex-col justify-between min-h-[220px] transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-          <div className="flex justify-between items-start">
-            <div>
-              <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block w-fit mb-3">
-                📈 Referral Earnings
-              </span>
-              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Commissions</p>
-              <h3 className="text-2xl font-black text-slate-900">
-                {formatCurrency(
-                  transactions
-                    .filter(t => t.type === 'funding' && t.description.includes('Referral Commission'))
-                    .reduce((sum, t) => sum + t.amount, 0)
+        {/* Spend This Month Card */}
+        <div className="bg-white border border-slate-100 rounded-[2.5rem] p-7 text-slate-900 shadow-sm flex flex-col justify-between min-h-[250px]">
+          <div>
+            <div className="flex justify-between items-start mb-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Spend this month</span>
+              <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-[10px] font-extrabold">Live demo</span>
+            </div>
+            <h3 className="text-3xl font-black text-slate-950 tracking-tight">
+              ₦6,690
+            </h3>
+          </div>
+
+          {/* Mini Bar Chart */}
+          <div className="flex items-end gap-2 h-16 pt-4 border-t border-slate-100">
+            {[40, 60, 90, 45, 75, 100, 80].map((h, i) => (
+              <div 
+                key={i} 
+                style={{ height: `${h}%` }}
+                className={cn(
+                  "flex-1 rounded-t-lg transition-all",
+                  i === 5 ? "bg-emerald-600 shadow-sm" : "bg-emerald-100 hover:bg-emerald-200"
                 )}
-              </h3>
-            </div>
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-              <Users className="text-slate-700 text-slate-700" size={20} />
-            </div>
-          </div>
-          <div className="mt-4">
-            <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">Referral Code / Transfer ID</p>
-            <div className="flex gap-2">
-              <div className="flex-1 bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-xl text-xs font-mono font-black text-slate-800 select-all tracking-wider text-center flex items-center justify-center">
-                {user.referralCode}
-              </div>
-              <button 
-                onClick={() => {
-                  navigator.clipboard.writeText(user.referralCode);
-                  toast.success("Code copied to clipboard!");
-                }} 
-                className="bg-slate-900 text-white hover:bg-slate-800 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer"
-              >
-                Copy
-              </button>
-            </div>
+              />
+            ))}
           </div>
         </div>
+      </div>
 
-
+      {/* Your Month in Norodata Banner */}
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100/80 rounded-[2.5rem] p-6 text-emerald-950 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black text-lg shadow-md shrink-0">
+            📊
+          </div>
+          <div>
+            <h4 className="font-extrabold text-slate-900 text-base tracking-tight">YOUR MONTH IN NORODATA</h4>
+            <p className="text-xs text-slate-600 font-medium mt-0.5">8 successful transactions. Every demo action updates your wallet and ledger.</p>
+          </div>
+        </div>
+        <button 
+          onClick={() => setTab('history')}
+          className="text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-emerald-900 bg-white px-4 py-2.5 rounded-xl border border-emerald-200 shadow-sm transition-all"
+        >
+          See your activity →
+        </button>
       </div>
 
       {/* WhatsApp Live Support desk */}
