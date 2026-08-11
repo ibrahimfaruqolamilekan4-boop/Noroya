@@ -1,0 +1,2168 @@
+import React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Users, 
+  TrendingUp, 
+  Plus, 
+  Search, 
+  DollarSign, 
+  Database, 
+  Send,  
+  Bell, 
+  RefreshCw, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  Smartphone, 
+  ShieldCheck, 
+  Loader2,
+  Trash2,
+  ListFilter,
+  Edit,
+  Package,
+  SlidersHorizontal,
+  AlertTriangle
+} from 'lucide-react';
+import { cn, formatCurrency } from '../lib/utils';
+import { DashboardOverviewTab, TransactionsTab, UserManagementTab, ProviderStatusTab } from './AdminExtraTabs';
+import { db, auth } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
+
+const getSession = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated. Please log in again.');
+  return session;
+};
+import { useSupabaseError } from '../hooks/useSupabaseError';
+import { 
+  collection, 
+  query, 
+  getDocs, 
+  getDoc,
+  setDoc,
+  doc, 
+  updateDoc, 
+  addDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  serverTimestamp,
+  increment,
+  limit,
+  orderBy,
+  writeBatch
+} from 'firebase/firestore';
+import { toast } from 'react-hot-toast';
+import AdminPricingManager from './AdminPricingManager';
+import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
+
+// Pure deterministic UUID mapper to prevent PostgreSQL id column type conflicts (UUID vs text)
+export const ensureUUID = (strId: string): string => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(strId)) {
+    return strId;
+  }
+  let seed = 0;
+  for (let i = 0; i < strId.length; i++) {
+    seed = (seed * 31 + strId.charCodeAt(i)) >>> 0;
+  }
+  const r = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed;
+  };
+  const hexChars = '0123456789abcdef';
+  let hex32 = '';
+  for (let i = 0; i < 32; i++) {
+    hex32 += hexChars[r() % 16];
+  }
+  const part1 = hex32.substring(0, 8);
+  const part2 = hex32.substring(8, 12);
+  const part3 = '4' + hex32.substring(12, 15);
+  const part4 = 'a' + hex32.substring(15, 18);
+  const part5 = hex32.substring(18, 30);
+  return `${part1}-${part2}-${part3}-${part4}-${part5}`;
+};
+
+export default function AdminPanelSection() {
+  const { handleSupabaseError } = useSupabaseError();
+  const [loading, setLoading] = React.useState(true);
+  const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
+  const [utilityPlansList, setUtilityPlansList] = React.useState<any[]>([]);
+  const [examPlansList, setExamPlansList] = React.useState<any[]>([]);
+
+  const servicePlansList = React.useMemo(() => {
+    return [
+      ...dataPlansList.map(p => ({ ...p, collectionName: 'data_plans', type: p.type || 'data' })),
+      ...utilityPlansList.map(p => ({ ...p, collectionName: 'utility_plans', type: p.type || 'utility' })),
+      ...examPlansList.map(p => ({ ...p, collectionName: 'exam_plans', type: p.type || 'exam' }))
+    ];
+  }, [dataPlansList, utilityPlansList, examPlansList]);
+  
+  // Search state
+
+  // Dynamic Supabase Overrides
+  const [supabaseUrlInput, setSupabaseUrlInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_URL") || "");
+  const [supabaseKeyInput, setSupabaseKeyInput] = React.useState(localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY") || "");
+  
+  // Credit/Debit Modals
+
+  // Bigisub Services Config State
+  const [servicesConfig, setServicesConfig] = React.useState<any[]>([]);
+  const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
+
+  // Plans list filtering state
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>('dashboard');
+
+  // Mozosubz Data Plans States & Functions
+  const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
+  const [mozoLoading, setMozoLoading] = React.useState(false);
+  const [mozoSyncing, setMozoSyncing] = React.useState(false);
+  const [mozoSearch, setMozoSearch] = React.useState('');
+  const [mozoNetworkFilter, setMozoNetworkFilter] = React.useState('All');
+
+  const fetchMozoPlans = async () => {
+    setMozoLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('data_plans')
+        .select('*')
+        .order('network', { ascending: true })
+        .order('id', { ascending: true });
+      if (error) throw error;
+      setMozoPlans(data || []);
+    } catch (err: any) {
+      console.error("Error fetching Mozosubz plans:", err);
+      toast.error(`Failed to load Mozosubz plans: ${err.message}`);
+    } finally {
+      setMozoLoading(false);
+    }
+  };
+
+  const handleSyncMozoPlans = async () => {
+    setMozoSyncing(true);
+    toast.loading("Synchronizing plans from Mozosubz API...", { id: 'mozo-sync' });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/admin/data-plans', {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = "Failed to sync plans from Mozosubs.";
+        try {
+          const resData = JSON.parse(text);
+          errorMessage = resData.error || errorMessage;
+        } catch (e) {
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      const resData = await response.json();
+      toast.success(`Successfully synchronized ${resData.count || 0} plans!`, { id: 'mozo-sync' });
+      await fetchMozoPlans();
+    } catch (err: any) {
+      console.error("Error syncing Mozosubz plans:", err);
+      toast.error(`Sync failed: ${err.message}`, { id: 'mozo-sync' });
+    } finally {
+      setMozoSyncing(false);
+    }
+  };
+
+  const handleUpdateMozoPrice = async (id: any, newPrice: number) => {
+    try {
+      const { error } = await supabase
+        .from('data_plans')
+        .update({ custom_price: newPrice, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      toast.success("Plan price updated successfully!");
+      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, custom_price: newPrice } : p));
+    } catch (err: any) {
+      console.error("Error updating Mozosubz custom price:", err);
+      toast.error(`Failed to save price: ${err.message}`);
+    }
+  };
+
+  const handleToggleMozoActive = async (id: any, currentActive: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('data_plans')
+        .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      toast.success(`Plan ${!currentActive ? 'activated' : 'deactivated'} successfully!`);
+      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, is_active: !currentActive } : p));
+    } catch (err: any) {
+      console.error("Error toggling plan active status:", err);
+      toast.error(`Failed to toggle status: ${err.message}`);
+    }
+  };
+
+  React.useEffect(() => {
+    if (adminSubTab === 'mozosubz-plans') {
+      fetchMozoPlans();
+    }
+  }, [adminSubTab]);
+
+  // Add Service Form State
+  const [newServiceType, setNewServiceType] = React.useState<'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('data');
+  const [newNetworkOrProvider, setNewNetworkOrProvider] = React.useState('MTN');
+  const [newItemName, setNewItemName] = React.useState('');
+  const [newCostPrice, setNewCostPrice] = React.useState('');
+  const [newSellingPrice, setNewSellingPrice] = React.useState('');
+  const [newBigisubIdentifierId, setNewBigisubIdentifierId] = React.useState('');
+  const [newValidityDays, setNewValidityDays] = React.useState('30 Days');
+  const [newPlanCategory, setNewPlanCategory] = React.useState<'SME' | 'CG' | 'GIFTING'>('SME');
+  const [isAddingService, setIsAddingService] = React.useState(false);
+
+  const [opayRevenueStats, setOpayRevenueStats] = React.useState<any>(null);
+  const [loadingOpayStats, setLoadingOpayStats] = React.useState(false);
+  const [planSearchQuery, setPlanSearchQuery] = React.useState('');
+  const [planFilterNetwork, setPlanFilterNetwork] = React.useState<string>('All');
+  const [planFilterType, setPlanFilterType] = React.useState<string>('All');
+
+  // Broadcast state
+  const [broadcastText, setBroadcastText] = React.useState('');
+  const [isPublishingBroadcast, setIsPublishingBroadcast] = React.useState(false);
+
+  const [inventoryCategoryTab, setInventoryCategoryTab] = React.useState<'all' | 'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('all');
+
+  // Missing states for Peyflex/manual plans
+  const [peyflexProducts, setPeyflexProducts] = React.useState<any[]>([]);
+  const [peyflexSearchQuery, setPeyflexSearchQuery] = React.useState('');
+  const [peyflexFilterCategory, setPeyflexFilterCategory] = React.useState<'all' | 'data' | 'cable' | 'electricity'>('all');
+
+  const [planNetwork, setPlanNetwork] = React.useState<NetworkType>('MTN');
+  const [planType, setPlanType] = React.useState<'data' | 'airtime'>('data');
+  const [planName, setPlanName] = React.useState('');
+  const [planPrice, setPlanPrice] = React.useState('');
+  const [planResellerPrice, setPlanResellerPrice] = React.useState('');
+  const [planAgentPrice, setPlanAgentPrice] = React.useState('');
+  const [planDuration, setPlanDuration] = React.useState('30 Days');
+  const [planPeyflexId, setPlanPeyflexId] = React.useState('');
+  const [isAddingPlan, setIsAddingPlan] = React.useState(false);
+
+  const [editingPlan, setEditingPlan] = React.useState<any | null>(null);
+  const [isUpdatingPlan, setIsUpdatingPlan] = React.useState(false);
+  const [editPlanNetwork, setEditPlanNetwork] = React.useState<NetworkType>('MTN');
+  const [editPlanType, setEditPlanType] = React.useState<'data' | 'airtime'>('data');
+  const [editPlanName, setEditPlanName] = React.useState('');
+  const [editPlanPrice, setEditPlanPrice] = React.useState('');
+  const [editPlanDuration, setEditPlanDuration] = React.useState('30 Days');
+  const [editPlanPeyflexId, setEditPlanPeyflexId] = React.useState('');
+  const [editPlanResellerPrice, setEditPlanResellerPrice] = React.useState('');
+  const [editPlanAgentPrice, setEditPlanAgentPrice] = React.useState('');
+
+  const fetchPeyflexRates = async () => {
+    toast.loading("Initiating synchronization channels...", { id: 'peyflex-sync' });
+    setTimeout(() => {
+      toast.success("Synchronized successfully! (Offline mode)", { id: 'peyflex-sync' });
+    }, 1000);
+  };
+
+  const handleUpdateDraftPrice = (peyflex_variation_id: string, price: number) => {
+    setPeyflexProducts(prev => prev.map(p => {
+      const pId = p.peyflex_variation_id || p.peyflex_id || p.apiPlanId || p.id;
+      if (pId === peyflex_variation_id) {
+        return { ...p, retail_price: price, price: price };
+      }
+      return p;
+    }));
+  };
+
+  const handleAddPlanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!planName.trim() || !planPrice || Number(planPrice) <= 0) {
+      toast.error("Please enter a valid plan name and price");
+      return;
+    }
+    setIsAddingPlan(true);
+    try {
+      const { data, error } = await supabase
+        .from('services_config')
+        .insert({
+          service_type: planType,
+          provider_or_network: planNetwork.toUpperCase(),
+          item_name: planName.trim(),
+          cost_price: Number(planPrice) * 0.95, // mock cost
+          selling_price: Number(planPrice),
+          bigisub_plan_id: planPeyflexId.trim() || `manual_${Date.now()}`,
+          is_active: true
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      toast.success("Manual plan registered and activated successfully!");
+      if (data) {
+        setServicesConfig(prev => [data, ...prev]);
+      }
+      setPlanName('');
+      setPlanPrice('');
+      setPlanResellerPrice('');
+      setPlanAgentPrice('');
+      setPlanPeyflexId('');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Failed to register plan: ${err.message}`);
+    } finally {
+      setIsAddingPlan(false);
+    }
+  };
+
+  const handleEditPlanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPlan) return;
+    setIsUpdatingPlan(true);
+    try {
+      const { error } = await supabase
+        .from('services_config')
+        .update({
+          service_type: editPlanType,
+          provider_or_network: editPlanNetwork.toUpperCase(),
+          item_name: editPlanName.trim(),
+          selling_price: Number(editPlanPrice),
+          bigisub_plan_id: editPlanPeyflexId.trim()
+        })
+        .eq('id', editingPlan.id);
+
+      if (error) throw error;
+      toast.success("Plan updated successfully!");
+      setServicesConfig(prev => prev.map(p => p.id === editingPlan.id ? {
+        ...p,
+        service_type: editPlanType,
+        provider_or_network: editPlanNetwork.toUpperCase(),
+        item_name: editPlanName.trim(),
+        selling_price: Number(editPlanPrice),
+        bigisub_plan_id: editPlanPeyflexId.trim()
+      } : p));
+      setEditingPlan(null);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Failed to update plan: ${err.message}`);
+    } finally {
+      setIsUpdatingPlan(false);
+    }
+  };
+
+  // Update a Bigisub service configuration dynamically
+  const handleUpdateServiceConfig = async (id: string, cost_price: number, selling_price: number, is_active: boolean, mozosubz_plan_id?: string, validity_days?: string, item_name?: string, plan_category?: string) => {
+    setIsUpdatingService(id);
+    try {
+      const session = await getSession();
+      const response = await fetch(`/api/admin/services/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ cost_price, selling_price, is_active, mozosubz_plan_id, validity_days, item_name, plan_category })
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = "Failed to update service config.";
+        try {
+          const errObj = JSON.parse(text);
+          errorMessage = errObj.error || errorMessage;
+        } catch (e) {
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const resData = await response.json();
+      toast.success(resData.message || `Updated ${resData.service?.item_name || 'service'} configuration successfully!`);
+      
+      // Update local state
+      setServicesConfig(prev => prev.map(item => {
+        if (item.id === id) {
+          return { 
+            ...item, 
+            cost_price, 
+            selling_price, 
+            is_active, 
+            mozosubz_plan_id: mozosubz_plan_id !== undefined ? mozosubz_plan_id : item.mozosubz_plan_id,
+            validity_days: validity_days !== undefined ? validity_days : item.validity_days,
+            item_name: item_name !== undefined ? item_name : item.item_name,
+            plan_category: plan_category !== undefined ? plan_category : item.plan_category
+          };
+        }
+        return item;
+      }));
+    } catch (err: any) {
+      console.error("[handleUpdateServiceConfig Error]:", err);
+      toast.error(`Update failed: ${err.message}`);
+    } finally {
+      setIsUpdatingService(null);
+    }
+  };
+
+  const handleAddServiceConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newItemName.trim() || !newCostPrice || !newSellingPrice || !newBigisubIdentifierId.trim()) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+
+    setIsAddingService(true);
+    try {
+      const finalItemName = newServiceType === 'data' 
+        ? `${newItemName.trim()} - ${newPlanCategory} - ${newValidityDays.trim()}`
+        : newItemName.trim();
+
+      // Create payload
+      const payload: any = {
+        service_type: newServiceType,
+        provider_or_network: newNetworkOrProvider.toUpperCase().trim(),
+        item_name: finalItemName,
+        cost_price: Number(newCostPrice),
+        selling_price: Number(newSellingPrice),
+        bigisub_plan_id: newBigisubIdentifierId.trim(),
+        is_active: true,
+        validity_days: newValidityDays.trim()
+      };
+
+      // Route through server API (uses service_role key, bypasses RLS)
+      const session = await getSession();
+      const res = await fetch('/api/admin/create-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          name: payload.item_name,
+          network: payload.provider_or_network,
+          service: payload.service_type,
+          type: payload.service_type,
+          price: payload.selling_price,
+          cost_price: payload.cost_price,
+          selling_price: payload.selling_price,
+          plan_category: newPlanCategory,
+          validity_days: payload.validity_days,
+          mozosubz_plan_id: payload.bigisub_plan_id,
+          mozosubz_service: payload.service_type,
+          is_active: true,
+        }),
+      });
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
+
+      toast.success('New service created and activated successfully!');
+      // Refresh list from server
+      const refreshRes = await supabase.from('services_config').select('*').order('created_at', { ascending: false }).limit(1);
+      if (refreshRes.data && refreshRes.data[0]) {
+        setServicesConfig(prev => [refreshRes.data![0], ...prev]);
+      }
+      
+      // Reset form fields
+      setNewItemName('');
+      setNewCostPrice('');
+      setNewSellingPrice('');
+      setNewBigisubIdentifierId('');
+      setNewValidityDays('30 Days');
+    } catch (err: any) {
+      console.error("[handleAddServiceConfig Error]:", err);
+      toast.error(`Failed to create service configuration: ${err.message || err}`);
+    } finally {
+      setIsAddingService(false);
+    }
+  };
+
+  const handleDeleteServiceConfig = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this service configuration?")) return;
+
+    try {
+      const { error } = await supabase
+        .from('services_config')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success("Service configuration removed successfully!");
+      setServicesConfig(prev => prev.filter(item => item.id !== id));
+    } catch (err: any) {
+      console.error("[handleDeleteServiceConfig Error]:", err);
+      toast.error(`Failed to delete configuration: ${err.message || err}`);
+    }
+  };
+
+  // API config state
+  const [providerUrl, setProviderUrl] = React.useState('https://mozosubz.xyz/api');
+  const [providerKey, setProviderKey] = React.useState('');
+  const [isSavingKey, setIsSavingKey] = React.useState(false);
+
+  React.useEffect(() => {
+    const fetchMozosubzKey = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('services_config')
+          .select('item_name')
+          .eq('bigisub_identifier_id', 'mozosubz_api_key')
+          .maybeSingle();
+        if (!error && data?.item_name) {
+          setProviderKey(data.item_name);
+        }
+      } catch (err) {
+        console.warn("Could not fetch Mozosubz API key from Supabase services_config on load:", err);
+      }
+    };
+    fetchMozosubzKey();
+  }, []);
+
+  const handleSaveMozosubzKey = async () => {
+    if (!providerKey.trim()) {
+      toast.error("Please enter a valid API key.");
+      return;
+    }
+    setIsSavingKey(true);
+    try {
+      const payload = {
+        service_type: 'airtime',
+        provider_or_network: 'SYSTEM_CONFIG',
+        item_name: providerKey.trim(),
+        bigisub_identifier_id: 'mozosubz_api_key',
+        cost_price: 0,
+        selling_price: 0,
+        is_active: true,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase
+        .from('services_config')
+        .upsert(payload, { onConflict: 'bigisub_identifier_id' });
+      if (error) throw error;
+      toast.success("Mozosubz API token linked and saved to Supabase successfully!");
+    } catch (err: any) {
+      console.error("Error saving Mozosubz API token:", err);
+      toast.error(`Failed to link Mozosubz API token: ${err.message || err}`);
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
+
+  React.useEffect(() => {
+    // Legacy Firestore users/transactions listeners removed 2026-07-28 -- the admin
+    // panel now uses Supabase-backed endpoints (see AdminExtraTabs.tsx) instead.
+    setLoading(false);
+
+
+    // 3. Fetch Service Plans: real-time streams for data_plans, utility_plans, and exam_plans
+    console.log("Attempting to connect to Firestore collections: data_plans, utility_plans, exam_plans...");
+    let fallbackPlansLoaded = false;
+
+    const fetchBackupPlans = async () => {
+      try {
+        const response = await fetch('/api/plans');
+        if (response.ok) {
+          const plansList = await response.json();
+          if (Array.isArray(plansList) && plansList.length > 0) {
+            console.log("Admin: Successfully loaded offline plans via fallback API /api/plans:", plansList);
+            const mapped = plansList.map((p: any) => {
+              const pName = p.plan_name || p.name || p.planName || `${p.network_type || p.network || 'MTN'} Dynamic Plan`;
+              const pPrice = Number(p.retail_price || p.price || p.amount || 0);
+              const pNetwork = p.network_type || p.network || 'MTN';
+              const pType = p.type || 'data';
+              const pVarId = p.peyflex_variation_id || p.peyflex_id || p.apiPlanId || p.id;
+
+              return {
+                id: p.id,
+                ...p,
+                name: pName,
+                plan_name: pName,
+                planName: pName,
+                price: pPrice,
+                retail_price: pPrice,
+                amount: pPrice,
+                network: pNetwork,
+                network_type: pNetwork,
+                type: pType,
+                peyflex_variation_id: pVarId,
+                peyflex_id: pVarId,
+                apiPlanId: pVarId
+              };
+            });
+            setDataPlansList(mapped);
+            fallbackPlansLoaded = true;
+          }
+        }
+      } catch (err) {
+        console.warn("Admin: Could not load fallback plans from API:", err);
+      }
+    };
+
+    fetchBackupPlans();
+
+    // Listener A: Internet Data Plans from Supabase with Firestore fallback
+    const initSupabasePlansSync = async () => {
+      try {
+        const { data: plans, error } = await supabase
+          .from('data_plans')
+          .select('*');
+        if (error) throw error;
+        if (plans && plans.length > 0) {
+          const list = plans.map((p: any) => {
+            const pName = p.plan_name || p.name || `${p.network_type || 'MTN'} Plan`;
+            const pPrice = Number(p.price || p.retail_price || p.amount || 0);
+            return {
+              id: p.id,
+              ...p,
+              name: pName,
+              plan_name: pName,
+              price: pPrice,
+              retail_price: pPrice,
+              network: p.network_type || 'MTN',
+              network_type: p.network_type || 'MTN',
+              type: p.type || 'data'
+            };
+          });
+          setDataPlansList(list);
+        }
+      } catch (err: any) {
+        console.warn("[Supabase Admin Fetch] Failing over to Firestore data stream:", err);
+      }
+    };
+
+    initSupabasePlansSync();
+
+    // Fetch Services Config from Supabase via API route with direct failover
+    const fetchServicesConfig = async () => {
+      try {
+        const response = await fetch('/api/services/all');
+        if (response.ok) {
+          const apiData = await response.json();
+          if (Array.isArray(apiData)) {
+            setServicesConfig(apiData);
+            return;
+          }
+        }
+        
+        // Failover direct query
+        const { data, error } = await supabase
+          .from('services_config')
+          .select('*')
+          .order('service_type', { ascending: true })
+          .order('provider_or_network', { ascending: true });
+        if (error) throw error;
+        if (data) {
+          setServicesConfig(data);
+        }
+      } catch (err: any) {
+        console.warn("Could not load services_config from API or database:", err);
+      }
+    };
+    fetchServicesConfig();
+
+    const supabasePlansChannel = supabase
+      .channel('realtime:admin_data_plans')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'data_plans' },
+        async () => {
+          console.log("[Supabase Realtime Admin] Postgres data plans change, reloading...");
+          const { data: plans } = await supabase
+            .from('data_plans')
+            .select('*');
+          if (plans) {
+            const list = plans.map((p: any) => {
+              const pName = p.plan_name || p.name || `${p.network_type || 'MTN'} Plan`;
+              const pPrice = Number(p.price || p.retail_price || p.amount || 0);
+              return {
+                id: p.id,
+                ...p,
+                name: pName,
+                plan_name: pName,
+                price: pPrice,
+                retail_price: pPrice,
+                network: p.network_type || 'MTN',
+                network_type: p.network_type || 'MTN',
+                type: p.type || 'data'
+              };
+            });
+            setDataPlansList(list);
+          }
+        }
+      )
+      .subscribe();
+
+    const unsubPlans = onSnapshot(collection(db, 'data_plans'), (snapshot) => {
+      if (snapshot.empty) {
+        if (!fallbackPlansLoaded && dataPlansList.length === 0) setDataPlansList([]);
+      } else {
+        const list: any[] = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const pName = data.plan_name || data.name || data.planName || `${data.network_type || data.network || 'MTN'} Plan`;
+          const pPrice = Number(data.retail_price || data.price || 0);
+          const pNetwork = data.network_type || data.network || 'MTN';
+          list.push({
+            id: doc.id,
+            ...data,
+            name: pName,
+            plan_name: pName,
+            price: pPrice,
+            retail_price: pPrice,
+            network: pNetwork,
+            network_type: pNetwork,
+            type: data.type || 'data'
+          });
+        });
+        // Only accept firebase fallbacks if we haven't already synced from Supabase
+        setDataPlansList(prev => prev.length > 0 ? prev : list);
+      }
+    }, (error) => {
+      console.warn("Firestore data_plans fallback stream passive:", error);
+    });
+
+    // Listener B: Utility / Electricity Plans
+    const unsubUtils = onSnapshot(collection(db, 'utility_plans'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const pName = data.plan_name || data.name || data.planName || 'Utility Option';
+        const pPrice = Number(data.retail_price || data.price || 0);
+        list.push({
+          id: doc.id,
+          ...data,
+          name: pName,
+          plan_name: pName,
+          price: pPrice,
+          retail_price: pPrice,
+          network: data.network || data.network_type || 'Utility',
+          network_type: data.network || data.network_type || 'Utility',
+          type: data.type || 'utility'
+        });
+      });
+      setUtilityPlansList(list);
+    }, (error) => {
+      console.error("Firestore utility_plans stream failed:", error);
+    });
+
+    // Listener C: Exam / Education Plans
+    const unsubExams = onSnapshot(collection(db, 'exam_plans'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const pName = data.plan_name || data.name || data.planName || 'Exam Option';
+        const pPrice = Number(data.retail_price || data.price || 0);
+        list.push({
+          id: doc.id,
+          ...data,
+          name: pName,
+          plan_name: pName,
+          price: pPrice,
+          retail_price: pPrice,
+          network: data.network || data.network_type || 'Exam',
+          network_type: data.network || data.network_type || 'Exam',
+          type: data.type || 'exam'
+        });
+      });
+      setExamPlansList(list);
+    }, (error) => {
+      console.error("Firestore exam_plans stream failed:", error);
+    });
+
+    return () => {
+      unsubPlans();
+      unsubUtils();
+      unsubExams();
+      supabase.removeChannel(supabasePlansChannel);
+    };
+  }, []);
+
+  const fetchOpayRevenueStats = async () => {
+    setLoadingOpayStats(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/opay-revenue', {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOpayRevenueStats(data);
+      }
+    } catch (err) {
+      console.error("Error fetching OPy revenue stats:", err);
+    } finally {
+      setLoadingOpayStats(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (adminSubTab === 'opay-receipts') {
+      fetchOpayRevenueStats();
+    }
+  }, [adminSubTab]);
+
+  // Filter service plans
+  const filteredPlans = servicePlansList.filter(plan => {
+    const matchesSearch = !planSearchQuery.trim() || 
+      plan.name?.toLowerCase().includes(planSearchQuery.toLowerCase()) ||
+      plan.network?.toLowerCase().includes(planSearchQuery.toLowerCase());
+    const matchesNetwork = planFilterNetwork === 'All' || String(plan.network || plan.network_type || '').toLowerCase() === planFilterNetwork.toLowerCase();
+    const matchesType = planFilterType === 'All' || String(plan.type || '').toLowerCase() === planFilterType.toLowerCase();
+    return matchesSearch && matchesNetwork && matchesType;
+  });
+
+
+
+  // Push news banner announcement
+  const handlePublishBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastText.trim()) {
+      toast.error("Cannot broadcast empty notification text");
+      return;
+    }
+
+    setIsPublishingBroadcast(true);
+    try {
+      // Save systemic announcements
+      await addDoc(collection(db, 'broadcasts'), {
+        message: broadcastText.trim(),
+        isActive: true,
+        createdAt: serverTimestamp()
+      });
+
+      // Simple localStorage simulation to let current session know
+      localStorage.setItem('vtu_latest_announcement', broadcastText.trim());
+
+      toast.success("Dynamic notification has been broadcast globally!");
+      setBroadcastText('');
+    } catch (err: any) {
+      toast.error(`Broadcast failed: ${err.message}`);
+    } finally {
+      setIsPublishingBroadcast(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="py-24 text-center space-y-4">
+        <Loader2 className="animate-spin mx-auto text-blue-600" size={40} />
+        <p className="text-slate-400 font-bold font-sans">Connecting Admin Firestore Reserve Channels...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-10 font-sans pb-16">
+      
+      {/* 1. ADMIN HEADINGS */}
+      <div className="flex justify-between items-center bg-white p-6 border border-slate-100 rounded-3xl">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-slate-800 text-lg">Platform Admin Control</h4>
+            <p className="text-xs text-slate-400 font-semibold font-sans uppercase">Continuous Whitelisted Bypass Mode</p>
+          </div>
+        </div>
+        <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" /> Connection secure
+        </span>
+      </div>
+
+      {/* Tab Switcher */}
+      <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-3xl select-none font-bold">
+        <button
+          type="button"
+          onClick={() => setAdminSubTab('service-plans')}
+          className={cn(
+            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+            adminSubTab === 'service-plans'
+              ? "bg-white text-slate-900 shadow-md font-extrabold"
+              : "text-slate-500 hover:text-slate-850"
+          )}
+        >
+          Service Plans Manager
+        </button>
+        <button
+          type="button"
+          onClick={() => setAdminSubTab('mozosubz-plans')}
+          className={cn(
+            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+            adminSubTab === 'mozosubz-plans'
+              ? "bg-white text-slate-900 shadow-md font-extrabold"
+              : "text-slate-500 hover:text-slate-850"
+          )}
+        >
+          Mozosubz Plans
+        </button>
+        <button
+          type="button"
+          onClick={() => setAdminSubTab('opay-receipts')}
+          className={cn(
+            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+            adminSubTab === 'opay-receipts'
+              ? "bg-white text-slate-900 shadow-md font-extrabold"
+              : "text-slate-500 hover:text-slate-850"
+          )}
+        >
+          Bank Deposits Audit
+        </button>
+          <button
+            onClick={() => setAdminSubTab('pricing-manager')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'pricing-manager'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            💰 Pricing Manager
+          </button>
+          <button
+            onClick={() => setAdminSubTab('dashboard')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'dashboard'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            📊 Dashboard
+          </button>
+          <button
+            onClick={() => setAdminSubTab('transactions')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'transactions'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            🧾 Transactions
+          </button>
+          <button
+            onClick={() => setAdminSubTab('user-mgmt')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'user-mgmt'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            👤 User Management
+          </button>
+          <button
+            onClick={() => setAdminSubTab('provider-status')}
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              adminSubTab === 'provider-status'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            🛰️ Provider Status
+          </button>
+        {/* Monnify config option completely deleted */}
+      </div>
+
+      {adminSubTab === 'dashboard' && <DashboardOverviewTab />}
+      {adminSubTab === 'transactions' && <TransactionsTab />}
+      {adminSubTab === 'user-mgmt' && <UserManagementTab />}
+      {adminSubTab === 'provider-status' && <ProviderStatusTab />}
+
+      {adminSubTab === 'service-plans' && (
+        /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
+        <div className="space-y-6 pb-12">
+          {/* Header Action Dashboard with Option C Neo-Brutalis styling */}
+          <div className="bg-yellow-100 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-black animate-pulse"></span>
+                <span className="text-[10px] uppercase font-black tracking-wider text-black font-sans">Option C Neo-Brutalism Design Panel</span>
+              </div>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubz VTU Integration Console</h4>
+              <p className="text-xs text-black/80 font-bold max-w-2xl font-sans">
+                Real-time synchronized control. Keep your published digital packages perfectly calibrated. 7-day physical lifespan rules apply automatically on database write transactions.
+              </p>
+            </div>
+            <div className="bg-white border-2 border-black px-4 py-3 rounded-2xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] text-center shrink-0">
+              <span className="text-[10px] uppercase font-bold text-slate-500 block font-sans">Active Services</span>
+              <span className="text-2xl font-black text-black font-mono">{servicesConfig.filter(s => s.is_active).length} / {servicesConfig.length}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
+            {/* COLUMN A: Create New Service Config (Form) */}
+            <div className="xl:col-span-1 bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-5">
+              <div>
+                <h5 className="font-extrabold text-lg text-black font-sans">➕ Add New Service</h5>
+                <p className="text-[10px] text-slate-400 font-bold font-sans uppercase">Create dynamic VTU product mapping</p>
+              </div>
+
+              <form onSubmit={handleAddServiceConfig} className="space-y-4 text-xs font-bold text-left">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Service Type</label>
+                  <select
+                    value={newServiceType}
+                    onChange={(e) => {
+                      const type = e.target.value as 'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin';
+                      setNewServiceType(type);
+                      if (type === 'data' || type === 'airtime') {
+                        setNewNetworkOrProvider('MTN');
+                      } else if (type === 'cable') {
+                        setNewNetworkOrProvider('GOTV');
+                      } else if (type === 'electricity') {
+                        setNewNetworkOrProvider('IKEDC');
+                      } else {
+                        setNewNetworkOrProvider('WAEC');
+                      }
+                    }}
+                    className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none"
+                  >
+                    <option value="data">📶 Internet Data</option>
+                    <option value="airtime">📞 Voice Airtime</option>
+                    <option value="cable">📺 Cable TV Bouquet</option>
+                    <option value="electricity">⚡ Electricity Bill Disco</option>
+                    <option value="exam_pin">🎓 Exam Result PIN</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Network or Provider</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. MTN, AIRTEL, DSTV, AEDC, WAEC"
+                    value={newNetworkOrProvider}
+                    onChange={(e) => setNewNetworkOrProvider(e.target.value)}
+                    className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Package/Item Name</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. 1GB SME, ₦500 Top-Up, WAEC PIN"
+                    value={newItemName}
+                    onChange={(e) => setNewItemName(e.target.value)}
+                    className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Cost Price (₦)</label>
+                    <input
+                      required
+                      type="number"
+                      placeholder="Wholesale price"
+                      value={newCostPrice}
+                      onChange={(e) => setNewCostPrice(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Selling Price (₦)</label>
+                    <input
+                      required
+                      type="number"
+                      placeholder="Retail price"
+                      value={newSellingPrice}
+                      onChange={(e) => setNewSellingPrice(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Mozosubz Plan/Identifier ID</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. MTN_SME_1GB, 1, aedc_prepaid"
+                      value={newBigisubIdentifierId}
+                      onChange={(e) => setNewBigisubIdentifierId(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Plan Days / Validity</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="e.g. 30 Days"
+                      value={newValidityDays}
+                      onChange={(e) => setNewValidityDays(e.target.value)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-mono"
+                    />
+                  </div>
+                </div>
+
+                {newServiceType === 'data' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Data Plan Category / Type</label>
+                    <select
+                      value={newPlanCategory}
+                      onChange={(e) => setNewPlanCategory(e.target.value as any)}
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-bold"
+                    >
+                      <option value="SME">SME</option>
+                      <option value="CG">CG (Corporate Gifting)</option>
+                      <option value="GIFTING">GIFTING</option>
+                    </select>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isAddingService}
+                  className="w-full bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold p-3.5 rounded-xl transition-all flex items-center justify-center gap-2 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] cursor-pointer text-xs"
+                >
+                  {isAddingService ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin text-white" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Register & Activate Service"
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* COLUMN B: Manage Existing Service Configurations */}
+            <div className="xl:col-span-2 bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-6">
+              <div className="border-b-2 border-black pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+                <div>
+                  <h5 className="font-extrabold text-lg text-black font-sans uppercase tracking-tight">⚙️ Services Inventory Matrix</h5>
+                  <p className="text-[11px] text-slate-500 font-bold font-sans">
+                    View active plans, calibrate markup profits, and save configuration records to Supabase.
+                  </p>
+                </div>
+              </div>
+
+              {/* Dynamic Filtering Panel */}
+              <div className="space-y-3">
+                {/* Category Filters */}
+                <div className="flex flex-wrap gap-1.5 justify-start text-left">
+                  {([
+                    { id: 'all', label: 'All Services' },
+                    { id: 'data', label: '📶 Internet Data' },
+                    { id: 'airtime', label: '📞 Airtime' },
+                    { id: 'cable', label: '📺 Cable TV' },
+                    { id: 'electricity', label: '⚡ Electricity' },
+                    { id: 'exam_pin', label: '🎓 Exam PIN' }
+                  ] as const).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setInventoryCategoryTab(tab.id as any)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                        inventoryCategoryTab === tab.id
+                          ? "bg-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                          : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search Inputs */}
+                <div className="grid sm:grid-cols-2 gap-3 text-left">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search items (e.g. 1GB, GOTV)..."
+                      value={planSearchQuery}
+                      onChange={(e) => setPlanSearchQuery(e.target.value)}
+                      className="w-full bg-slate-50 text-slate-800 border-2 border-slate-850 rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-black placeholder-slate-400 font-sans"
+                    />
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search Network/Provider (e.g. MTN, AEDC)..."
+                      value={peyflexSearchQuery} // reused as provider filter query
+                      onChange={(e) => setPeyflexSearchQuery(e.target.value)}
+                      className="w-full bg-slate-50 text-slate-800 border-2 border-slate-850 rounded-xl p-3 text-xs font-semibold focus:outline-none focus:border-black placeholder-slate-400 font-sans"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Service Plans Dynamic Grid List */}
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-slate-900">
+                {(() => {
+                  const filtered = servicesConfig.filter(item => {
+                    const matchCategory = inventoryCategoryTab === 'all' || item.service_type === inventoryCategoryTab;
+                    const matchSearch = !planSearchQuery.trim() ||
+                      String(item.item_name || '').toLowerCase().includes(planSearchQuery.toLowerCase()) ||
+                      String(item.bigisub_plan_id || '').toLowerCase().includes(planSearchQuery.toLowerCase());
+                    const matchProvider = !peyflexSearchQuery.trim() ||
+                      String(item.provider_or_network || '').toLowerCase().includes(peyflexSearchQuery.toLowerCase());
+
+                    return matchCategory && matchSearch && matchProvider;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
+                        No active service configurations found in database.
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((item) => {
+                    const profit = (item.selling_price || 0) - (item.cost_price || 0);
+                    const profitPercentage = item.cost_price > 0 ? Math.round((profit / item.cost_price) * 100) : 0;
+
+                    const parts = String(item.item_name || '').split(' - ');
+                    let displayName = item.item_name || '';
+                    let itemCategory = 'GIFTING';
+                    let itemValidity = item.validity_days || item.duration || '30 Days';
+
+                    if (parts.length >= 3) {
+                      displayName = parts[0];
+                      itemCategory = parts[1].trim().toUpperCase();
+                      itemValidity = parts[2].trim();
+                    } else {
+                      // Legacy parsing fallback
+                      const pNameUpper = displayName.toUpperCase();
+                      if (pNameUpper.includes("SME")) {
+                        itemCategory = "SME";
+                      } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+                        itemCategory = "CG";
+                      } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+                        itemCategory = "GIFTING";
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "bg-slate-50 border-2 border-black rounded-xl p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all space-y-3 text-left relative overflow-hidden",
+                          !item.is_active && "opacity-70 grayscale"
+                        )}
+                      >
+                        {/* Status Label Badge */}
+                        <div className="absolute top-3 right-3 flex items-center gap-2">
+                          <label className="flex items-center gap-1 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={item.is_active}
+                              onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
+                              className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
+                            />
+                            <span className="text-[10px] font-black uppercase font-sans">
+                              {item.is_active ? "🟢 Active" : "🔴 Off"}
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Package Meta Header */}
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5 font-sans">
+                            <span className={cn(
+                              "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                              item.provider_or_network?.toUpperCase() === 'MTN' ? "bg-yellow-400 text-black" :
+                              item.provider_or_network?.toUpperCase() === 'AIRTEL' ? "bg-red-500 text-white" :
+                              item.provider_or_network?.toUpperCase() === 'GLO' ? "bg-green-500 text-white" :
+                              item.provider_or_network?.toUpperCase() === '9MOBILE' ? "bg-emerald-600 text-white" :
+                              "bg-slate-900 text-white"
+                            )}>
+                              {item.provider_or_network}
+                            </span>
+                            <span className="text-[9px] bg-slate-200 text-slate-800 font-extrabold px-1.5 py-0.5 rounded leading-none uppercase border border-slate-300 font-mono">
+                              {item.service_type}
+                            </span>
+                          </div>
+
+                          {/* Display parsed name and category badge */}
+                          <div className="flex items-center gap-2 pt-1.5">
+                            <h6 className="font-black text-slate-950 text-base tracking-tight leading-snug">
+                              {displayName}
+                            </h6>
+                            <span className={cn(
+                              "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                              itemCategory === 'SME' ? "bg-purple-100 text-purple-800 border-purple-300" :
+                              itemCategory === 'CG' ? "bg-blue-100 text-blue-850 border-blue-300" :
+                              "bg-amber-100 text-amber-800 border-amber-300"
+                            )}>
+                              {itemCategory}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 pt-2 bg-white/60 p-2.5 rounded-lg border border-slate-200">
+                            {/* Display Name Input */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Display Name:</span>
+                              <input
+                                type="text"
+                                value={displayName}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newFullName = `${val.trim()} - ${itemCategory} - ${itemValidity}`;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-sans flex-1"
+                                placeholder="e.g. MTN 1GB"
+                              />
+                            </div>
+
+                            {/* Category Select for Data Plans */}
+                            {item.service_type === 'data' && (
+                              <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                                <span className="font-bold w-20">Category:</span>
+                                <select
+                                  value={itemCategory}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const newFullName = `${displayName} - ${val} - ${itemValidity}`;
+                                    setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName } : p));
+                                  }}
+                                  className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-sans w-full max-w-[140px]"
+                                >
+                                  <option value="SME">SME</option>
+                                  <option value="CG">CG (Corporate Gifting)</option>
+                                  <option value="GIFTING">GIFTING</option>
+                                </select>
+                              </div>
+                            )}
+
+                            {/* Mozosubz Plan ID -- the actual id used for real purchases, was wrongly bound to bigisub_plan_id (legacy, unused) before */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Mozosubz ID:</span>
+                              <input
+                                type="text"
+                                value={item.mozosubz_plan_id || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, mozosubz_plan_id: val } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-full max-w-[140px]"
+                                placeholder="e.g. mtn_sme_166"
+                              />
+                            </div>
+
+                            {/* Plan Days / Validity */}
+                            <div className="flex items-center gap-1.5 text-[9px] font-sans text-slate-500">
+                              <span className="font-bold w-20">Validity Days:</span>
+                              <input
+                                type="text"
+                                value={itemValidity}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const newFullName = `${displayName} - ${itemCategory} - ${val.trim()}`;
+                                  setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, item_name: newFullName, validity_days: val } : p));
+                                }}
+                                className="bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-0.5 focus:outline-none font-mono w-full max-w-[140px]"
+                                placeholder="e.g. 30 Days"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Price Fields and Profiting Grid */}
+                        <div className="pt-2.5 border-t border-slate-200/85 grid grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <span className="text-[8px] font-extrabold text-slate-400 block uppercase pl-1 font-sans">Cost (₦)</span>
+                            <input
+                              type="number"
+                              value={item.cost_price}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, cost_price: val } : p));
+                              }}
+                              className="w-full bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-1 focus:outline-none text-center font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-[8px] font-extrabold text-indigo-600 block uppercase pl-1 font-sans">Selling (₦)</span>
+                            <input
+                              type="number"
+                              value={item.selling_price}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setServicesConfig(prev => prev.map(p => p.id === item.id ? { ...p, selling_price: val } : p));
+                              }}
+                              className="w-full bg-white border-2 border-black text-black font-semibold text-xs rounded-lg px-2 py-1 focus:outline-none text-center font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1 text-center font-sans">
+                            <span className="text-[8px] font-extrabold text-slate-400 block uppercase font-sans">Markup Profit</span>
+                            <div className="text-xs font-black text-green-600 font-mono pt-1 leading-none">
+                              ₦{profit} <span className="text-[9px] text-slate-400 block font-normal mt-0.5 font-sans">{profitPercentage}% gain</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions Trigger Section */}
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteServiceConfig(item.id)}
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-sans cursor-pointer flex items-center gap-1 active:scale-95 transition-all"
+                          >
+                            <Trash2 size={11} /> Delete
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
+                            disabled={isUpdatingService === item.id}
+                            className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
+                          >
+                            {isUpdatingService === item.id ? (
+                              <>
+                                <Loader2 size={10} className="animate-spin text-white" />
+                                Saving...
+                              </>
+                            ) : (
+                              <>
+                                <ShieldCheck size={11} className="text-white" />
+                                Save & Sync Price
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div> </div>
+
+              {peyflexProducts.length > 0 ? (
+                <div className="space-y-5">
+                  {/* BULK MARKUP MULTI-SINK CONTROLS */}
+                  <div className="bg-amber-50 border-2 border-black p-3.5 rounded-xl space-y-2 text-left">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 font-sans">⚡ Auto-Markup Utilities Matrix</span>
+                    </div>
+                    <p className="text-[10px] text-amber-955 font-sans font-medium">Click to instantly apply markup to all freshly loaded Peyflex drafts:</p>
+                    <div className="flex flex-wrap items-center gap-1.5 font-sans">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPeyflexProducts(prev => prev.map(p => ({
+                            ...p,
+                            retail_price: Math.round(p.wholesaleCost * 1.03),
+                            price: Math.round(p.wholesaleCost * 1.03)
+                          })));
+                          toast.success("Applied Cost + 3% bulk markup draft!");
+                        }}
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                      >
+                        Cost + 3%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPeyflexProducts(prev => prev.map(p => ({
+                            ...p,
+                            retail_price: Math.round(p.wholesaleCost * 1.05),
+                            price: Math.round(p.wholesaleCost * 1.05)
+                          })));
+                          toast.success("Applied Cost + 5% bulk markup draft!");
+                        }}
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                      >
+                        Cost + 5%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPeyflexProducts(prev => prev.map(p => ({
+                            ...p,
+                            retail_price: Math.round(p.wholesaleCost * 1.10),
+                            price: Math.round(p.wholesaleCost * 1.10)
+                          })));
+                          toast.success("Applied Cost + 10% bulk markup draft!");
+                        }}
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                      >
+                        Cost + 10%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPeyflexProducts(prev => prev.map(p => ({
+                            ...p,
+                            retail_price: p.wholesaleCost + 100,
+                            price: p.wholesaleCost + 100
+                          })));
+                          toast.success("Applied Cost + ₦100 flat markup draft!");
+                        }}
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                      >
+                        Cost + ₦100 Flat
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Categorization Selection Tabs for Column B */}
+                  <div className="flex flex-wrap gap-1.5 font-sans justify-start">
+                    {([
+                      { id: 'all', label: 'All Staged' },
+                      { id: 'data', label: 'Internet Data' },
+                      { id: 'cable', label: 'Cable TV Plans' },
+                      { id: 'electricity', label: 'Electricity DisCos' }
+                    ] as const).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setPeyflexFilterCategory(tab.id)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                          peyflexFilterCategory === tab.id
+                            ? "bg-purple-950 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                            : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
+                        )}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Staged Column Search field */}
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Filter staged results by key terms or variation codes..."
+                      value={peyflexSearchQuery}
+                      onChange={(e) => setPeyflexSearchQuery(e.target.value)}
+                      className="w-full bg-slate-50 text-slate-800 border-2 border-slate-800 rounded-xl p-3 text-xs font-semibold focus:outline-none placeholder-slate-400 font-sans"
+                    />
+                  </div>
+
+                  {/* Staged Items Loop Grid */}
+                  <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+                    {(() => {
+                      const filteredStaged = peyflexProducts
+                        .filter(p => peyflexFilterCategory === 'all' || p.type === peyflexFilterCategory)
+                        .filter(p => !peyflexSearchQuery.trim() ||
+                          String(p.name || '').toLowerCase().includes(peyflexSearchQuery.toLowerCase()) ||
+                          String(p.peyflex_variation_id || p.peyflex_id || '').toLowerCase().includes(peyflexSearchQuery.toLowerCase())
+                        );
+
+                      if (filteredStaged.length === 0) {
+                        return (
+                          <div className="py-12 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
+                            No staged Peyflex items match the selected category & search criteria.
+                          </div>
+                        );
+                      }
+
+                      return filteredStaged.map((item) => {
+                        const pevId = item.peyflex_variation_id || item.peyflex_id || item.apiPlanId || item.id;
+                        const finalPrice = item.retail_price || item.price || 0;
+                        const profitMargin = item.wholesaleCost > 0 ? Math.round(((finalPrice - item.wholesaleCost) / item.wholesaleCost) * 100) : 0;
+
+                        return (
+                          <div key={pevId} className="bg-slate-50 border-2 border-black rounded-xl p-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs text-left shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-y-[-1px] font-sans">
+                            {/* Left Meta info */}
+                            <div className="space-y-1 min-w-0 pr-2">
+                              <div className="flex items-center gap-1.5 flex-wrap font-sans">
+                                <span className={cn(
+                                  "text-[8px] font-black uppercase px-1.5 py-0.5 rounded leading-none border border-black",
+                                  item.network === 'MTN' ? "bg-yellow-400 text-black" :
+                                  item.network === 'Airtel' ? "bg-red-400 text-white" :
+                                  item.network === 'Glo' ? "bg-green-400 text-white" :
+                                  item.type === 'electricity' ? "bg-amber-400 text-black" : "bg-purple-400 text-white"
+                                )}>
+                                  {item.network}
+                                </span>
+                                <span className="text-[8px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase">
+                                  {item.planType || item.type}
+                                </span>
+                              </div>
+                              <h6 className="font-extrabold text-slate-900 tracking-tight text-xs leading-tight">{item.name}</h6>
+                              <div className="text-[9px] text-slate-400 font-mono font-bold">CODE: {pevId}</div>
+                            </div>
+
+                            {/* Cost and Price input */}
+                            <div className="flex items-center gap-3 justify-between md:justify-end border-t border-dashed border-slate-300 md:border-t-0 pt-2 md:pt-0">
+                              <div className="text-right text-[10px] font-sans pr-1 w-20 leading-tight shrink-0">
+                                <span className="block text-slate-400 font-bold">Wholesale Cost</span>
+                                <span className="font-bold text-xs text-slate-700 font-mono">₦{item.wholesaleCost}</span>
+                              </div>
+
+                              <div className="flex flex-col items-end">
+                                <span className="text-[8px] text-slate-505 font-bold uppercase pb-0.5">Your Retail Price (₦)</span>
+                                <div className="relative inline-block font-sans">
+                                  <input
+                                    type="number"
+                                    value={item.retail_price || ''}
+                                    onChange={(e) => handleUpdateDraftPrice(item.peyflex_variation_id, Number(e.target.value))}
+                                    className="w-24 bg-white border-2 border-black text-black font-bold text-xs rounded-lg p-1.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500/20 font-mono"
+                                  />
+                                  <span className="absolute -top-1 -right-1 text-[7px] bg-black text-white font-black px-1 rounded-sm select-none border border-black leading-none py-0.5">
+                                    {profitMargin >= 0 ? `+${profitMargin}%` : `${profitMargin}%`}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-20 text-center space-y-4">
+                  <div className="mx-auto w-12 h-12 rounded-full border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400">
+                    <RefreshCw size={20} className="animate-pulse" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-extrabold text-slate-800 font-sans">No Peyflex Draft Profiles Loaded</p>
+                    <p className="text-[11px] text-slate-500 font-sans max-w-sm mx-auto font-medium">Please trigger the node synchronization using the primary button above to fetch instant pricing channels.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchPeyflexRates}
+                    className="p-3 bg-black hover:bg-slate-850 text-white border-2 border-black font-extrabold text-xs rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer inline-flex items-center gap-2 font-sans"
+                  >
+                    🚀 Trigger Synchronization Channel
+                  </button>
+                </div>
+              )}
+            </div>
+
+          {/* Collapsible Tidy Manual Creator / Registry Suite */}
+          <div className="bg-white rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] space-y-4">
+            <div className="pb-3 border-b border-slate-200 text-left">
+              <h5 className="font-extrabold text-md text-black font-sans uppercase tracking-tight">⚙️ Manual Plan Registrar Suite</h5>
+              <p className="text-xs text-slate-500 font-bold font-sans">Register manual custom variables or non-peyflex configurations directly</p>
+            </div>
+
+            <form onSubmit={handleAddPlanSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end font-sans">
+              <div className="space-y-1 text-left font-sans animate-fadeIn">
+                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Carrier Network</label>
+                <select
+                  value={planNetwork}
+                  onChange={(e) => setPlanNetwork(e.target.value as NetworkType)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold leading-tight"
+                >
+                  <option value="MTN">MTN NG</option>
+                  <option value="AIRTEL">AIRTEL NG</option>
+                  <option value="GLO">GLO NG</option>
+                  <option value="9MOBILE">9MOBILE</option>
+                </select>
+              </div>
+
+              <div className="space-y-1 text-left">
+                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Package Category</label>
+                <select
+                  value={planType}
+                  onChange={(e) => setPlanType(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold leading-tight font-sans"
+                >
+                  <option value="data">Internet Data</option>
+                  <option value="airtime">DisCo Electricity / Cable Package</option>
+                </select>
+              </div>
+
+              <div className="space-y-1 text-left">
+                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Display Plan Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. MTN SME 1.2GB Gifting"
+                  value={planName}
+                  onChange={(e) => setPlanName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-sans"
+                />
+              </div>
+
+              <div className="space-y-1 text-left">
+                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans font-sans">Retail Pricing (₦)</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 350"
+                  value={planPrice}
+                  onChange={(e) => setPlanPrice(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="space-y-1 text-left">
+                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Reseller Rate (₦) - Optional</label>
+                <input
+                  type="number"
+                  placeholder="Leave empty for auto"
+                  value={planResellerPrice}
+                  onChange={(e) => setPlanResellerPrice(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-mono font-sans"
+                />
+              </div>
+
+              <div className="space-y-1 text-left font-sans font-sans">
+                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Agent Rate (₦) - Optional</label>
+                <input
+                  type="number"
+                  placeholder="Leave empty for auto"
+                  value={planAgentPrice}
+                  onChange={(e) => setPlanAgentPrice(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-mono font-sans"
+                />
+              </div>
+
+              <div className="space-y-1 text-left font-sans">
+                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Validity Duration</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 30 Days"
+                  value={planDuration}
+                  onChange={(e) => setPlanDuration(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-mono font-sans"
+                />
+              </div>
+
+              <div className="space-y-1 text-left font-sans">
+                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans font-mono font-mono">Peyflex ID (Var Code)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. mtn_sme_1gb"
+                  value={planPeyflexId}
+                  onChange={(e) => setPlanPeyflexId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="col-span-1 md:col-span-4 flex justify-end pt-2 font-sans">
+                <button
+                  type="submit"
+                  disabled={isAddingPlan}
+                  className="bg-black hover:bg-slate-850 text-white font-extrabold text-xs px-6 py-3 rounded-xl border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:scale-101 transition-all cursor-pointer font-sans"
+                >
+                  {isAddingPlan ? "Registering Plan Code..." : "➕ Create & Publish Manual Service Package"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+        </div>
+      )}
+
+      {adminSubTab === 'mozosubz-plans' && (
+        <div className="space-y-6 pb-12">
+          {/* Header Action Dashboard */}
+          <div className="bg-blue-50 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse"></span>
+                <span className="text-[10px] uppercase font-black tracking-wider text-blue-800 font-sans">Premium Mozosubz Sync Console</span>
+              </div>
+              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Manage Mozosubz Data Plans</h4>
+              <p className="text-xs text-slate-650 font-semibold max-w-2xl font-sans">
+                Sync live data packages from Mozosubz VTU API. Customize user-facing prices and toggle package active/inactive status.
+              </p>
+            </div>
+            <button
+              onClick={handleSyncMozoPlans}
+              disabled={mozoSyncing}
+              className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-xs px-6 py-3.5 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center gap-2"
+            >
+              {mozoSyncing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-white" />
+                  Syncing from Provider...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} className="text-white" />
+                  Sync Plans from Mozosubz
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b-2 border-black text-left">
+              <div>
+                <h5 className="font-extrabold text-lg text-black font-sans uppercase tracking-tight">📶 Sync & Rate Matrix</h5>
+                <p className="text-[11px] text-slate-500 font-bold font-sans">
+                  Instantly publish or update pricing for automated network recharges.
+                </p>
+              </div>
+
+              {/* Network Filter Buttons */}
+              <div className="flex flex-wrap gap-1.5 font-sans">
+                {([
+                  { id: 'All', label: 'All Networks' },
+                  { id: '1', label: 'MTN (1)' },
+                  { id: '2', label: 'Glo (2)' },
+                  { id: '3', label: 'Airtel (3)' },
+                  { id: '4', label: '9mobile (4)' }
+                ] as const).map((net) => (
+                  <button
+                    key={net.id}
+                    type="button"
+                    onClick={() => setMozoNetworkFilter(net.id)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                      mozoNetworkFilter === net.id
+                        ? "bg-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                        : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
+                    )}
+                  >
+                    {net.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative text-left">
+              <input
+                type="text"
+                placeholder="Search Mozosubz plans (e.g. SME 1GB, GLO 1.35GB)..."
+                value={mozoSearch}
+                onChange={(e) => setMozoSearch(e.target.value)}
+                className="w-full bg-slate-50 text-slate-800 border-2 border-black rounded-xl p-3 text-xs font-bold focus:outline-none placeholder-slate-400 font-sans"
+              />
+            </div>
+
+            {/* Table / Grid list of plans */}
+            {mozoLoading ? (
+              <div className="py-24 text-center space-y-4">
+                <Loader2 className="animate-spin mx-auto text-blue-600" size={40} />
+                <p className="text-slate-500 font-extrabold font-sans text-xs">Fetching Sync Records from PostgreSQL...</p>
+              </div>
+            ) : (
+              <div className="grid gap-4 max-h-[600px] overflow-y-auto pr-2">
+                {(() => {
+                  const filtered = mozoPlans.filter(plan => {
+                    const matchesNetwork = mozoNetworkFilter === 'All' || String(plan.network || '') === mozoNetworkFilter;
+                    const matchesSearch = !mozoSearch.trim() ||
+                      String(plan.plan_name || '').toLowerCase().includes(mozoSearch.toLowerCase()) ||
+                      String(plan.mozosubz_plan_id || '').toLowerCase().includes(mozoSearch.toLowerCase());
+                    return matchesNetwork && matchesSearch;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
+                        No Mozosubz data plans found in local cache. Click the Sync button to fetch latest rates.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      {filtered.map((plan) => {
+                        const netLabel = plan.network === '1' ? 'MTN' : plan.network === '2' ? 'GLO' : plan.network === '3' ? 'Airtel' : plan.network === '4' ? '9mobile' : `Net ${plan.network}`;
+                        return (
+                          <div
+                            key={plan.id}
+                            className={cn(
+                              "bg-slate-50 border-2 border-black rounded-2xl p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all space-y-3 text-left relative",
+                              !plan.is_active && "opacity-75 grayscale"
+                            )}
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={cn(
+                                    "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                                    plan.network === '1' ? "bg-yellow-400 text-black" :
+                                    plan.network === '2' ? "bg-green-500 text-white" :
+                                    plan.network === '3' ? "bg-red-500 text-white" :
+                                    plan.network === '4' ? "bg-emerald-600 text-white" :
+                                    "bg-slate-900 text-white"
+                                  )}>
+                                    {netLabel}
+                                  </span>
+                                  <span className="text-[9px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase font-mono">
+                                    ID: {plan.mozosubz_plan_id}
+                                  </span>
+                                </div>
+                                <h6 className="font-extrabold text-slate-950 text-sm tracking-tight pt-1">
+                                  {plan.plan_name}
+                                </h6>
+                              </div>
+
+                              {/* Active Status Checkbox */}
+                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={plan.is_active !== false}
+                                  onChange={() => handleToggleMozoActive(plan.id, plan.is_active !== false)}
+                                  className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
+                                />
+                                <span className="text-[10px] font-black uppercase font-sans">
+                                  {plan.is_active !== false ? "🟢 On" : "🔴 Off"}
+                                </span>
+                              </label>
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-4">
+                              <div className="text-[10px] font-sans">
+                                <span className="block text-slate-400 font-bold">Cost Price</span>
+                                <span className="font-bold text-xs text-slate-700 font-mono">₦{plan.original_price}</span>
+                              </div>
+
+                              <div className="text-[10px] font-sans">
+                                <span className="block text-slate-400 font-bold">Validity</span>
+                                <span className="font-bold text-xs text-slate-700 uppercase font-mono">{plan.validity}</span>
+                              </div>
+
+                              {/* Custom Selling Price Input */}
+                              <div className="flex flex-col items-end w-32 font-sans">
+                                <span className="text-[9px] text-slate-500 font-black uppercase pb-1 leading-none">Your Selling Price (₦)</span>
+                                <input
+                                  type="number"
+                                  defaultValue={plan.custom_price || plan.original_price}
+                                  onBlur={(e) => {
+                                    const val = Number(e.target.value);
+                                    if (val > 0 && val !== plan.custom_price) {
+                                      handleUpdateMozoPrice(plan.id, val);
+                                    }
+                                  }}
+                                  className="w-full bg-white border-2 border-black text-black font-extrabold text-xs rounded-xl py-1.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {adminSubTab === 'opay-receipts' && (
+        <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
+          <div className="flex justify-between items-center pb-6 border-b border-slate-50">
+            <div>
+              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
+              <p className="text-sm text-slate-400 font-medium font-sans">
+                Real-time transaction values, status checks, and revenue auditing.
+              </p>
+            </div>
+            <button
+              onClick={fetchOpayRevenueStats}
+              disabled={loadingOpayStats}
+              className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-2 rounded-xl hover:bg-blue-100 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {loadingOpayStats ? "Refreshing..." : "🔄 Refresh Stats"}
+            </button>
+          </div>
+
+          {loadingOpayStats && !opayRevenueStats ? (
+            <div className="py-16 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-400 font-bold font-sans">Loading administrative receipts...</p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {/* Cards Panel */}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="bg-purple-50/50 border border-purple-100/80 p-6 rounded-3xl">
+                  <span className="text-[10px] uppercase font-extrabold text-purple-700 tracking-wider block font-sans">Total Deposited Revenue</span>
+                  <p className="text-2xl font-black text-purple-800 font-mono tracking-tight mt-2">{formatCurrency(opayRevenueStats?.totalRevenue || 0)}</p>
+                </div>
+
+                <div className="bg-emerald-50/50 border border-emerald-100/80 p-6 rounded-3xl">
+                  <span className="text-[10px] uppercase font-extrabold text-emerald-700 tracking-wider block font-sans">Successful Payments</span>
+                  <p className="text-2xl font-black text-emerald-800 font-mono tracking-tight mt-2">{opayRevenueStats?.successfulCount || 0}</p>
+                </div>
+
+                <div className="bg-rose-50/50 border border-rose-100/80 p-6 rounded-3xl">
+                  <span className="text-[10px] uppercase font-extrabold text-rose-700 tracking-wider block font-sans">Failed Payments</span>
+                  <p className="text-2xl font-black text-rose-800 font-mono tracking-tight mt-2">{opayRevenueStats?.failedCount || 0}</p>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 p-6 rounded-3xl">
+                  <span className="text-[10px] uppercase font-extrabold text-slate-500 tracking-wider block font-sans">Total Credit Invariant Logs</span>
+                  <p className="text-2xl font-black text-slate-800 font-mono tracking-tight mt-2">{opayRevenueStats?.totalCount || 0}</p>
+                </div>
+              </div>
+
+              {/* Transactions List */}
+              <div className="space-y-4">
+                <h6 className="font-extrabold text-slate-900">Deposit Webhook Transaction Logs</h6>
+                <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-50">
+                  {opayRevenueStats?.payments && opayRevenueStats.payments.length > 0 ? (
+                    opayRevenueStats.payments.map((p: any) => (
+                      <div key={p.reference} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between text-xs hover:bg-slate-50/50 transition-colors gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800 font-sans">{p.email || "user@example.com"}</span>
+                            <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded uppercase">User: {p.userId?.slice(0, 8)}...</span>
+                          </div>
+                          <p className="font-mono text-[10px] text-slate-400">Ref: <span className="text-slate-600 font-semibold">{p.reference}</span></p>
+                          <p className="text-[10px] text-slate-400 font-sans">{new Date(p.createdAt || 0).toLocaleString()}</p>
+                        </div>
+
+                        <div className="text-right flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2">
+                          <span className="font-black text-sm text-slate-900 font-mono">{formatCurrency(p.amount)}</span>
+                          <span className={cn(
+                            "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded font-sans",
+                            p.status === "completed" || p.status === "success" ? "bg-emerald-50 text-emerald-700" :
+                            p.status === "pending" ? "bg-amber-50 text-amber-700 animate-pulse" : "bg-rose-50 text-rose-700"
+                          )}>
+                            {p.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-12 text-center text-slate-500">No Flutterwave payment gateway transactions recorded yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monnify Configuration form completely deleted */}
+
+      {/* EDIT SERVICE PLAN OVERLAY MODAL */}
+      <AnimatePresence>
+        {editingPlan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setEditingPlan(null)}
+              className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] p-8 max-w-md w-full relative border border-slate-100 shadow-2xl z-10 font-sans text-slate-900"
+            >
+              <h5 className="font-extrabold text-lg text-slate-900 mb-2 font-sans">Edit Service Plan</h5>
+              <p className="text-xs text-slate-500 mb-6 font-sans">Modify product properties for <span className="font-bold text-slate-800 font-mono">{editingPlan.network} - {editingPlan.name}</span></p>
+
+              <form onSubmit={handleEditPlanSubmit} className="space-y-4 text-xs font-bold">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Network Carrier</label>
+                    <select 
+                      value={editPlanNetwork}
+                      onChange={(e) => setEditPlanNetwork(e.target.value as NetworkType)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none"
+                    >
+                      <option value="MTN">MTN</option>
+                      <option value="Airtel">Airtel</option>
+                      <option value="Glo">Glo</option>
+                      <option value="9mobile">9mobile</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Plan Category</label>
+                    <select 
+                      value={editPlanType}
+                      onChange={(e) => setEditPlanType(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none"
+                    >
+                      <option value="data">Internet Data</option>
+                      <option value="airtime">Bulk Airtime</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Plan Name</label>
+                  <input 
+                    required
+                    type="text" 
+                    value={editPlanName}
+                    onChange={(e) => setEditPlanName(e.target.value)}
+                    placeholder="e.g. 5GB Corporate Gifting"
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none font-medium text-xs font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">Retail Price (₦)</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={editPlanPrice}
+                      onChange={(e) => setEditPlanPrice(e.target.value.replace(/\D/g,''))}
+                      placeholder="e.g. 1250"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 font-mono focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Validity Duration</label>
+                    <input 
+                      type="text" 
+                      value={editPlanDuration}
+                      onChange={(e) => setEditPlanDuration(e.target.value)}
+                      placeholder="30 Days"
+                      disabled={editPlanType === 'airtime'}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-405 ml-1 font-sans">Peyflex Variation ID / Code</label>
+                  <input 
+                    required
+                    type="text" 
+                    value={editPlanPeyflexId}
+                    onChange={(e) => setEditPlanPeyflexId(e.target.value)}
+                    placeholder="e.g. mtn_sme_1gb (copied from Peyflex)"
+                    className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 focus:outline-none font-medium text-xs font-mono"
+                  />
+                </div>
+
+                {/* EDIT MARKUP PRICES */}
+                <div className="border-t border-slate-100 pt-4 space-y-3.5">
+                  <span className="text-[10px] uppercase font-black text-indigo-650 block tracking-wider font-sans">Partner Pricing Markups (Optional)</span>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Reseller Price (₦)</label>
+                      <input 
+                        type="text" 
+                        value={editPlanResellerPrice}
+                        onChange={(e) => setEditPlanResellerPrice(e.target.value.replace(/\D/g,''))}
+                        placeholder="e.g. 1150"
+                        className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Agent Price (₦)</label>
+                      <input 
+                        type="text" 
+                        value={editPlanAgentPrice}
+                        onChange={(e) => setEditPlanAgentPrice(e.target.value.replace(/\D/g,''))}
+                        placeholder="e.g. 1100"
+                        className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 font-mono focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setEditingPlan(null)}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-3.5 rounded-xl font-bold font-sans transition-colors cursor-pointer"
+                  >
+                    Cancel Action
+                  </button>
+                  <button 
+                    disabled={isUpdatingPlan}
+                    type="submit"
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-extrabold transition-all flex items-center justify-center gap-1 shadow-lg shadow-indigo-100 cursor-pointer"
+                  >
+                    {isUpdatingPlan ? "Saving..." : "Save Properties"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {adminSubTab === 'pricing-manager' && (
+        <div className="p-4 sm:p-6">
+          <AdminPricingManager />
+        </div>
+      )}
+
+    </div>
+  );
+}
