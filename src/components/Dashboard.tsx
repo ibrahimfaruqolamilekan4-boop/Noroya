@@ -1825,6 +1825,30 @@ function DashboardOverview({
     }
   };
 
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+
+  const fundedThisMonth = transactions
+    .filter(t => {
+      const d = new Date(t.createdAt || t.created_at || Date.now());
+      return (t.type === 'funding' || t.type === 'deposit' || t.description?.toLowerCase().includes('fund') || t.description?.toLowerCase().includes('deposit')) &&
+             d.getMonth() === currentMonth &&
+             d.getFullYear() === currentYear &&
+             t.status === 'completed';
+    })
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+  const spendThisMonth = transactions
+    .filter(t => {
+      const d = new Date(t.createdAt || t.created_at || Date.now());
+      const isPurchase = t.type === 'data' || t.type === 'airtime' || t.type === 'bill' || t.type === 'transfer' || t.amount < 0;
+      return isPurchase &&
+             d.getMonth() === currentMonth &&
+             d.getFullYear() === currentYear &&
+             t.status === 'completed';
+    })
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
   return (
     <div className="space-y-8 font-sans">
       {/* Greeting Header */}
@@ -1835,12 +1859,20 @@ function DashboardOverview({
           </h2>
           <p className="text-xs md:text-sm text-slate-500 font-medium mt-0.5">Everything you need, in one calm place.</p>
         </div>
-        <button 
-          onClick={() => handleOpenFundModal()}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer w-fit"
-        >
-          + Deposit funds
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button 
+            onClick={() => setShowTransferModal(true)}
+            className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-slate-900/10 transition-all cursor-pointer w-fit"
+          >
+            ⇄ Transfer
+          </button>
+          <button 
+            onClick={() => handleOpenFundModal()}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer w-fit"
+          >
+            + Deposit funds
+          </button>
+        </div>
       </div>
 
       {/* Wallet Card Grid */}
@@ -1859,7 +1891,7 @@ function DashboardOverview({
                 {hideBalance ? '********' : formatCurrency(currentBalance)}
                 {isUpdating && <span className="text-xs ml-2 font-sans animate-pulse">Syncing...</span>}
               </h3>
-              <p className="text-xs text-slate-400 mt-2 font-medium">Wallet is active • Updated just now</p>
+              <p className="text-xs text-slate-400 mt-2 font-medium">Wallet is active • Updated from Supabase</p>
             </div>
             <button 
               onClick={() => setHideBalance(!hideBalance)}
@@ -1872,16 +1904,24 @@ function DashboardOverview({
           
           <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-6 mt-6 border-t border-white/10">
             <div>
-              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">This month</p>
-              <p className="text-emerald-400 font-extrabold text-sm tracking-tight mt-0.5">+₦82,300 funded</p>
+              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">This month funded</p>
+              <p className="text-emerald-400 font-extrabold text-sm tracking-tight mt-0.5">+{formatCurrency(fundedThisMonth)} funded</p>
             </div>
             
-            <button 
-              onClick={() => handleOpenFundModal()} 
-              className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 select-none cursor-pointer"
-            >
-              Deposit money →
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button 
+                onClick={() => setShowTransferModal(true)} 
+                className="bg-white/15 hover:bg-white/25 text-white border border-white/20 font-black px-5 py-3 rounded-2xl text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all select-none cursor-pointer"
+              >
+                Transfer →
+              </button>
+              <button 
+                onClick={() => handleOpenFundModal()} 
+                className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 select-none cursor-pointer"
+              >
+                Deposit money →
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1890,10 +1930,10 @@ function DashboardOverview({
           <div>
             <div className="flex justify-between items-start mb-3">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Spend this month</span>
-              <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-[10px] font-extrabold">Live demo</span>
+              <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-[10px] font-extrabold">Supabase sync</span>
             </div>
-            <h3 className="text-3xl font-black text-slate-950 tracking-tight">
-              ₦6,690
+            <h3 className="text-3xl font-black text-slate-950 tracking-tight font-mono">
+              {formatCurrency(spendThisMonth)}
             </h3>
           </div>
 
