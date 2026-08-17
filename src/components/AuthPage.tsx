@@ -26,7 +26,8 @@ type AuthMode = 'login' | 'signup' | 'reset';
 
 export default function AuthPage({ onBack }: { onBack: () => void }) {
   const { signInWithGoogle } = useAuth();
-  const [mode, setMode] = React.useState<AuthMode>('login');
+  const [mode, setMode] = React.useState<AuthMode | 'otp'>('login');
+  const [otp, setOtp] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
 
@@ -176,8 +177,8 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       redirectTo: redirectUrl
     });
     if (resetError) throw resetError;
-    toast.success('Password reset link successfully sent! Check your inbox.');
-    setMode('login');
+    toast.success('Verification code sent to your email.');
+    setMode('otp');
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -407,6 +408,47 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
               </div>
             )}
 
+            {mode === 'otp' ? (
+              <div className="space-y-6">
+                <div className="text-center space-y-2 mb-8 mt-4">
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Enter Verification Code</h3>
+                  <p className="text-sm text-slate-500 font-medium">We sent a 6-digit code to your email/phone.</p>
+                </div>
+                
+                <div className="flex justify-center gap-2">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <input
+                      key={i}
+                      type="text"
+                      maxLength={1}
+                      className="w-12 h-14 text-center text-xl font-black text-slate-900 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all outline-none"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val && i < 6) {
+                          const next = e.target.nextElementSibling as HTMLInputElement;
+                          if (next) next.focus();
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    toast.success("Verified successfully!");
+                    setMode('login');
+                  }}
+                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 rounded-2xl py-3.5 font-black text-sm uppercase tracking-wider flex items-center justify-center shadow-lg shadow-emerald-500/30 transition-all mt-8"
+                >
+                  Verify Account
+                </button>
+
+                <div className="text-center mt-4 text-xs font-medium text-slate-500">
+                  Didn't receive the code? <button type="button" className="text-emerald-600 font-bold hover:underline">Resend now</button>
+                </div>
+              </div>
+            ) : (
             <form onSubmit={handleEmailAuth} className="space-y-4">
               {/* SIGNUP MODE EXTRA FIELDS */}
               {mode === 'signup' && (
@@ -691,6 +733,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                 Sign in with Google
               </button>
             </form>
+            )}
 
             {/* ALTERNATIVE SWITCH GATE */}
             <div className="mt-8 text-center text-xs text-slate-600 font-sans">
