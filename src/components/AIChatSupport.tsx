@@ -8,7 +8,7 @@ export default function AIChatSupport() {
   const { user } = useAuth();
   const [isOpen, setIsOpen] = React.useState(false);
   const [messages, setMessages] = React.useState([
-    { role: 'assistant', content: 'Hi! I am Noroya AI. How can I help you today with your digital services?' }
+    { role: 'assistant', content: 'Hi! I am NORODATA AI. How can I help you today with your digital services?' }
   ]);
   const [input, setInput] = React.useState('');
   const [loading, setLoading] = React.useState(false);
@@ -63,7 +63,7 @@ export default function AIChatSupport() {
                   <Bot size={20} />
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm">Noroya AI Support</h4>
+                  <h4 className="font-bold text-sm">NORODATA AI Support</h4>
                   <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider">Online</p>
                 </div>
               </div>

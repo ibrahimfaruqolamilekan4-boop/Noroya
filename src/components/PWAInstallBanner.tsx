@@ -59,9 +59,9 @@ export function PWAInstallBanner() {
   const handleDismiss = () => {
     setShowBanner(false);
     if (isIOS) {
-      localStorage.setItem('noroya_ios_dismissed', 'true');
+      localStorage.setItem('NORODATA_ios_dismissed', 'true');
     } else {
-      localStorage.setItem('noroya_pwa_dismissed', 'true');
+      localStorage.setItem('NORODATA_pwa_dismissed', 'true');
     }
   };
 
@@ -75,7 +75,7 @@ export function PWAInstallBanner() {
             <Smartphone size={24} />
           </div>
           <div>
-            <h4 className="text-sm font-black tracking-tight">Install Noroya App</h4>
+            <h4 className="text-sm font-black tracking-tight">Install NORODATA App</h4>
             <p className="text-xs text-slate-400 font-medium">
               {isIOS ? 'Add to Home Screen for instant VTU access' : 'Install for lightning-fast VTU services & offline feel'}
             </p>

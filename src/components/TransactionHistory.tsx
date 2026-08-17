@@ -132,7 +132,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `noroya_payment_ledger_${user.uid.slice(0, 6)}_${Date.now()}.csv`);
+    link.setAttribute("download", `NORODATA_payment_ledger_${user.uid.slice(0, 6)}_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

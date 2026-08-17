@@ -510,7 +510,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
               )}
             >
               <div>
-                <h5 className="font-extrabold text-sm text-slate-900 leading-none">Noroya Help Hub</h5>
+                <h5 className="font-extrabold text-sm text-slate-900 leading-none">NORODATA Help Hub</h5>
                 <p className="text-[10px] text-slate-400 font-extrabold uppercase mt-1">24/7 Client Support services</p>
               </div>
 
@@ -519,7 +519,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
                 {ADMIN_CONTACTS.map((admin) => (
                   <a
                     key={admin.number}
-                    href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
+                    href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Support,%20I%20need%20help%20with...`}
                     target="_blank" rel="noreferrer"
                     className="flex items-center gap-3 p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl transition-all font-bold"
                   >
@@ -529,7 +529,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
 
                 {/* TELEGRAM LINK */}
                 <a 
-                  href="https://t.me/noroya_data_group" 
+                  href="https://t.me/NORODATA_data_group" 
                   target="_blank" rel="noreferrer"
                   className="flex items-center gap-3 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-2xl transition-all font-bold"
                 >
@@ -624,9 +624,9 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  const shareText = `Hey! Join me on Noroya Data to get unbeatable discounts on data bundles and airtime top-ups. Sign up using my referral link: ${referralLink}`;
+  const shareText = `Hey! Join me on NORODATA to get unbeatable discounts on data bundles and airtime top-ups. Sign up using my referral link: ${referralLink}`;
   const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
-  const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent("Join me on Noroya Data for VTU discounts!")}`;
+  const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent("Join me on NORODATA for VTU discounts!")}`;
   const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
 
   return (
@@ -635,11 +635,11 @@ function ReferralSection({ user, transactions }: { user: UserProfile, transactio
       <div className="bg-gradient-to-br from-indigo-600 via-violet-600 to-violet-700 rounded-[32px] p-8 md:p-10 text-white shadow-2xl shadow-indigo-200/60 relative overflow-hidden">
         <div className="relative z-10 max-w-xl space-y-6">
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-3.5 py-1.5 rounded-full text-xs font-black tracking-wide uppercase">
-            <Gift size={14} className="text-yellow-300 animate-pulse" /> Noroya Partner Program
+            <Gift size={14} className="text-yellow-300 animate-pulse" /> NORODATA Partner Program
           </div>
           <h3 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">Refer & Earn 2% Commissions</h3>
           <p className="text-indigo-100 text-sm md:text-base leading-relaxed font-medium">
-            Invite your friends to Noroya Data and earn a <span className="text-white font-bold underline decoration-yellow-400 decoration-2">2% cash commission</span> on every single data and airtime purchase they make — for life!
+            Invite your friends to NORODATA and earn a <span className="text-white font-bold underline decoration-yellow-400 decoration-2">2% cash commission</span> on every single data and airtime purchase they make — for life!
           </p>
           
           {/* Actions panel */}
@@ -1341,10 +1341,10 @@ function DashboardOverview({
           customer: {
             email: user.email,
             phone_number: (user as any).phone_number || (user as any).phone || user.phoneNumber || "08000000000",
-            name: (user as any).name || (user as any).full_name || user.fullName || "Nooraya Customer"
+            name: (user as any).name || (user as any).full_name || user.fullName || "NORODATA Customer"
           },
           customizations: {
-            title: "Nooraya Digital VTU Wallet Funding",
+            title: "NORODATA Digital VTU Wallet Funding",
             description: "Wallet balance top-up via Flutterwave Standard Gateway",
             logo: "https://checkout.flutterwave.com/assets/img/flutterwave-badge.svg",
           },
@@ -1939,7 +1939,7 @@ function DashboardOverview({
             💬
           </div>
           <div className="text-left font-sans">
-            <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-wider leading-snug">Nooraya Live customer support</h4>
+            <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-wider leading-snug">NORODATA Live customer support</h4>
             <p className="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Need immediate assistance, have order queries, or require help? We are online.</p>
           </div>
         </div>
@@ -1947,7 +1947,7 @@ function DashboardOverview({
           {ADMIN_CONTACTS.map((admin) => (
             <a
               key={admin.number}
-              href={`https://wa.me/${admin.number}?text=Hello%20Nooraya%20Support,%20I%20need%20help%20with...`}
+              href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Support,%20I%20need%20help%20with...`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-center inline-flex justify-center items-center gap-1.5 no-underline shadow-md shadow-emerald-200/60 hover:-translate-y-0.5"
@@ -2670,7 +2670,7 @@ function DashboardOverview({
                     <input
                       value={transferUid}
                       onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
-                      placeholder="e.g. NOROYA-25J7Q"
+                      placeholder="e.g. NORODATA-25J7Q"
                       className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
                     />
                   </div>

@@ -93,7 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!sbProfile) {
           console.warn("Profile record missing! Auto-creating row to prevent client crash...");
           try {
-            const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+            const generatedCode = `NORODATA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
             const recoveryPayload = {
               id: sbUser.id,
               name: sbUser.user_metadata?.fullName || sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'User',
