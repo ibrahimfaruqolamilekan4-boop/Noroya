@@ -649,7 +649,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
               <div id="receipt-print-area" className="space-y-6">
                 <div className="text-center pb-4 border-b border-dashed border-slate-100 space-y-2">
                   <div className="inline-flex items-center gap-1 font-black text-lg tracking-tight">
-                    <span className="text-blue-600">NOROYA</span>DATA
+                    <span className="text-blue-600">NORODATA</span>DATA
                   </div>
                   <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Telecom & Utility Invoice</p>
                 </div>
@@ -665,7 +665,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 <div className="space-y-3.5 pt-4 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Merchant Business</span>
-                    <span className="font-extrabold text-slate-800">Noroya Data Hub</span>
+                    <span className="font-extrabold text-slate-800">NORODATA Hub</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Service Subtitle</span>
@@ -701,7 +701,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 </div>
 
                 <div className="text-center pt-6 border-t border-slate-100 text-[10px] text-slate-400 leading-relaxed font-sans">
-                  Thank you for using Noroya Automated Dispatch systems.<br /> 24/7 high speed instant telecom clearance.
+                  Thank you for using NORODATA Automated Dispatch systems.<br /> 24/7 high speed instant telecom clearance.
                 </div>
               </div>
 

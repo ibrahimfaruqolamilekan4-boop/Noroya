@@ -435,7 +435,7 @@ export default function BettingSection() {
             <div className="bg-slate-50 rounded-[2rem] border border-slate-100 p-6 space-y-3.5 divide-y divide-slate-100 text-xs">
               <div className="py-2.5 flex justify-between items-center first:pt-0">
                 <span className="text-slate-400 font-medium">Merchant Outlet</span>
-                <span className="font-extrabold text-slate-800">Noroya Data Hub</span>
+                <span className="font-extrabold text-slate-800">NORODATA Hub</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Bookmaker Platform</span>

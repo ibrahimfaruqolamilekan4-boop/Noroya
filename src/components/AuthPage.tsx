@@ -136,7 +136,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   ) => {
     try {
       const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
-      const generatedCode = `NOROYA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const generatedCode = `NORODATA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
       // Fetch existing profile to avoid overwriting balance
       const { data: existing } = await supabase
@@ -510,7 +510,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                         type="text"
                         value={referralCodeInput}
                         onChange={(e) => setReferralCodeInput(e.target.value)}
-                        placeholder="e.g. NOROYA-AF8X"
+                        placeholder="e.g. NORODATA-AF8X"
                         className={cn(
                           "w-full bg-slate-50 border-2 rounded-xl py-3 pl-11 pr-4 text-xs font-black uppercase tracking-wider focus:outline-none transition-all font-mono text-slate-900",
                           referralStatus.status === 'valid' && "border-emerald-500 bg-emerald-50/20",

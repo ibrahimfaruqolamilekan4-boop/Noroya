@@ -96,8 +96,8 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
 
   const faqs = [
     {
-      q: "How does wallet funding work on Noroyasub?",
-      a: "When you wish to fund your wallet, we assign you a personalized, automated transfer account. Simple bank transfers to this account credit your Noroyasub wallet balance automatically in under 10 seconds, with zero human intervention."
+      q: "How does wallet funding work on NORODATA?",
+      a: "When you wish to fund your wallet, we assign you a personalized, automated transfer account. Simple bank transfers to this account credit your NORODATA wallet balance automatically in under 10 seconds, with zero human intervention."
     },
     {
       q: "Are there any hidden costs or fees?",
