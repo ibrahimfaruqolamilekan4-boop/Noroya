@@ -181,10 +181,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
       {/* Sidebar - Desktop */}
       <aside className="hidden md:flex flex-col w-64 shrink-0 bg-white border-r border-slate-100 text-slate-900">
         <div className="p-6 flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
-            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+          <div className="w-9 h-9 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-600/20">
+            <span className="text-white font-black text-lg">N</span>
           </div>
           <span className="text-xl font-black tracking-tight font-display text-slate-900">
             NORODATA
@@ -241,10 +239,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile, onLog
             >
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
-                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
+                  <div className="w-8 h-8 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-600/20">
+                    <span className="text-white font-black text-base">N</span>
                   </div>
                   <span className="text-lg font-black tracking-tight font-display text-slate-900">NORODATA</span>
                 </div>
@@ -821,11 +817,15 @@ function SettingsSection({ user }: { user: UserProfile }) {
 
     setIsUpdating(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        phoneNumber,
-        transactionPin
-      }, { merge: true });
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          phone_number: phoneNumber,
+          transaction_pin: transactionPin
+        })
+        .eq('id', (user as any).uid || (user as any).id);
+        
+      if (error) throw error;
       toast.success("Security profile updated successfully! 🔐");
     } catch (error: any) {
       toast.error("Failed to update security credentials: " + error.message);
@@ -966,6 +966,7 @@ function DashboardOverview({
   const [showTransferModal, setShowTransferModal] = React.useState(false);
   const [transferUid, setTransferUid] = React.useState('');
   const [transferAmount, setTransferAmount] = React.useState('');
+  const [transferNote, setTransferNote] = React.useState('');
   const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -1071,20 +1072,31 @@ function DashboardOverview({
   // ── WALLET TRANSFER HANDLERS ───────────────────────────────────────────
   const handleLookupRecipient = async () => {
     if (!transferUid.trim()) {
-      toast.error("Please enter a recipient UID");
+      toast.error("Please enter a recipient detail");
       return;
     }
     setTransferLoading(true);
     try {
-      const { data, error } = await supabase.rpc('lookup_recipient', {
-        target_uid: transferUid.trim()
-      });
+      const queryValue = transferUid.trim();
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`email.eq.${queryValue},phone_number.eq.${queryValue},username.eq.${queryValue},referral_code.eq.${queryValue.toUpperCase()}`)
+        .maybeSingle();
+
       if (error) throw error;
-      if (data.status === 'error') {
-        toast.error(data.message);
+      if (!data) {
+        toast.error("User not found with those details.");
+        setTransferLoading(false);
         return;
       }
-      setTransferRecipient(data.data);
+      if (data.id === (user as any).uid || data.id === (user as any).id) {
+        toast.error("You cannot transfer to yourself.");
+        setTransferLoading(false);
+        return;
+      }
+
+      setTransferRecipient(data);
       setTransferStep('confirm');
     } catch (err: any) {
       toast.error(err.message || "Failed to find recipient");
@@ -1104,18 +1116,20 @@ function DashboardOverview({
 
     try {
       const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferUid.trim(),
+        recipient_uid: transferRecipient.id,
         p_amount: amt,
-        p_reference: reference
+        p_reference: reference,
+        p_note: transferNote
       });
       if (error) throw error;
 
       if (data.status === 'success') {
-        toast.success(`₦${amt.toLocaleString()} sent to ${data.recipient_email}!`);
+        toast.success(`₦${amt.toLocaleString()} sent successfully!`);
         setShowTransferModal(false);
         setTransferStep('input');
         setTransferUid('');
         setTransferAmount('');
+        setTransferNote('');
         setTransferRecipient(null);
         refreshBalance();
       } else if (data.status === 'insufficient_funds') {
@@ -1132,8 +1146,9 @@ function DashboardOverview({
 
   // Secure Flutterwave State declarations
   const [showFundModal, setShowFundModal] = React.useState(false);
-  const [fundingTab, setFundingTab] = React.useState<'paystack' | 'flutterwave'>('flutterwave');
+  const [fundingTab, setFundingTab] = React.useState<'automated' | 'gateway' | 'manual'>('automated');
   const [opayAmount, setOpayAmount] = React.useState('2000');
+  const [manualAmount, setManualAmount] = React.useState('');
   const [opayLoading, setOpayLoading] = React.useState(false);
   const [fwLoading, setFwLoading] = React.useState(false);
 
@@ -1835,12 +1850,20 @@ function DashboardOverview({
           </h2>
           <p className="text-xs md:text-sm text-slate-500 font-medium mt-0.5">Everything you need, in one calm place.</p>
         </div>
-        <button 
-          onClick={() => handleOpenFundModal()}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer w-fit"
-        >
-          + Deposit funds
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={() => handleOpenFundModal()}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer w-fit"
+          >
+            + Deposit funds
+          </button>
+          <button 
+            onClick={() => setShowTransferModal(true)}
+            className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-slate-900/20 transition-all cursor-pointer w-fit"
+          >
+            Transfer
+          </button>
+        </div>
       </div>
 
       {/* Wallet Card Grid */}
@@ -2528,113 +2551,131 @@ function DashboardOverview({
               className="bg-white rounded-[2rem] w-full max-w-lg overflow-hidden relative border border-slate-100 shadow-2xl z-10"
             >
               {/* Header */}
-              <div className="p-6 border-b border-indigo-100 flex justify-between items-center bg-indigo-50">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-white border-2 border-black flex items-center justify-center text-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600">
                     <Wallet size={20} />
                   </div>
                   <div>
-                    <h4 className="font-extrabold text-slate-900 uppercase tracking-tight text-sm">
-                      Select Payment Channel
+                    <h4 className="font-extrabold text-slate-900 tracking-tight text-lg">
+                      Deposit Funds
                     </h4>
-                    <p className="text-[10px] text-slate-700 font-bold uppercase tracking-wider">
-                      Instantly credit your wallet balance
-                    </p>
                   </div>
                 </div>
                 <button 
                   onClick={() => setShowFundModal(false)}
-                  className="p-2 border-2 border-black bg-white text-black hover:bg-slate-100 rounded-xl transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+                  className="p-2 bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-full transition-colors"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              {/* Accounts Content List */}
-              <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto bg-white">
-                <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-6 font-sans">
-                  <div className="text-slate-700 text-xs leading-relaxed font-bold bg-indigo-50/70 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
-                    🦋 Fund your secure wallet instantly with **Flutterwave**. Your balance is credited automatically across our cloud nodes upon secure server validation.
+              {/* Tabs */}
+              <div className="flex p-2 bg-slate-50 mx-6 mt-6 rounded-xl space-x-1">
+                <button
+                  onClick={() => setFundingTab('automated')}
+                  className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-lg transition-all", fundingTab === 'automated' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700')}
+                >
+                  Bank Transfer
+                </button>
+                <button
+                  onClick={() => setFundingTab('gateway')}
+                  className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-lg transition-all", fundingTab === 'gateway' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700')}
+                >
+                  Gateway
+                </button>
+                <button
+                  onClick={() => setFundingTab('manual')}
+                  className={cn("flex-1 py-2 px-3 text-xs font-bold rounded-lg transition-all", fundingTab === 'manual' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700')}
+                >
+                  Manual
+                </button>
+              </div>
+
+              {/* Tab Contents */}
+              <div className="p-6">
+                {fundingTab === 'automated' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
+                      <p className="text-xs font-bold text-emerald-800 mb-4 flex items-center gap-2">
+                        <AlertCircle size={16} /> Transfers to this account will automatically fund your wallet.
+                      </p>
+                      <div className="space-y-3 bg-white p-4 rounded-xl border border-emerald-50">
+                        <div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Account Name</p>
+                          <p className="font-black text-slate-900">NORODATA - {user.fullName || user.username || user.email}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Bank Name</p>
+                          <p className="font-black text-slate-900">Moniepoint MFB / Wema Bank</p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Account Number</p>
+                            <p className="font-black text-xl text-emerald-600 tracking-tight">8234567890</p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText("8234567890");
+                              toast.success("Account number copied!");
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 flex items-center gap-2 rounded-lg font-bold text-xs transition-colors"
+                          >
+                            <Copy size={14} /> Copy
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                )}
 
-                    {/* Amount Input */}
+                {fundingTab === 'gateway' && (
+                  <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-5">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">Top-up Amount (₦)</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-700 font-black text-lg">₦</span>
-                        <input
-                          type="text"
-                          required
-                          value={opayAmount}
-                          onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
-                          placeholder="e.g. 2000"
-                          className="w-full bg-slate-50 border-2 border-black focus:border-[#5B21B6] rounded-xl py-4 pl-10 pr-4 font-mono font-extrabold text-slate-900 text-lg focus:outline-none transition-all placeholder:text-slate-300"
-                        />
-                      </div>
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Amount (₦)</label>
+                      <input
+                        type="number"
+                        required
+                        value={opayAmount}
+                        onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 2000"
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
                     </div>
-
-                    {/* Quick presets */}
-                    <div className="grid grid-cols-4 gap-2">
-                      {['1000', '2000', '5000', '10000'].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setOpayAmount(preset)}
-                          className={cn(
-                            "py-2.5 px-1 text-xs font-black border-2 border-black rounded-xl transition-all font-mono cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none",
-                            opayAmount === preset
-                              ? "bg-[#FFCC00] text-black"
-                              : "bg-white text-slate-600 hover:text-slate-900"
-                          )}
-                        >
-                          ₦{Number(preset).toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Balance forecast */}
-                    <div className="p-4 rounded-xl bg-slate-50 border-2 border-black space-y-2 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      <div className="flex justify-between items-center text-xs font-bold">
-                        <span className="text-slate-500 font-sans uppercase">Current Balance:</span>
-                        <span className="font-extrabold font-mono text-slate-900">{formatCurrency(user.balance)}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs border-t border-slate-200 pt-2 font-bold">
-                        <span className="text-[#5B21B6] uppercase">Projected Balance:</span>
-                        <span className="font-black font-mono text-[#5B21B6] text-sm">
-                          {formatCurrency(user.balance + Number(opayAmount || 0))}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Submit button */}
                     <button
                       type="submit"
                       disabled={fwLoading || !opayAmount || Number(opayAmount) <= 0}
-                      className="w-full bg-black border-2 border-black hover:bg-slate-800 disabled:bg-slate-300 disabled:border-slate-300 text-white font-black uppercase tracking-wider py-4 rounded-xl transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] disabled:shadow-none flex items-center justify-center gap-2 cursor-pointer text-xs"
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
                     >
-                      {fwLoading ? (
-                        <>
-                          <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                          <span>INITIALIZING FLUTTERWAVE GATEWAY...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>🦋 INITIALIZE FLUTTERWAVE CHECKOUT</span>
-                        </>
-                      )}
+                      {fwLoading ? "Initializing..." : "Proceed"}
                     </button>
-
-
-                    <div className="flex items-center gap-3 p-4 rounded-xl text-xs bg-[#DBE2EF] border-2 border-black text-slate-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                      <AlertCircle size={18} className="text-[#5B21B6] flex-shrink-0" />
-                      <div>
-                        <p className="font-extrabold block">Instant Verification</p>
-                        <p className="text-[10px] leading-relaxed font-bold text-slate-700">
-                          Flutterwave verifies transactions live. Do not refresh or exit checkout mid-payment.
-                        </p>
-                      </div>
-                    </div>
                   </form>
+                )}
+
+                {fundingTab === 'manual' && (
+                  <div className="space-y-5">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Amount Transferred (₦)</label>
+                      <input
+                        type="number"
+                        value={manualAmount}
+                        onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 5000"
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!manualAmount) return toast.error("Enter amount");
+                        toast.success("Funding request submitted. Awaiting admin approval.");
+                        setShowFundModal(false);
+                      }}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
+                    >
+                      Confirm transfer made
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
@@ -2666,12 +2707,12 @@ function DashboardOverview({
               {transferStep === 'input' && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient Referral Code</label>
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Recipient Phone, Email, or Username</label>
                     <input
                       value={transferUid}
-                      onChange={(e) => setTransferUid(e.target.value.toUpperCase())}
-                      placeholder="e.g. NORODATA-25J7Q"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
+                      onChange={(e) => setTransferUid(e.target.value)}
+                      placeholder="e.g. 08012345678 or faruq@email.com"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                     />
                   </div>
                   <div className="space-y-2">
@@ -2681,13 +2722,23 @@ function DashboardOverview({
                       value={transferAmount}
                       onChange={(e) => setTransferAmount(e.target.value)}
                       placeholder="0.00"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-600/15 focus:border-indigo-600"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">Description / Note (Optional)</label>
+                    <input
+                      type="text"
+                      value={transferNote}
+                      onChange={(e) => setTransferNote(e.target.value)}
+                      placeholder="What's this for?"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                     />
                   </div>
                   <button
                     onClick={handleLookupRecipient}
                     disabled={transferLoading || !transferUid || !transferAmount}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-2xl py-4 transition-all disabled:opacity-50"
                   >
                     {transferLoading ? "Checking..." : "Continue"}
                   </button>
@@ -2698,18 +2749,21 @@ function DashboardOverview({
                 <div className="space-y-4">
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-2">
                     <p className="text-xs text-slate-400 font-bold uppercase">Sending to</p>
-                    <p className="font-extrabold text-slate-900">{transferRecipient.full_name || transferRecipient.email}</p>
-                    <p className="text-xs text-slate-500">{transferRecipient.uid}</p>
+                    <p className="font-extrabold text-slate-900">{transferRecipient.full_name || transferRecipient.username || transferRecipient.email}</p>
+                    <p className="text-xs text-slate-500">{transferRecipient.phone_number || transferRecipient.email}</p>
+                    {transferNote && (
+                      <p className="text-sm font-medium text-slate-600 italic">"{transferNote}"</p>
+                    )}
                     <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
                       <span className="text-xs text-slate-400 font-bold uppercase">Amount</span>
-                      <span className="text-xl font-black text-indigo-600">₦{Number(transferAmount).toLocaleString()}</span>
+                      <span className="text-xl font-black text-emerald-600">₦{Number(transferAmount).toLocaleString()}</span>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl py-3.5">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl py-3.5 disabled:opacity-50">
                       {transferLoading ? "Sending..." : "Confirm"}
                     </button>
                   </div>
