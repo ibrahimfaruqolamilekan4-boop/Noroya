@@ -1,6 +1,6 @@
 {
-  "name": "Noroyasub",
-  "description": "Noroyasub is a secure, automated Virtual Top-Up (VTU) platform in Nigeria. Buy data, top up airtime instantly, pay electricity bills, and generate bulk recharge pins easily.",
+  "name": "NORODATA",
+  "description": "NORODATA is a secure, automated Virtual Top-Up (VTU) platform in Nigeria. Buy data, top up airtime instantly, pay electricity bills, and transfer funds.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
