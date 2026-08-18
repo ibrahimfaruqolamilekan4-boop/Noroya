@@ -370,15 +370,7 @@ export async function purchaseElectricity(
     throw new Error("Minimum amount is ₦100");
   }
 
-  // 1. Check & Deduct atomically using the database RPC function
-  const { data: deductSuccess, error: deductError } = await supabase.rpc('deduct_balance', { 
-    user_uuid: userId, 
-    amount: Number(amount) 
-  });
-
-  if (deductError || !deductSuccess) {
-    throw new Error("Insufficient balance");
-  }
+  // The server-side utility route owns the atomic debit/refund lifecycle.
 
   try {
     // 2. Dispatch to API or proxy
@@ -398,7 +390,7 @@ export async function purchaseElectricity(
       result = await res.json();
     } else {
       // Proxy call if running on client-side
-      const res = await fetch('/api/v1/utility/pay', {
+      const res = await fetch('/api/buy-utility', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -406,7 +398,7 @@ export async function purchaseElectricity(
           type: 'electricity',
           provider: disco,
           number: meterNumber,
-          plan: `${disco} Electricity`,
+          plan: '',
           amount: Number(amount)
         })
       });
@@ -421,7 +413,6 @@ export async function purchaseElectricity(
     }
 
     if (!result.success) {
-      await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
       throw new Error(result.message || "Electricity payment failed");
     }
 
@@ -438,8 +429,7 @@ export async function purchaseElectricity(
 
     return result;
   } catch (error: any) {
-    // 4. Refund on failure atomically
-    await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
+    // The server route has already refunded any provider failure atomically.
     throw error;
   }
 }
@@ -462,15 +452,7 @@ export async function purchaseCableTV(
     throw new Error("Minimum amount is ₦500");
   }
 
-  // 1. Check & Deduct atomically using the database RPC function
-  const { data: deductSuccess, error: deductError } = await supabase.rpc('deduct_balance', { 
-    user_uuid: userId, 
-    amount: Number(amount) 
-  });
-
-  if (deductError || !deductSuccess) {
-    throw new Error("Insufficient balance");
-  }
+  // The server-side utility route owns the atomic debit/refund lifecycle.
 
   try {
     // 2. Dispatch to API or proxy
@@ -490,7 +472,7 @@ export async function purchaseCableTV(
       result = await res.json();
     } else {
       // Proxy call if running on client-side
-      const res = await fetch('/api/v1/utility/pay', {
+      const res = await fetch('/api/buy-utility', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -513,7 +495,6 @@ export async function purchaseCableTV(
     }
 
     if (!result.success) {
-      await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
       throw new Error(result.message || "Cable subscription failed");
     }
 
@@ -531,8 +512,7 @@ export async function purchaseCableTV(
 
     return result;
   } catch (error: any) {
-    // 4. Refund on failure atomically
-    await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
+    // The server route has already refunded any provider failure atomically.
     throw error;
   }
 }

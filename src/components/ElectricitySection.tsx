@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Loader2, Printer, Copy, RefreshCw, Landmark, ShieldCheck } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 import SuccessFeedback from './SuccessFeedback';
 
@@ -13,18 +14,9 @@ interface ProviderOption {
   region: string;
   logoBg: string;
   textColor: string;
+  planId?: string;
+  planName?: string;
 }
-
-const ELECTRICITY_PROVIDERS: ProviderOption[] = [
-  { code: 'EKEDC', name: 'Eko Electricity Distribution', shortName: 'Eko (EKEDC)', region: 'Lagos (Elko)', logoBg: 'bg-blue-600', textColor: 'text-white' },
-  { code: 'IKEDC', name: 'Ikeja Electricity Distribution', shortName: 'Ikeja (IKEDC)', region: 'Lagos (Ikeja)', logoBg: 'bg-red-650 bg-red-600', textColor: 'text-white' },
-  { code: 'AEDC', name: 'Abuja Electricity', shortName: 'Abuja (AEDC)', region: 'Abuja (FCT)', logoBg: 'bg-amber-500', textColor: 'text-slate-950' },
-  { code: 'PHED', name: 'Port Harcourt Electricity', shortName: 'PH (PHED)', region: 'Rivers, South-South', logoBg: 'bg-teal-600', textColor: 'text-white' },
-  { code: 'IBEDC', name: 'Ibadan Electricity Distribution', shortName: 'Ibadan (IBEDC)', region: 'Oyo, Osun, Ogun', logoBg: 'bg-purple-600', textColor: 'text-white' },
-  { code: 'KAEDCO', name: 'Kaduna Electricity Distribution', shortName: 'Kaduna (KAEDCO)', region: 'Kaduna', logoBg: 'bg-indigo-600', textColor: 'text-white' },
-  { code: 'KEDCO', name: 'Kano Electricity', shortName: 'Kano (KEDCO)', region: 'Kano, Katsina', logoBg: 'bg-emerald-600', textColor: 'text-white' },
-  { code: 'EEDC', name: 'Enugu Electricity', shortName: 'Enugu (EEDC)', region: 'Enugu, Abia, Imo', logoBg: 'bg-rose-600', textColor: 'text-white' },
-];
 
 export default function ElectricitySection() {
   const { user } = useAuth();
@@ -35,6 +27,31 @@ export default function ElectricitySection() {
   const [meterNumber, setMeterNumber] = React.useState('');
   const [meterType, setMeterType] = React.useState<'prepaid' | 'postpaid'>('prepaid');
   const [amount, setAmount] = React.useState('');
+  const [electricityProviders, setElectricityProviders] = React.useState<ProviderOption[]>([]);
+  const [plansLoading, setPlansLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/services/electricity');
+        const rows = await response.json();
+        if (!response.ok) throw new Error(rows?.error || 'Could not load electricity plans');
+        const grouped = new Map<string, ProviderOption>();
+        (Array.isArray(rows) ? rows : []).forEach((row: any) => {
+          const code = String(row.provider_or_network || '').trim().toUpperCase();
+          if (!code) return;
+          const name = String(row.item_name || row.plan_name || `${code} Electricity`);
+          const current = grouped.get(code) || { code, name: `${code} Electricity Distribution`, shortName: code, region: 'Nigeria', logoBg: 'bg-amber-500', textColor: 'text-slate-950' };
+          if (!current.planId || /prepaid/i.test(name)) { current.planId = String(row.bigisub_plan_id || row.mozosubz_plan_id || row.id); current.planName = name; }
+          grouped.set(code, current);
+        });
+        if (!cancelled) setElectricityProviders([...grouped.values()]);
+      } catch (error: any) { if (!cancelled) toast.error(error.message || 'Could not load active electricity services.'); }
+      finally { if (!cancelled) setPlansLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   
   // Validation State variables
   const [isValidating, setIsValidating] = React.useState(false);
@@ -134,21 +151,23 @@ export default function ElectricitySection() {
 
     try {
       const displayPlan = `${meterType.toUpperCase()} Electricity Unit Token (${provider.code})`;
-      const response = await fetch('/api/v1/utility/pay', {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/buy-utility', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
         body: JSON.stringify({
           userId: user.uid,
           type: 'electricity',
           provider: provider.code,
           number: meterNumber.trim(),
-          plan: displayPlan,
-          amount: finalBillingAmount
+          plan: provider.planId || `${provider.code.toLowerCase()}_${meterType}`,
+          amount: finalBillingAmount,
+          phone: (user as any)?.phone || (user as any)?.phone_number || meterNumber.trim()
         })
       });
 
       const resData = await response.json();
-      if (response.ok && resData.status === 'success') {
+      if (response.ok && (resData.status === 'success' || resData.success === true)) {
         const txRef = resData.transaction?.reference || `ELE-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
         const cashback = resData.transaction?.cashbackEarned || 0;
         const meterToken = resData.transaction?.token || '';
@@ -217,11 +236,13 @@ export default function ElectricitySection() {
             {/* GRID 1: Select Provider */}
             {!provider ? (
               <div className="space-y-4">
+                {plansLoading && <p className="text-xs text-slate-500">Loading active electricity services…</p>}
+                {!plansLoading && electricityProviders.length === 0 && <p className="text-xs text-rose-500">No active electricity services are available. Ask an admin to publish one.</p>}
                 <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
                   Select Distribution Company (DISCO)
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  {ELECTRICITY_PROVIDERS.map((disc) => (
+                  {electricityProviders.map((disc) => (
                     <button
                       key={disc.code}
                       onClick={() => setProvider(disc)}

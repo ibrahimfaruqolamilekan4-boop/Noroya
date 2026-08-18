@@ -54,7 +54,7 @@ const resolveBigisubApiKey = async (): Promise<string> => {
 // ─── VTU Provider Plugin System ─────────────────────────────────────────────
 // Providers live in src/lib/vtu-providers.ts
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders } from './src/lib/vtu-providers.js';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility } from './src/lib/vtu-providers.js';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
@@ -1644,7 +1644,9 @@ async function startServer() {
             planCategory = "SME";
           } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
             planCategory = "CG";
-          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+          } else if (pNameUpper.includes("AWOOF")) {
+            planCategory = "AWOOF";
+          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
             planCategory = "GIFTING";
           }
           const match = rawName.match(/(\d+)\s*(Days|Day|Hours|Hour)/i);
@@ -2337,73 +2339,8 @@ if (Object.keys(updateData).length <= 1) {
     try {
       const PEYFLEX_API_TOKEN = process.env.PEYFLEX_API_TOKEN || process.env.VTU_API_KEY;
       
-      const standardProducts = [
-        // DATA BUNDLES (SME, Gifting, Corporate Gifting)
-        // MTN
-        { id: "pey_mtn_sme_1gb", network: "MTN", type: "data", planType: "SME", name: "MTN SME 1GB", peyflex_variation_id: "mtn_sme_1gb", wholesaleCost: 240, duration: "30 Days" },
-        { id: "pey_mtn_sme_2gb", network: "MTN", type: "data", planType: "SME", name: "MTN SME 2GB", peyflex_variation_id: "mtn_sme_2gb", wholesaleCost: 480, duration: "30 Days" },
-        { id: "pey_mtn_sme_5gb", network: "MTN", type: "data", planType: "SME", name: "MTN SME 5GB", peyflex_variation_id: "mtn_sme_5gb", wholesaleCost: 1200, duration: "30 Days" },
-        { id: "pey_mtn_sme_10gb", network: "MTN", type: "data", planType: "SME", name: "MTN SME 10GB", peyflex_variation_id: "mtn_sme_10gb", wholesaleCost: 2400, duration: "30 Days" },
-        { id: "pey_mtn_gifting_1gb", network: "MTN", type: "data", planType: "Gifting", name: "MTN Gifting 1GB", peyflex_variation_id: "mtn_gifting_1gb", wholesaleCost: 275, duration: "30 Days" },
-        { id: "pey_mtn_gifting_2.5gb", network: "MTN", type: "data", planType: "Gifting", name: "MTN Gifting 2.5GB", peyflex_variation_id: "mtn_gifting_2.5gb", wholesaleCost: 570, duration: "30 Days" },
-        { id: "pey_mtn_cg_1gb", network: "MTN", type: "data", planType: "Corporate Gifting", name: "MTN CG 1GB", peyflex_variation_id: "mtn_cg_1gb", wholesaleCost: 265, duration: "30 Days" },
-        { id: "pey_mtn_cg_5gb", network: "MTN", type: "data", planType: "Corporate Gifting", name: "MTN CG 5GB", peyflex_variation_id: "mtn_cg_5gb", wholesaleCost: 1325, duration: "30 Days" },
-        // Expanded Large MTN Bundles
-        { id: "pey_mtn_gifting_20gb", network: "MTN", type: "data", planType: "Gifting", name: "MTN Gifting 20GB (Large)", peyflex_variation_id: "mtn_gifting_20gb", wholesaleCost: 5500, duration: "30 Days" },
-        { id: "pey_mtn_gifting_50gb", network: "MTN", type: "data", planType: "Gifting", name: "MTN Gifting 50GB (Heavy)", peyflex_variation_id: "mtn_gifting_50gb", wholesaleCost: 11500, duration: "30 Days" },
-        { id: "pey_mtn_gifting_100gb", network: "MTN", type: "data", planType: "Gifting", name: "MTN Gifting 100GB (Ultimate)", peyflex_variation_id: "mtn_gifting_100gb", wholesaleCost: 21000, duration: "30 Days" },
-
-        // Airtel
-        { id: "pey_airtel_sme_1gb", network: "Airtel", type: "data", planType: "SME", name: "Airtel SME 1GB", peyflex_variation_id: "airtel_sme_1gb", wholesaleCost: 245, duration: "30 Days" },
-        { id: "pey_airtel_sme_5gb", network: "Airtel", type: "data", planType: "SME", name: "Airtel SME 5GB", peyflex_variation_id: "airtel_sme_5gb", wholesaleCost: 1225, duration: "30 Days" },
-        { id: "pey_airtel_gifting_1.5gb", network: "Airtel", type: "data", planType: "Gifting", name: "Airtel Gifting 1.5GB", peyflex_variation_id: "airtel_gifting_1.5gb", wholesaleCost: 480, duration: "30 Days" },
-        { id: "pey_airtel_cg_1.5gb", network: "Airtel", type: "data", planType: "Corporate Gifting", name: "Airtel CG 1.5GB", peyflex_variation_id: "airtel_cg_1.5gb", wholesaleCost: 410, duration: "30 Days" },
-        // Expanded Large Airtel Bundles
-        { id: "pey_airtel_gifting_20gb", network: "Airtel", type: "data", planType: "Gifting", name: "Airtel Gifting 20GB (Large)", peyflex_variation_id: "airtel_gifting_20gb", wholesaleCost: 5500, duration: "30 Days" },
-        { id: "pey_airtel_gifting_50gb", network: "Airtel", type: "data", planType: "Gifting", name: "Airtel Gifting 50GB (Heavy)", peyflex_variation_id: "airtel_gifting_50gb", wholesaleCost: 11500, duration: "30 Days" },
-        { id: "pey_airtel_gifting_100gb", network: "Airtel", type: "data", planType: "Gifting", name: "Airtel Gifting 100GB (Ultimate)", peyflex_variation_id: "airtel_gifting_100gb", wholesaleCost: 21000, duration: "30 Days" },
-
-        // Glo
-        { id: "pey_glo_gifting_1.35gb", network: "Glo", type: "data", planType: "Gifting", name: "Glo Gifting 1.35GB", peyflex_variation_id: "glo_gifting_1.35gb", wholesaleCost: 460, duration: "30 Days" },
-        { id: "pey_glo_cg_1gb", network: "Glo", type: "data", planType: "Corporate Gifting", name: "Glo CG 1GB", peyflex_variation_id: "glo_cg_1gb", wholesaleCost: 250, duration: "30 Days" },
-        { id: "pey_glo_gifting_20gb", network: "Glo", type: "data", planType: "Gifting", name: "Glo Gifting 20GB", peyflex_variation_id: "glo_gifting_20gb", wholesaleCost: 5400, duration: "30 Days" },
-        { id: "pey_glo_gifting_50gb", network: "Glo", type: "data", planType: "Gifting", name: "Glo Gifting 50GB", peyflex_variation_id: "glo_gifting_50gb", wholesaleCost: 11200, duration: "30 Days" },
-
-        // 9mobile
-        { id: "pey_9mobile_gifting_1gb", network: "9mobile", type: "data", planType: "Gifting", name: "9mobile Gifting 1GB", peyflex_variation_id: "9mobile_gifting_1gb", wholesaleCost: 450, duration: "30 Days" },
-        { id: "pey_9mobile_cg_1.5gb", network: "9mobile", type: "data", planType: "Corporate Gifting", name: "9mobile CG 1.5GB", peyflex_variation_id: "9mobile_cg_1.5gb", wholesaleCost: 400, duration: "30 Days" },
-        { id: "pey_9mobile_gifting_10gb", network: "9mobile", type: "data", planType: "Gifting", name: "9mobile Gifting 10GB", peyflex_variation_id: "9mobile_gifting_10gb", wholesaleCost: 3500, duration: "30 Days" },
-
-        // ELECTRICITIES (Utilities prepaid/postpaid)
-        { id: "pey_ekedc_prepaid", network: "EKEDC", type: "electricity", planType: "Electricity", name: "Eko Electricity Prepaid (EKEDC)", peyflex_variation_id: "ekedc_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_ekedc_postpaid", network: "EKEDC", type: "electricity", planType: "Electricity", name: "Eko Electricity Postpaid (EKEDC)", peyflex_variation_id: "ekedc_postpaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_ikedc_prepaid", network: "IKEDC", type: "electricity", planType: "Electricity", name: "Ikeja Electricity Prepaid (IKEDC)", peyflex_variation_id: "ikedc_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_ikedc_postpaid", network: "IKEDC", type: "electricity", planType: "Electricity", name: "Ikeja Electricity Postpaid (IKEDC)", peyflex_variation_id: "ikedc_postpaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_aedc_prepaid", network: "AEDC", type: "electricity", planType: "Electricity", name: "Abuja Electricity Prepaid (AEDC)", peyflex_variation_id: "aedc_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_ibedc_prepaid", network: "IBEDC", type: "electricity", planType: "Electricity", name: "Ibadan Electricity Prepaid (IBEDC)", peyflex_variation_id: "ibedc_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_kaedco_prepaid", network: "KAEDCO", type: "electricity", planType: "Electricity", name: "Kaduna Electricity Prepaid (KAEDCO)", peyflex_variation_id: "kaedco_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_kedco_prepaid", network: "KEDCO", type: "electricity", planType: "Electricity", name: "Kano Electricity Prepaid (KEDCO)", peyflex_variation_id: "kedco_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_jed_prepaid", network: "JED", type: "electricity", planType: "Electricity", name: "Jos Electricity Prepaid (JED)", peyflex_variation_id: "jed_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_eedc_prepaid", network: "EEDC", type: "electricity", planType: "Electricity", name: "Enugu Electricity Prepaid (EEDC)", peyflex_variation_id: "eedc_prepaid", wholesaleCost: 100, duration: "N/A" },
-        { id: "pey_phed_prepaid", network: "PHED", type: "electricity", planType: "Electricity", name: "Port Harcourt Electricity Prepaid (PHED)", peyflex_variation_id: "phed_prepaid", wholesaleCost: 100, duration: "N/A" },
-
-        // CABLE TV
-        { id: "pey_gotv_lite", network: "GOTV", type: "cable", planType: "Cable TV", name: "GOTV Lite Package", peyflex_variation_id: "gotv_lite", wholesaleCost: 1100, duration: "30 Days" },
-        { id: "pey_gotv_jinja", network: "GOTV", type: "cable", planType: "Cable TV", name: "GOTV Jinja Package", peyflex_variation_id: "gotv_jinja", wholesaleCost: 2700, duration: "30 Days" },
-        { id: "pey_gotv_jolli", network: "GOTV", type: "cable", planType: "Cable TV", name: "GOTV Jolli Package", peyflex_variation_id: "gotv_jolli", wholesaleCost: 3950, duration: "30 Days" },
-        { id: "pey_gotv_max", network: "GOTV", type: "cable", planType: "Cable TV", name: "GOTV Max Package", peyflex_variation_id: "gotv_max", wholesaleCost: 4850, duration: "30 Days" },
-        { id: "pey_dstv_padi", network: "DSTV", type: "cable", planType: "Cable TV", name: "DSTV Padi Bouquet", peyflex_variation_id: "dstv_padi", wholesaleCost: 2950, duration: "30 Days" },
-        { id: "pey_dstv_yanga", network: "DSTV", type: "cable", planType: "Cable TV", name: "DSTV Yanga Bouquet", peyflex_variation_id: "dstv_yanga", wholesaleCost: 4250, duration: "30 Days" },
-        { id: "pey_dstv_confam", network: "DSTV", type: "cable", planType: "Cable TV", name: "DSTV Confam Bouquet", peyflex_variation_id: "dstv_confam", wholesaleCost: 6200, duration: "30 Days" },
-        { id: "pey_startimes_nova", network: "Startimes", type: "cable", planType: "Cable TV", name: "Startimes Nova", peyflex_variation_id: "startimes_nova", wholesaleCost: 1500, duration: "30 Days" },
-        { id: "pey_startimes_basic", network: "Startimes", type: "cable", planType: "Cable TV", name: "Startimes Basic", peyflex_variation_id: "startimes_basic", wholesaleCost: 2600, duration: "30 Days" },
-
-        // EDUCATION / EXAM PINS
-        { id: "pey_waec_pin", network: "WAEC", type: "exam", planType: "Exam PIN", name: "WAEC Result Scratch Card PIN", peyflex_variation_id: "waec_pin", wholesaleCost: 3450, duration: "N/A" },
-        { id: "pey_neco_pin", network: "NECO", type: "exam", planType: "Exam PIN", name: "NECO Result Token PIN", peyflex_variation_id: "neco_pin", wholesaleCost: 1100, duration: "N/A" },
-        { id: "pey_jamb_pin", network: "JAMB", type: "exam", planType: "Exam PIN", name: "JAMB UTME Registration PIN", peyflex_variation_id: "jamb_pin", wholesaleCost: 3950, duration: "N/A" },
-        { id: "pey_nabteb_pin", network: "NABTEB", type: "exam", planType: "Exam PIN", name: "NABTEB Result Scratch Card PIN", peyflex_variation_id: "nabteb_pin", wholesaleCost: 3100, duration: "N/A" }
-      ];
+      // No hardcoded product catalog: the admin-managed services_config table is the only source of truth.
+      const standardProducts: any[] = [];
 
       const productsWithMarkup = standardProducts.map(p => ({
         ...p,
@@ -2491,7 +2428,9 @@ if (Object.keys(updateData).length <= 1) {
           planCategory = "SME";
         } else if (pt.includes("CG") || pt.includes("CORPORATE") || pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
           planCategory = "CG";
-        } else if (pt.includes("GIFTING") || pt.includes("AWOOF") || pt.includes("DIRECT") || pt.includes("GIFT") || pNameUpper.includes("GIFTING") || pNameUpper.includes("AWOOF") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
+        } else if (pt.includes("AWOOF") || pNameUpper.includes("AWOOF")) {
+          planCategory = "AWOOF";
+        } else if (pt.includes("GIFTING") || pt.includes("DIRECT") || pt.includes("GIFT") || pNameUpper.includes("GIFTING") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
           planCategory = "GIFTING";
         } else {
           planCategory = p.planType || p.plan_category || "GIFTING";
@@ -3055,6 +2994,26 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       return res.status(400).json({ error: "Missing required parameters: provider, number" });
     }
 
+    // Mozosubz validates cable smartcards and electricity meters during the purchase
+    // request; it does not document a separate validation endpoint. Keep this step as
+    // a format/preflight check so the UI no longer depends on the retired Bigisub key.
+    const digits = String(number).replace(/\D/g, '');
+    const minimumDigits = type === 'cable' ? 8 : 6;
+    if (digits.length < minimumDigits) {
+      return res.status(400).json({ error: `Please enter a valid ${type === 'cable' ? 'smartcard' : 'meter'} number.` });
+    }
+    if (type === 'cable' || type === 'electricity') {
+      return res.json({
+        success: true,
+        customerName: 'Provider verification at purchase',
+        address: '',
+        meterNumber: type === 'electricity' ? String(number) : undefined,
+        smartcardNo: type === 'cable' ? String(number) : undefined,
+        provider: String(provider).toUpperCase(),
+        debtAmount: 0,
+      });
+    }
+
     try {
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
 
@@ -3349,43 +3308,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // 1. Validate that the active service exists in the 'services_config' table
       let service: any = null;
 
-      if (reqType === 'cable') {
-        const { data, error: serviceErr } = await supabase
-          .from('services_config')
-          .select('*')
-          .eq('service_type', 'cable')
-          .eq('bigisub_plan_id', plan)
-          .eq('is_active', true)
-          .maybeSingle();
-        
-        service = data;
-        if (serviceErr) console.error("[services_config query error for cable]:", serviceErr);
-      } else if (reqType === 'electricity') {
-        // Query based on plan (if exists) or build provider + meter_type identifier
-        const searchId = plan || `${provider.toLowerCase()}_${Number(meter_type) === 2 ? 'postpaid' : 'prepaid'}`;
-        const { data, error: serviceErr } = await supabase
-          .from('services_config')
-          .select('*')
-          .eq('service_type', 'electricity')
-          .eq('bigisub_plan_id', searchId)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        service = data;
-        if (serviceErr) console.error("[services_config query error for electricity]:", serviceErr);
-
-        if (!service) {
-          // Try fuzzy network name lookup
-          const { data: altData } = await supabase
-            .from('services_config')
-            .select('*')
-            .eq('service_type', 'electricity')
-            .ilike('provider_or_network', `%${provider}%`)
-            .eq('is_active', true)
-            .limit(1)
-            .maybeSingle();
-          service = altData;
-        }
+      if (reqType === 'cable' || reqType === 'electricity') {
+        const typeRows = await supabase.from('services_config').select('*').eq('service_type', reqType).eq('is_active', true).order('selling_price', { ascending: true });
+        if (typeRows.error) console.error(`[services_config query error for ${reqType}]`, typeRows.error);
+        const wanted = String(plan || '').trim().toLowerCase();
+        service = (typeRows.data || []).find((row: any) =>
+          [row.id, row.bigisub_plan_id, row.mozosubz_plan_id, row.mozosubz_service].filter(Boolean).some((value: any) => String(value).trim().toLowerCase() === wanted)
+        ) || (typeRows.data || []).find((row: any) => String(row.provider_or_network || '').toLowerCase().includes(String(provider || '').trim().toLowerCase()));
       } else if (reqType === 'airtime') {
         const { data, error: serviceErr } = await supabase
           .from('services_config')
@@ -3449,6 +3378,29 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         return res.status(400).json({ 
           error: `Insufficient wallet balance. This transaction requires ₦${finalPrice.toLocaleString()} but you have ₦${currentBalance.toLocaleString()}.` 
         });
+      }
+
+      // Mozosubz utility flow: atomic debit before provider call, automatic refund on rejection.
+      if (reqType === 'cable' || reqType === 'electricity') {
+        const { data: keyRow } = await supabase.from('services_config').select('item_name').eq('bigisub_identifier_id', 'mozosubz_api_key').maybeSingle();
+        const mozKey = process.env.MOZOSUBS_CONNECT_KEY || process.env.MOZOSUBZ_CONNECT_KEY || process.env.MOZOSUBZ_API_KEY || keyRow?.item_name || '';
+        if (!mozKey) return res.status(503).json({ error: 'Mozosubz provider is not configured.' });
+        const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
+        if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
+        const utilityResult = await purchaseMozosubzUtility({
+          type: reqType as 'cable' | 'electricity', provider: String(provider), packageName: String(service.item_name || plan || ''),
+          smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
+          meterType: String(meter_type || 'prepaid').toLowerCase() === 'postpaid' || String(meter_type) === '2' ? 'POSTPAID' : 'PREPAID',
+          amount: finalPrice, phone: String(req.body.phone || req.body.phoneNumber || number), apiKey: mozKey,
+        });
+        const reference = utilityResult.reference || `MOZO-${reqType.toUpperCase()}-${Date.now()}`;
+        if (!utilityResult.success) {
+          const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: profile.id, amount: finalPrice });
+          await supabase.from('transactions').insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: refundErr ? 'refund_failed' : 'refunded', description: `${String(provider).toUpperCase()} ${reqType} failed`, reference, platform: 'mozosubz', payment_method: 'wallet', created_at: new Date().toISOString() });
+          return res.status(400).json({ error: utilityResult.error || 'Mozosubz rejected the transaction.', reference, refunded: !refundErr });
+        }
+        await supabase.from('transactions').insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: 'completed', description: `${String(provider).toUpperCase()} ${reqType} purchase`, reference, platform: 'mozosubz', payment_method: 'wallet', created_at: new Date().toISOString() });
+        return res.json({ status: 'success', success: true, message: 'Transaction completed successfully', reference, transaction: utilityResult.raw });
       }
 
       // 3. Drop payload directly to Bigisub's server

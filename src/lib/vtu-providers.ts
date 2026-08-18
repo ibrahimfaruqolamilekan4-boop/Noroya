@@ -125,6 +125,57 @@ const mozosubzProvider: VtuProvider = {
   },
 };
 
+
+
+export interface UtilityPurchaseParams {
+  type: 'cable' | 'electricity';
+  provider: string;
+  packageName?: string;
+  smartcard?: string;
+  meterType?: 'PREPAID' | 'POSTPAID';
+  meterNumber?: string;
+  amount: number;
+  phone: string;
+  apiKey: string;
+}
+
+export async function purchaseMozosubzUtility(p: UtilityPurchaseParams): Promise<PurchaseResult> {
+  const base = process.env.MOZOSUBZ_BASE_URL || 'https://mozosubz.xyz/api/v1';
+  const isCable = p.type === 'cable';
+  const url = isCable ? `${base}/cable/purchase` : `${base}/electricity/purchase`;
+  const discoNames: Record<string, string> = {
+    IKEDC: 'ikeja electric', EKEDC: 'eko electric', AEDC: 'abuja electric',
+    PHED: 'port harcourt electric', IBEDC: 'ibadan electric', KAEDCO: 'kaduna electric',
+    KEDCO: 'kano electric', JED: 'jos electric', EEDC: 'enugu electric',
+    BEDC: 'benin electric', YEDC: 'yola electric', BAEDC: 'bauchi electric',
+  };
+  const payload = isCable
+    ? {
+        provider: p.provider.toLowerCase(),
+        package: p.packageName,
+        smartcard: p.smartcard,
+        phone: p.phone,
+      }
+    : {
+        disco: discoNames[p.provider.toUpperCase()] || p.provider,
+        meter_type: p.meterType || 'PREPAID',
+        meter_number: p.meterNumber,
+        amount: p.amount,
+        phone: p.phone,
+      };
+
+  console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+  const resp = await axios.post(url, payload, {
+    headers: { 'Content-Type': 'application/json', 'X-Connect-Key': p.apiKey },
+    timeout: 12000,
+  });
+  const d = resp.data;
+  if (d?.success === true) {
+    return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+  }
+  return { success: false, error: d?.error || d?.message || `Rejected by Mozosubz (${p.type})`, raw: d };
+}
+
 // ─── Provider: Bigisub ────────────────────────────────────────────────────────
 
 const bigisubProvider: VtuProvider = {
