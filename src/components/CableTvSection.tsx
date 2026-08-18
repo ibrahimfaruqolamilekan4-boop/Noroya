@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Tv, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Loader2, Printer, Copy, ShieldCheck, CreditCard } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 import SuccessFeedback from './SuccessFeedback';
 
@@ -12,54 +13,8 @@ interface CableProvider {
   shortName: string;
   logoBg: string; // Tailwind class
   textColor: string;
-  packages: { id: string; name: string; price: number; duration: string }[];
+  packages: { id: string; planId: string; name: string; price: number; duration: string }[];
 }
-
-const CABLE_PROVIDERS: CableProvider[] = [
-  {
-    code: 'GOTV',
-    name: 'GOtv Nigeria',
-    shortName: 'GOtv',
-    logoBg: 'bg-green-650 bg-green-600',
-    textColor: 'text-white',
-    packages: [
-      { id: 'gotv-lite', name: 'GOtv Lite', price: 1100, duration: '1 Month' },
-      { id: 'gotv-jinja', name: 'GOtv Jinja', price: 2700, duration: '1 Month' },
-      { id: 'gotv-jolli', name: 'GOtv Jolli', price: 3950, duration: '1 Month' },
-      { id: 'gotv-max', name: 'GOtv Max', price: 5700, duration: '1 Month' },
-      { id: 'gotv-supa', name: 'GOtv Supa', price: 7600, duration: '1 Month' },
-      { id: 'gotv-supa-plus', name: 'GOtv Supa Plus', price: 12500, duration: '1 Month' },
-    ],
-  },
-  {
-    code: 'DSTV',
-    name: 'DStv Nigeria',
-    shortName: 'DStv',
-    logoBg: 'bg-blue-600',
-    textColor: 'text-white',
-    packages: [
-      { id: 'dstv-padi', name: 'DStv Padi', price: 2950, duration: '1 Month' },
-      { id: 'dstv-yanga', name: 'DStv Yanga', price: 4200, duration: '1 Month' },
-      { id: 'dstv-confam', name: 'DStv Confam', price: 7400, duration: '1 Month' },
-      { id: 'dstv-compact', name: 'DStv Compact', price: 12500, duration: '1 Month' },
-      { id: 'dstv-compact-plus', name: 'DStv Compact Plus', price: 19800, duration: '1 Month' },
-      { id: 'dstv-premium', name: 'DStv Premium', price: 29500, duration: '1 Month' },
-    ],
-  },
-  {
-    code: 'STARTIMES',
-    name: 'StarTimes TV',
-    shortName: 'StarTimes',
-    logoBg: 'bg-purple-600',
-    textColor: 'text-white',
-    packages: [
-      { id: 'star-nova', name: 'Nova Bouquet', price: 1500, duration: '1 Month' },
-      { id: 'star-smart', name: 'Smart Bouquet', price: 3500, duration: '1 Month' },
-      { id: 'star-classic', name: 'Classic Bouquet', price: 5000, duration: '1 Month' },
-      { id: 'star-super', name: 'Super Bouquet', price: 6500, duration: '1 Month' },
-    ],
-  },
-];
 
 export default function CableTvSection() {
   const { user } = useAuth();
@@ -68,7 +23,9 @@ export default function CableTvSection() {
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [provider, setProvider] = React.useState<CableProvider | null>(null);
   const [smartcardNo, setSmartcardNo] = React.useState('');
-  const [selectedPackage, setSelectedPackage] = React.useState<{ id: string; name: string; price: number; duration: string } | null>(null);
+  const [selectedPackage, setSelectedPackage] = React.useState<{ id: string; planId: string; name: string; price: number; duration: string } | null>(null);
+  const [cableProviders, setCableProviders] = React.useState<CableProvider[]>([]);
+  const [plansLoading, setPlansLoading] = React.useState(true);
   
   // Validation States
   const [isValidating, setIsValidating] = React.useState(false);
@@ -83,6 +40,35 @@ export default function CableTvSection() {
 
   // Payment transaction states
   const [isPaying, setIsPaying] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/services/cable');
+        const rows = await response.json();
+        if (!response.ok) throw new Error(rows?.error || 'Could not load cable plans');
+        const grouped = new Map<string, CableProvider>();
+        (Array.isArray(rows) ? rows : []).forEach((row: any) => {
+          const code = String(row.provider_or_network || '').trim().toUpperCase();
+          if (!code) return;
+          const current = grouped.get(code) || { code, name: `${code} Nigeria`, shortName: code, logoBg: 'bg-blue-600', textColor: 'text-white', packages: [] };
+          current.packages.push({
+            id: String(row.id),
+            planId: String(row.bigisub_plan_id || row.mozosubz_plan_id || row.id),
+            name: String(row.item_name || row.plan_name || 'Cable package'),
+            price: Number(row.selling_price || 0),
+            duration: String(row.validity_days || row.duration || '1 Month'),
+          });
+          grouped.set(code, current);
+        });
+        if (!cancelled) setCableProviders([...grouped.values()].filter(x => x.packages.length));
+      } catch (error: any) {
+        if (!cancelled) toast.error(error.message || 'Could not load active cable packages.');
+      } finally { if (!cancelled) setPlansLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [paymentReceipt, setPaymentReceipt] = React.useState<{
     ref: string;
     provider: string;
@@ -169,21 +155,23 @@ export default function CableTvSection() {
 
     try {
       const displayPlan = `${provider.shortName} ${selectedPackage.name} Monthly Pack`;
-      const response = await fetch('/api/v1/utility/pay', {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/buy-utility', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
         body: JSON.stringify({
           userId: user.uid,
           type: 'cable',
           provider: provider.code,
           number: smartcardNo.trim(),
-          plan: displayPlan,
-          amount: subscriptionPrice
+          plan: selectedPackage.planId,
+          amount: subscriptionPrice,
+          phone: (user as any)?.phone || (user as any)?.phone_number || smartcardNo.trim()
         })
       });
 
       const resData = await response.json();
-      if (response.ok) {
+      if (response.ok && (resData.status === 'success' || resData.success === true)) {
         const txRef = resData.transaction?.reference || `CAB-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
         const cashback = resData.transaction?.cashbackEarned || 0;
 
@@ -250,11 +238,13 @@ export default function CableTvSection() {
             {/* GRID 1: Select Operator */}
             {!provider ? (
               <div className="space-y-4">
+                {plansLoading && <p className="text-xs text-slate-500">Loading active cable packages…</p>}
+                {!plansLoading && cableProviders.length === 0 && <p className="text-xs text-rose-500">No active cable packages are available. Ask an admin to publish one.</p>}
                 <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
                   Select Cable Provider
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {CABLE_PROVIDERS.map((cab) => (
+                  {cableProviders.map((cab) => (
                     <button
                       key={cab.code}
                       onClick={() => setProvider(cab)}

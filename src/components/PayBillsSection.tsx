@@ -24,8 +24,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
     if (defaultServiceId) {
       setSelectedService(defaultServiceId);
       // set default provider
-      if (defaultServiceId === 'cable') setProvider('GOTV');
-      if (defaultServiceId === 'electricity') setProvider('EKEDC');
+
       if (defaultServiceId === 'exam') setProvider('WAEC');
       if (defaultServiceId === 'betting') setProvider('SportyBet');
     }
@@ -38,6 +37,19 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
   const [planName, setPlanName] = React.useState('');
   const [examQty, setExamQty] = React.useState(1);
   const [emailDelivery, setEmailDelivery] = React.useState('');
+  const [liveCablePlans, setLiveCablePlans] = React.useState<any[]>([]);
+  const [liveElectricityPlans, setLiveElectricityPlans] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    Promise.all([fetch('/api/services/cable').then(r => r.ok ? r.json() : []), fetch('/api/services/electricity').then(r => r.ok ? r.json() : [])])
+      .then(([cable, electricity]) => { setLiveCablePlans(Array.isArray(cable) ? cable : []); setLiveElectricityPlans(Array.isArray(electricity) ? electricity : []); })
+      .catch(() => toast.error('Could not load live utility plans.'));
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedService === 'cable' && !provider && liveCablePlans[0]) setProvider(String(liveCablePlans[0].provider_or_network || '').toUpperCase());
+    if (selectedService === 'electricity' && !provider && liveElectricityPlans[0]) setProvider(String(liveElectricityPlans[0].provider_or_network || '').toUpperCase());
+  }, [selectedService, provider, liveCablePlans, liveElectricityPlans]);
   
   // Validation, loader & steps
   const [step, setStep] = React.useState(1); // 1 = form, 2 = confirmation / validate name, 3 = success
@@ -151,10 +163,10 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
       if (selectedService === 'cable') {
         const parts = planName.split('|');
         finalAmount = Number(parts[1]);
-        finalPlan = `${parts[0]} (Smartcard: ${accountNo})`;
+        finalPlan = parts[0];
       } else if (selectedService === 'electricity') {
         finalAmount = Number(amount);
-        finalPlan = `Prepaid Meter Token (${provider})`;
+        finalPlan = String(liveElectricityPlans.find((row: any) => String(row.provider_or_network || '').toUpperCase() === provider)?.bigisub_plan_id || liveElectricityPlans.find((row: any) => String(row.provider_or_network || '').toUpperCase() === provider)?.mozosubz_plan_id || `${provider.toLowerCase()}_${amount}`);
       } else if (selectedService === 'exam') {
         const unitPrices: any = { 'WAEC': 3200, 'NECO': 2800, 'NABTEB': 3000 };
         finalAmount = (unitPrices[provider] || 3000) * examQty;
@@ -170,16 +182,20 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
         return;
       }
 
-      const response = await fetch('/api/vtu/purchase', {
+      const response = await fetch(selectedService === 'cable' || selectedService === 'electricity' ? '/api/buy-utility' : '/api/vtu/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user.uid,
-          type: 'bill',
+          type: selectedService,
           network: provider.toUpperCase(),
+          provider: provider.toUpperCase(),
+          number: accountNo || emailDelivery || '08000000000',
+          phone: (user as any)?.phone || (user as any)?.phone_number || accountNo || '08000000000',
           phoneNumber: accountNo || emailDelivery || '08000000000',
           plan: finalPlan,
-          amount: finalAmount
+          amount: finalAmount,
+          meter_type: 'prepaid'
         })
       });
 
@@ -256,8 +272,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 onClick={() => {
                   setSelectedService(srv.id);
                   // Default providers
-                  if (srv.id === 'cable') setProvider('GOTV');
-                  if (srv.id === 'electricity') setProvider('EKEDC');
+
                   if (srv.id === 'exam') setProvider('WAEC');
                   if (srv.id === 'betting') setProvider('SportyBet');
                 }}
@@ -304,36 +319,14 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   <div className="space-y-2">
                     <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Choose Service Provider</label>
                     <div className="grid grid-cols-3 gap-3">
-                      {selectedService === 'cable' && (
-                        <>
-                          {['GOTV', 'DSTV', 'StarTimes'].map((p) => (
-                            <button
-                              key={p} type="button" onClick={() => setProvider(p)}
-                              className={cn(
-                                "py-3 rounded-2xl border text-sm font-extrabold text-center transition-all",
-                                provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700"
-                              )}
-                            >
-                              {p}
-                            </button>
-                          ))}
-                        </>
-                      )}
-                      {selectedService === 'electricity' && (
-                        <>
-                          {['EKEDC', 'IKEDC', 'AEDC', 'PHED', 'IBEDC', 'KAEDCO'].map((p) => (
-                            <button
-                              key={p} type="button" onClick={() => setProvider(p)}
-                              className={cn(
-                                "py-3 rounded-2xl border text-sm font-extrabold text-center transition-all",
-                                provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700"
-                              )}
-                            >
-                              {p}
-                            </button>
-                          ))}
-                        </>
-                      )}
+                      {selectedService === 'cable' && liveCablePlans.map((row: any) => {
+                          const p = String(row.provider_or_network || '').toUpperCase();
+                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-extrabold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
+                        })}
+                      {selectedService === 'electricity' && [...new Map(liveElectricityPlans.map((row: any) => [String(row.provider_or_network || '').toUpperCase(), row])).values()].map((row: any) => {
+                          const p = String(row.provider_or_network || '').toUpperCase();
+                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-extrabold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
+                        })}
                       {selectedService === 'exam' && (
                         <>
                           {['WAEC', 'NECO', 'NABTEB'].map((p) => (
@@ -438,31 +431,12 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-bold focus:outline-none"
                       >
                         <option value="">-- Choose Premium Package --</option>
-                        {provider === 'GOTV' && (
-                          <>
-                            <option value="GOTV Lite|1100">GOTV Lite - ₦1,100</option>
-                            <option value="GOTV Jinja|2700">GOTV Jinja - ₦2,700</option>
-                            <option value="GOTV Jolli|3950">GOTV Jolli - ₦3,950</option>
-                            <option value="GOTV Max|5700">GOTV Max - ₦5,700</option>
-                            <option value="GOTV Supa|7600">GOTV Supa - ₦7,600</option>
-                          </>
-                        )}
-                        {provider === 'DSTV' && (
-                          <>
-                            <option value="DSTV Padi|2950">DSTV Padi - ₦2,950</option>
-                            <option value="DSTV Yanga|4200">DSTV Yanga - ₦4,200</option>
-                            <option value="DSTV Confam|7400">DSTV Confam - ₦7,400</option>
-                            <option value="DSTV Compact|12500">DSTV Compact - ₦12,500</option>
-                            <option value="DSTV Compact Plus|19800">DSTV Compact Plus - ₦19,800</option>
-                          </>
-                        )}
-                        {provider === 'StarTimes' && (
-                          <>
-                            <option value="StarTimes Nova|1500">Nova Daily/Monthly - ₦1,500</option>
-                            <option value="StarTimes Smart|3500">Smart Subscription - ₦3,500</option>
-                            <option value="StarTimes Super|6500">Super Pack - ₦6,500</option>
-                          </>
-                        )}
+                        {liveCablePlans.filter((row: any) => String(row.provider_or_network || '').toUpperCase() === provider).map((row: any) => {
+                          const id = String(row.bigisub_plan_id || row.mozosubz_plan_id || row.id);
+                          const price = Number(row.selling_price || 0);
+                          const name = String(row.item_name || row.plan_name || 'Cable package');
+                          return <option key={id} value={`${id}|${price}|${name}`}>{name} - {formatCurrency(price)}</option>;
+                        })}
                       </select>
                     </div>
                   )}
@@ -521,7 +495,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     {planName && (
                       <div className="py-3 flex justify-between text-sm">
                         <span className="text-slate-400 font-medium">Selected Bundle</span>
-                        <span className="font-bold text-slate-800">{planName.split('|')[0]}</span>
+                        <span className="font-bold text-slate-800">{planName.split('|')[2] || planName.split('|')[0]}</span>
                       </div>
                     )}
                     <div className="py-3 flex justify-between text-sm">
@@ -531,7 +505,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     <div className="py-4 flex justify-between text-base border-t border-dashed border-slate-200">
                       <span className="text-slate-900 font-extrabold">Final Billing Amount</span>
                       <span className="font-black text-blue-650 font-mono">
-                        {selectedService === 'cable' ? formatCurrency(Number(planName.split('|')[1])) : ''}
+                        {selectedService === 'cable' ? formatCurrency(Number(planName.split('|')[1] || 0)) : ''}
                         {selectedService === 'electricity' ? formatCurrency(Number(amount)) : ''}
                         {selectedService === 'betting' ? formatCurrency(Number(amount)) : ''}
                         {selectedService === 'exam' ? formatCurrency((provider === 'WAEC' ? 3200 : provider === 'NECO' ? 2800 : 3000) * examQty) : ''}

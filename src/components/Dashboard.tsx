@@ -2603,7 +2603,7 @@ function DashboardOverview({
                       <div className="space-y-3 bg-white p-4 rounded-xl border border-emerald-50">
                         <div>
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Account Name</p>
-                          <p className="font-black text-slate-900">NORODATA - {user.fullName || user.username || user.email}</p>
+                          <p className="font-black text-slate-900">NORODATA - {user.fullName || user.email}</p>
                         </div>
                         <div>
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Bank Name</p>
