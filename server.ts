@@ -1711,6 +1711,26 @@ async function startServer() {
         return res.status(400).json({ error: `Invalid service type: ${type}. Must be one of: ${allowedTypes.join(', ')}` });
       }
 
+      // Electricity is an amount-based service. Return supported DISCO capabilities,
+      // not fake admin plan rows; the user's entered amount is sent directly to Mozosubz.
+      if (type === 'electricity') {
+        const discos = [
+          ['IKEDC', 'Ikeja Electric'], ['EKEDC', 'Eko Electric'], ['AEDC', 'Abuja Electric'],
+          ['PHED', 'Port Harcourt Electric'], ['IBEDC', 'Ibadan Electric'], ['KAEDCO', 'Kaduna Electric'],
+          ['KEDCO', 'Kano Electric'], ['JED', 'Jos Electric'], ['EEDC', 'Enugu Electric'],
+          ['BEDC', 'Benin Electric'], ['YEDC', 'Yola Electric'], ['BAEDC', 'Bauchi Electric'],
+        ];
+        return res.json(discos.map(([code, name]) => ({
+          id: `electricity_${code.toLowerCase()}`,
+          provider_or_network: code,
+          item_name: name,
+          service_type: 'electricity',
+          is_active: true,
+          direct_amount: true,
+          minimum_amount: 1000,
+        })));
+      }
+
       let queryBuilder = supabase
         .from('services_config')
         .select('*')
@@ -3308,13 +3328,15 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // 1. Validate that the active service exists in the 'services_config' table
       let service: any = null;
 
-      if (reqType === 'cable' || reqType === 'electricity') {
-        const typeRows = await supabase.from('services_config').select('*').eq('service_type', reqType).eq('is_active', true).order('selling_price', { ascending: true });
-        if (typeRows.error) console.error(`[services_config query error for ${reqType}]`, typeRows.error);
+      if (reqType === 'cable') {
+        const typeRows = await supabase.from('services_config').select('*').eq('service_type', 'cable').eq('is_active', true).order('selling_price', { ascending: true });
+        if (typeRows.error) console.error('[services_config query error for cable]', typeRows.error);
         const wanted = String(plan || '').trim().toLowerCase();
         service = (typeRows.data || []).find((row: any) =>
           [row.id, row.bigisub_plan_id, row.mozosubz_plan_id, row.mozosubz_service].filter(Boolean).some((value: any) => String(value).trim().toLowerCase() === wanted)
         ) || (typeRows.data || []).find((row: any) => String(row.provider_or_network || '').toLowerCase().includes(String(provider || '').trim().toLowerCase()));
+      } else if (reqType === 'electricity') {
+        // Direct amount-based flow: no services_config plan or markup is required.
       } else if (reqType === 'airtime') {
         const { data, error: serviceErr } = await supabase
           .from('services_config')
@@ -3340,14 +3362,14 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         if (serviceErr) console.error("[services_config query error for data]:", serviceErr);
       }
 
-      if (!service) {
+      if (!service && reqType !== 'electricity') {
         return res.status(404).json({ error: `The requested service config was not found in 'services_config' or is currently inactive.` });
       }
 
       // User profile and balance verified securely via getAuthenticatedUserBalance
 
       // Compute final selling price dynamically from services_config
-      let finalPrice = Number(service.selling_price || 0);
+      let finalPrice = Number(service?.selling_price || 0);
 
       if (reqType === 'airtime') {
         let sellingPercent = Number(service.selling_price || 100);
@@ -3356,11 +3378,9 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         }
         finalPrice = Number(amount) * (sellingPercent / 100);
       } else if (reqType === 'electricity') {
-        let sellingPercent = Number(service.selling_price || 100);
-        if (sellingPercent > 100) {
-          finalPrice = Number(amount) * (sellingPercent / 100);
-        } else {
-          finalPrice = Number(amount);
+        finalPrice = Number(amount);
+        if (!Number.isFinite(finalPrice) || finalPrice < 1000) {
+          return res.status(400).json({ error: 'Electricity purchase minimum is ₦1,000.' });
         }
       } else if (reqType === 'data' || reqType === 'cable') {
         finalPrice = Number(service.selling_price || amount || 0);

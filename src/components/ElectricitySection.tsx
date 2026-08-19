@@ -14,8 +14,6 @@ interface ProviderOption {
   region: string;
   logoBg: string;
   textColor: string;
-  planId?: string;
-  planName?: string;
 }
 
 export default function ElectricitySection() {
@@ -28,7 +26,7 @@ export default function ElectricitySection() {
   const [meterType, setMeterType] = React.useState<'prepaid' | 'postpaid'>('prepaid');
   const [amount, setAmount] = React.useState('');
   const [electricityProviders, setElectricityProviders] = React.useState<ProviderOption[]>([]);
-  const [plansLoading, setPlansLoading] = React.useState(true);
+  const [providersLoading, setProvidersLoading] = React.useState(true);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -41,14 +39,13 @@ export default function ElectricitySection() {
         (Array.isArray(rows) ? rows : []).forEach((row: any) => {
           const code = String(row.provider_or_network || '').trim().toUpperCase();
           if (!code) return;
-          const name = String(row.item_name || row.plan_name || `${code} Electricity`);
+          const name = String(row.item_name || `${code} Electricity`);
           const current = grouped.get(code) || { code, name: `${code} Electricity Distribution`, shortName: code, region: 'Nigeria', logoBg: 'bg-amber-500', textColor: 'text-slate-950' };
-          if (!current.planId || /prepaid/i.test(name)) { current.planId = String(row.bigisub_plan_id || row.mozosubz_plan_id || row.id); current.planName = name; }
           grouped.set(code, current);
         });
         if (!cancelled) setElectricityProviders([...grouped.values()]);
       } catch (error: any) { if (!cancelled) toast.error(error.message || 'Could not load active electricity services.'); }
-      finally { if (!cancelled) setPlansLoading(false); }
+      finally { if (!cancelled) setProvidersLoading(false); }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -160,7 +157,7 @@ export default function ElectricitySection() {
           type: 'electricity',
           provider: provider.code,
           number: meterNumber.trim(),
-          plan: provider.planId || `${provider.code.toLowerCase()}_${meterType}`,
+          plan: '',
           amount: finalBillingAmount,
           phone: (user as any)?.phone || (user as any)?.phone_number || meterNumber.trim()
         })
@@ -236,8 +233,8 @@ export default function ElectricitySection() {
             {/* GRID 1: Select Provider */}
             {!provider ? (
               <div className="space-y-4">
-                {plansLoading && <p className="text-xs text-slate-500">Loading active electricity services…</p>}
-                {!plansLoading && electricityProviders.length === 0 && <p className="text-xs text-rose-500">No active electricity services are available. Ask an admin to publish one.</p>}
+                {providersLoading && <p className="text-xs text-slate-500">Loading supported electricity providers…</p>}
+                {!providersLoading && electricityProviders.length === 0 && <p className="text-xs text-rose-500">No electricity providers are currently available.</p>}
                 <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
                   Select Distribution Company (DISCO)
                 </label>
