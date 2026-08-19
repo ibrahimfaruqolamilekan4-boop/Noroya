@@ -308,13 +308,21 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             </div>
           </div>
 
-          {/* Right: deposit button + profile */}
-          <div className="flex items-center gap-3">
+          {/* Right: transfer + deposit buttons + profile */}
+          <div className="flex items-center gap-2">
+            {/* Transfer button */}
             <button
-              onClick={() => {
-                // Trigger fund modal in DashboardOverview via event
-                window.dispatchEvent(new CustomEvent('open-fund-modal'));
-              }}
+              onClick={() => window.dispatchEvent(new CustomEvent('open-transfer-modal'))}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 active:scale-95 border"
+              style={{ backgroundColor: '#F0F0EC', borderColor: '#D4D4CE', color: '#132613' }}
+            >
+              <Send size={14} />
+              <span className="hidden sm:inline">Transfer</span>
+            </button>
+
+            {/* Deposit funds button */}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-fund-modal'))}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
               style={{ backgroundColor: '#3B7A3B' }}
             >
@@ -570,6 +578,13 @@ function DashboardOverview({
     const handler = () => setShowFundModal(true);
     window.addEventListener('open-fund-modal', handler);
     return () => window.removeEventListener('open-fund-modal', handler);
+  }, []);
+
+  // Listen for transfer modal event from header button
+  React.useEffect(() => {
+    const handler = () => setShowTransferModal(true);
+    window.addEventListener('open-transfer-modal', handler);
+    return () => window.removeEventListener('open-transfer-modal', handler);
   }, []);
 
   const refreshBalance = async () => {
@@ -900,31 +915,33 @@ function DashboardOverview({
               <div className="p-6">
                 {fundingTab === 'automated' && (
                   <div className="space-y-4">
-                    <div className="p-4 bg-green-50 border border-green-100 rounded-2xl">
-                      <p className="text-xs font-semibold text-green-800 mb-4 flex items-center gap-2">
-                        <AlertCircle size={14} /> Transfers to this account automatically fund your wallet.
-                      </p>
-                      <div className="space-y-3 bg-white p-4 rounded-xl border border-green-100">
-                        <div>
-                          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Account Name</p>
-                          <p className="font-bold text-gray-900 mt-0.5">NORODATA - {user.fullName || user.email}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Bank</p>
-                          <p className="font-bold text-gray-900 mt-0.5">Moniepoint MFB / Wema Bank</p>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Account Number</p>
-                            <p className="text-xl font-black mt-0.5" style={{ color: '#3B7A3B' }}>8234567890</p>
-                          </div>
-                          <button
-                            onClick={() => { navigator.clipboard.writeText('8234567890'); toast.success('Copied!'); }}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all"
-                          >
-                            <Copy size={13} /> Copy
-                          </button>
-                        </div>
+                    {/* Coming soon state */}
+                    <div className="rounded-2xl p-6 text-center space-y-4" style={{ backgroundColor: '#F5F7F5', border: '1.5px dashed #C8D8C8' }}>
+                      <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto" style={{ backgroundColor: '#E8F0E8' }}>
+                        <span className="text-2xl">🏦</span>
+                      </div>
+                      <div>
+                        <p className="font-black text-gray-900 text-base">Bank Transfer — Coming Soon</p>
+                        <p className="text-sm text-gray-500 mt-1 leading-relaxed">
+                          We're setting up a dedicated virtual bank account for your wallet. Once ready, transfers will credit your balance automatically.
+                        </p>
+                      </div>
+                      <div className="bg-white rounded-xl p-4 border border-gray-100 text-left">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">In the meantime, you can:</p>
+                        <ul className="space-y-2 text-sm text-gray-600">
+                          <li className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
+                            Fund via Card/Gateway (Flutterwave)
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
+                            Submit a Manual transfer request
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
+                            Contact support on WhatsApp
+                          </li>
+                        </ul>
                       </div>
                     </div>
                   </div>
@@ -996,36 +1013,88 @@ function DashboardOverview({
               className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 z-10"
             >
               <div className="flex items-center justify-between">
-                <h4 className="font-black text-gray-900 text-xl">Transfer Funds</h4>
+                <div>
+                  <h4 className="font-black text-gray-900 text-xl">Send Money</h4>
+                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer via Transfer ID</p>
+                </div>
                 <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
                   <X size={16} />
                 </button>
               </div>
 
               {transferStep === 'input' && (
-                <div className="space-y-4">
-                  {[
-                    { label: 'Recipient phone, email or username', val: transferUid, set: setTransferUid, placeholder: '08012345678 or user@email.com' },
-                    { label: 'Amount (₦)', val: transferAmount, set: setTransferAmount, placeholder: '0.00', type: 'number' },
-                    { label: 'Note (optional)', val: transferNote, set: setTransferNote, placeholder: "What's this for?" },
-                  ].map(({ label, val, set, placeholder, type }) => (
-                    <div key={label}>
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">{label}</label>
+                <div className="space-y-5">
+                  {/* Transfer ID field — primary / most prominent */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-black text-gray-900 uppercase tracking-wider">Recipient Transfer ID</label>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E8F0E8', color: '#3B7A3B' }}>
+                        same as referral code
+                      </span>
+                    </div>
+                    <div className="relative">
                       <input
-                        type={type || 'text'} value={val}
-                        onChange={(e) => set(e.target.value)}
-                        placeholder={placeholder}
-                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-900 focus:outline-none focus:border-green-500"
+                        type="text"
+                        value={transferUid}
+                        onChange={(e) => setTransferUid(e.target.value)}
+                        placeholder="e.g. NORODATA-AB12C"
+                        className="w-full bg-gray-50 border-2 rounded-xl px-4 py-4 font-mono font-black text-gray-900 text-lg focus:outline-none transition-all uppercase tracking-wider placeholder:normal-case placeholder:font-normal placeholder:text-sm placeholder:tracking-normal"
+                        style={{ borderColor: transferUid ? '#3B7A3B' : '#E5E7EB' }}
                       />
                     </div>
-                  ))}
+                    <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                      Ask the recipient to share their Transfer ID. They can find it on their dashboard under <strong>Refer & earn</strong> — it looks like <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">NORODATA-XXXXX</span>.
+                    </p>
+                  </div>
+
+                  {/* Your own Transfer ID for easy sharing */}
+                  {user.referralCode && (
+                    <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
+                        <p className="font-mono font-black text-gray-900 mt-0.5">{user.referralCode}</p>
+                      </div>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(user.referralCode); toast.success('Your Transfer ID copied!'); }}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
+                        style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
+                      >
+                        <Copy size={12} /> Copy mine
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Amount */}
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Amount (₦)</label>
+                    <input
+                      type="number"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 text-lg focus:outline-none focus:border-green-500 transition-all"
+                    />
+                  </div>
+
+                  {/* Note */}
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Note (optional)</label>
+                    <input
+                      type="text"
+                      value={transferNote}
+                      onChange={(e) => setTransferNote(e.target.value)}
+                      placeholder="What's this for?"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-900 focus:outline-none focus:border-green-500 transition-all"
+                    />
+                  </div>
+
                   <button
                     onClick={handleLookupRecipient}
                     disabled={transferLoading || !transferUid || !transferAmount}
                     className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all"
                     style={{ backgroundColor: '#3B7A3B' }}
                   >
-                    {transferLoading ? 'Checking…' : 'Continue'}
+                    {transferLoading ? 'Looking up recipient…' : 'Find recipient & continue →'}
                   </button>
                 </div>
               )}
