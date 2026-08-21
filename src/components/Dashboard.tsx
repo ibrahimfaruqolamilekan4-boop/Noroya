@@ -313,11 +313,11 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             {/* Transfer button */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-transfer-modal'))}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 active:scale-95 border"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 active:scale-95 border"
               style={{ backgroundColor: '#F0F0EC', borderColor: '#D4D4CE', color: '#132613' }}
             >
               <Send size={14} />
-              <span className="hidden sm:inline">Transfer</span>
+              <span>Transfer</span>
             </button>
 
             {/* Deposit funds button */}
@@ -387,15 +387,20 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
         </main>
       </div>
 
-      {/* ── Floating support chat button ─────────────────────────────── */}
+      {/* ── Floating WhatsApp support button ─────────────────────────── */}
       <div className="fixed right-5 bottom-6 z-40 print:hidden">
         <button
           onClick={() => setShowSupportHub(!showSupportHub)}
-          className="w-13 h-13 w-[52px] h-[52px] text-white rounded-full flex items-center justify-center shadow-xl transition-all hover:scale-105 active:scale-95"
-          style={{ backgroundColor: '#3B7A3B' }}
-          title="Live Support"
+          className="flex items-center gap-2 px-4 py-3 rounded-2xl text-white font-bold text-sm shadow-xl transition-all hover:scale-105 active:scale-95"
+          style={{ backgroundColor: '#25D366' }}
+          title="WhatsApp Support"
         >
-          {showSupportHub ? <X size={22} /> : <MessageSquare size={22} />}
+          {/* WhatsApp SVG icon */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+            <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+          </svg>
+          <span>Support</span>
+          {showSupportHub ? <X size={14} /> : null}
         </button>
 
         <AnimatePresence>
@@ -408,7 +413,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             >
               <div>
                 <h5 className="font-bold text-gray-900 text-sm">NORODATA Help Hub</h5>
-                <p className="text-xs text-gray-400 mt-0.5">24/7 support services</p>
+                <p className="text-xs text-gray-400 mt-0.5">24/7 support — we reply fast</p>
               </div>
               <div className="space-y-2">
                 {ADMIN_CONTACTS.map((admin) => (
@@ -417,24 +422,28 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                     href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Support,%20I%20need%20help%20with...`}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-3 p-3 bg-green-50 hover:bg-green-100 text-green-800 rounded-xl transition-all text-xs font-semibold"
+                    className="flex items-center gap-3 p-3 rounded-xl transition-all text-sm font-semibold text-white"
+                    style={{ backgroundColor: '#25D366' }}
                   >
-                    <MessageSquare size={14} /> WhatsApp — {admin.label}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                    </svg>
+                    WhatsApp — {admin.label}
                   </a>
                 ))}
                 <a
                   href="https://t.me/NORODATA_data_group"
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-3 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl transition-all text-xs font-semibold"
+                  className="flex items-center gap-3 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl transition-all text-sm font-semibold"
                 >
-                  <Send size={14} /> Telegram channel
+                  <Send size={15} /> Telegram channel
                 </a>
                 <a
-                  href="tel:+2348123456789"
-                  className="flex items-center gap-3 p-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl transition-all text-xs font-semibold"
+                  href="tel:+2348143889102"
+                  className="flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl transition-all text-sm font-semibold"
                 >
-                  <PhoneCall size={14} /> Call support line
+                  <PhoneCall size={15} /> Call support line
                 </a>
               </div>
             </motion.div>
