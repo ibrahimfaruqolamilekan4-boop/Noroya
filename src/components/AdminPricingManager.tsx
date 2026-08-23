@@ -30,6 +30,7 @@ const MOZOSUBZ_SERVICES = [
   { id: 'mtn_gifting',    label: 'MTN Gifting',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_datashare',  label: 'MTN Datashare',  network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_awoof',      label: 'MTN Awoof',      network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
+  { id: 'mtn_awoof2',     label: 'MTN Awoof 2',     network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'glo_sme',        label: 'GLO SME',        network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'glo_data',       label: 'GLO Data',       network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'airtel_sme',     label: 'Airtel SME',     network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
@@ -52,6 +53,7 @@ const MTN_SUBTABS = [
   { id: 'mtn_gifting',   label: 'Gifting'    },
   { id: 'mtn_datashare', label: 'Datashare'  },
   { id: 'mtn_awoof',     label: 'Awoof'      },
+  { id: 'mtn_awoof2',    label: 'Awoof 2'    },
 ] as const;
 type MtnSubTab = typeof MTN_SUBTABS[number]['id'];
 
