@@ -69,6 +69,11 @@ export default async function handler(req, res) {
       req.body = {};
     }
 
+    // Express also registers express.json() inside server.ts. The request stream
+    // has already been consumed above, so mark it as parsed or body-parser will
+    // attempt a second read and throw: "InternalServerError: stream is not readable".
+    req._body = true;
+
     const app = await getHandler();
     app(req, res);
   } catch (err) {
