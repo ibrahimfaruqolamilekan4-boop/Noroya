@@ -14,6 +14,7 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
     { id: 'mtn_gifting', label: 'Gifting' },
     { id: 'mtn_datashare', label: 'Datashare' },
     { id: 'mtn_awoof', label: 'Awoof' },
+    { id: 'mtn_awoof2', label: 'Awoof 2' },
   ],
   GLO: [
     { id: 'glo_sme', label: 'SME' },
@@ -33,6 +34,7 @@ const BALANCE_CODES: Record<string, { label: string; code: string }[]> = {
   mtn_gifting: [{ label: 'Gifting Balance', code: '*131*4#' }],
   mtn_datashare: [{ label: 'Datashare Balance', code: '*461*4#' }],
   mtn_awoof: [{ label: 'Awoof Balance', code: '*461*4#' }],
+  mtn_awoof2: [{ label: 'Awoof 2 Balance', code: '*461*4#' }],
   glo_sme: [{ label: 'SME Balance', code: '*127*0#' }],
   glo_data: [{ label: 'Data Balance', code: '*127*0#' }],
   airtel_sme: [{ label: 'SME Balance', code: '*140#' }],
@@ -90,16 +92,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   React.useEffect(() => {
     const loadPlans = async () => {
       setFetchingPlans(true);
-      const defaultFallback: ServicePlan[] = [
-        { id: 'fb_1', name: 'MTN 500MB - 30 Days (SME)', price: 150, retail_price: 150, reseller_price: 145, network: 'MTN', type: 'data', validity_days: '30 days', mozosubz_service: 'mtn_sme', peyflex_variation_id: 'mtn_500mb' },
-        { id: 'fb_2', name: 'MTN 1.0GB - 30 Days (SME)', price: 280, retail_price: 280, reseller_price: 275, network: 'MTN', type: 'data', validity_days: '30 days', mozosubz_service: 'mtn_sme', peyflex_variation_id: 'mtn_1gb' },
-        { id: 'fb_3', name: 'MTN 2.0GB - 30 Days (SME)', price: 560, retail_price: 560, reseller_price: 550, network: 'MTN', type: 'data', validity_days: '30 days', mozosubz_service: 'mtn_sme', peyflex_variation_id: 'mtn_2gb' },
-        { id: 'fb_4', name: 'MTN 5.0GB - 30 Days (SME)', price: 1400, retail_price: 1400, reseller_price: 1380, network: 'MTN', type: 'data', validity_days: '30 days', mozosubz_service: 'mtn_sme', peyflex_variation_id: 'mtn_5gb' },
-        { id: 'fb_5', name: 'Airtel 500MB - 30 Days', price: 160, retail_price: 160, reseller_price: 155, network: 'Airtel', type: 'data', validity_days: '30 days', mozosubz_service: 'airtel_sme', peyflex_variation_id: 'airtel_500mb' },
-        { id: 'fb_6', name: 'Airtel 1.0GB - 30 Days', price: 290, retail_price: 290, reseller_price: 285, network: 'Airtel', type: 'data', validity_days: '30 days', mozosubz_service: 'airtel_sme', peyflex_variation_id: 'airtel_1gb' },
-        { id: 'fb_7', name: 'Glo 500MB - 30 Days', price: 150, retail_price: 150, reseller_price: 145, network: 'Glo', type: 'data', validity_days: '30 days', mozosubz_service: 'glo_sme', peyflex_variation_id: 'glo_500mb' },
-        { id: 'fb_8', name: '9mobile 500MB - 30 Days', price: 250, retail_price: 250, reseller_price: 245, network: '9mobile', type: 'data', validity_days: '30 days', mozosubz_service: 'etisalat_data', peyflex_variation_id: '9mobile_500mb' },
-      ];
+      const defaultFallback: ServicePlan[] = [];
 
       try {
         const response = await fetch('/api/services/data');
@@ -124,6 +117,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'mtn_sme';
                   else if (category.includes('gifting') || nameLower.includes('gifting')) mozosubz_service = 'mtn_gifting';
                   else if (category.includes('share') || nameLower.includes('share') || category.includes('cg')) mozosubz_service = 'mtn_datashare';
+                  else if (category.includes('awoof 2') || nameLower.includes('awoof 2')) mozosubz_service = 'mtn_awoof2';
                   else if (category.includes('awoof') || nameLower.includes('awoof')) mozosubz_service = 'mtn_awoof';
                   else mozosubz_service = 'mtn_sme';
                 } else if (finalNet === 'Glo') {
