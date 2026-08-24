@@ -3988,36 +3988,36 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
         const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
         
-        let secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-        let flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+        const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
+        const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
 
         let isAuthorized = false;
-
-        // Verify with direct hash comparison (common dashboard configuration)
-        if (signature && secretHash && signature === secretHash) {
-          isAuthorized = true;
-        }
-
-        // Verify with HMAC signature check (provided in user instructions)
-        if (!isAuthorized && signature && flwSecretKey) {
+        // Flutterwave's current contract is HMAC-SHA256 over the exact raw request
+        // bytes, encoded as Base64, in the flutterwave-signature header.
+        if (signature && secretHash) {
           try {
+            const rawBody = Buffer.isBuffer(req.rawBody)
+              ? req.rawBody
+              : Buffer.from(typeof req.rawBody === 'string' ? req.rawBody : safeJsonStringify(req.body), 'utf8');
             const expectedSignature = crypto
-              .createHmac('sha256', flwSecretKey)
-              .update(safeJsonStringify(req.body))
-              .digest('hex');
-            if (signature === expectedSignature) {
+              .createHmac('sha256', secretHash)
+              .update(rawBody)
+              .digest('base64');
+            if (signature === expectedSignature) isAuthorized = true;
+
+            // Keep legacy dashboard verif-hash compatibility, but never use it
+            // for the current flutterwave-signature HMAC path.
+            if (!isAuthorized && rawSignature === req.headers['verif-hash'] && signature === secretHash) {
               isAuthorized = true;
             }
           } catch (cryptoErr) {
-            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
+            console.error('[Flutterwave Webhook HMAC validation error]:', cryptoErr);
           }
         }
 
-        // SECURITY: fail closed, always. No configured secret at all => reject (never silently
-        // trust an unsigned webhook). A configured secret that doesn't match => reject. There is
-        // no "warn and continue" path anymore -- either the signature is genuinely valid, or we stop.
-        const hasKeys = secretHash || flwSecretKey;
-        if (!hasKeys) {
+        // SECURITY: fail closed. The webhook secret hash is separate from the
+        // Flutterwave API secret used later for independent transaction verification.
+        if (!secretHash) {
           console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook.");
           return;
         }
@@ -4032,7 +4032,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
         // 3. TRANSACTION VERIFICATION
         const isChargeCompleted = event === "charge.completed";
-        const isSuccessful = status === "successful" || status === "success";
+        const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
 
         if (!isChargeCompleted || !isSuccessful) {
           console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
@@ -4053,7 +4053,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
               return;
             }
             const verifyData = await verifyResp.json() as any;
-            if (verifyData?.status !== 'success' || verifyData?.data?.status !== 'successful') {
+            if (verifyData?.status !== 'success' || !['successful', 'succeeded'].includes(verifyData?.data?.status)) {
               console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
               return;
             }
