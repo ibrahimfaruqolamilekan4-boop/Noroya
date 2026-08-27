@@ -89,6 +89,7 @@ const ADMIN_CONTACTS = [
 export default function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void }) {
   const { signOut, setSimulatedUser } = useAuth();
   const [activeTab, setActiveTab] = React.useState('dashboard');
+  const [showGlobalQR, setShowGlobalQR] = React.useState(false);
   const [defaultBillService, setDefaultBillService] = React.useState<'cable' | 'electricity' | 'exam' | 'betting' | null>(null);
 
   const setTabAndService = (tab: string, serviceId?: any) => {
@@ -105,6 +106,29 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
   const [selectedReceiptTx, setSelectedReceiptTx] = React.useState<Transaction | null>(null);
   const [showSupportHub, setShowSupportHub] = React.useState(false);
   const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
+
+
+  const downloadQR = (id, filename) => {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width + 40; // padding
+      canvas.height = img.height + 40;
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 20, 20);
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = filename;
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  };
 
   React.useEffect(() => {
     const storedAnn = localStorage.getItem('vtu_latest_announcement');
@@ -1364,6 +1388,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
                   </div>
                   <div className="bg-white p-4 rounded-2xl inline-block border border-gray-100 shadow-sm mx-auto mb-4">
                     <QRCode
+                      id="referral-qr-code"
                       value={referralLink}
                       size={200}
                       bgColor={"#ffffff"}
@@ -1371,7 +1396,15 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
                       level={"H"}
                     />
                   </div>
-                  <p className="text-gray-500 text-sm font-medium">Have your friends scan this QR code with their camera to join NORODATA directly.</p>
+                  <div className="flex gap-2 w-full mt-2">
+                    <button 
+                      onClick={() => downloadQR("referral-qr-code", "NORODATA-Referral-QR.png")}
+                      className="w-full py-2.5 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all border border-gray-200 text-sm"
+                    >
+                      Download PNG
+                    </button>
+                  </div>
+                  <p className="text-gray-500 text-xs font-medium mt-3">Have your friends scan this QR code with their camera to join NORODATA directly.</p>
                 </motion.div>
               </div>
             )}
