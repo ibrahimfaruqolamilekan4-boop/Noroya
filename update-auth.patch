@@ -1,0 +1,52 @@
+--- src/contexts/AuthContext.tsx
++++ src/contexts/AuthContext.tsx
+@@ -48,6 +48,27 @@
+       if (session?.user) {
+         // Clear any simulated user if a real Supabase user logs in
+         localStorage.removeItem('vtu_simulated_user');
+         
+         const sbUser = session.user;
++        
++        // OPTIMISTIC LOAD: Check for cached real profile to unblock UI immediately
++        const cachedRealUser = localStorage.getItem(`vtu_user_cache_${sbUser.id}`);
++        if (cachedRealUser) {
++          try {
++             const parsedCache = JSON.parse(cachedRealUser);
++             setUserProfile(parsedCache);
++             setLoading(false); // Unblock the UI instantly!
++          } catch (e) {}
++        } else {
++             // If no cache, at least unblock with basic user details
++             setUserProfile({
++               uid: sbUser.id, email: sbUser.email || '', fullName: sbUser.user_metadata?.fullName || 'User',
++               balance: 0, wallet_balance: 0, role: 'user', referralCode: '', phoneNumber: '', transactionPin: '', createdAt: new Date().toISOString()
++             });
++             setLoading(false);
++        }
+ 
+         // Try to fetch profile from Supabase db first
+         let sbProfile: any = null;
+@@ -107,6 +128,7 @@
+         };
+ 
+         setUserProfile(defaultProfile);
++        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(defaultProfile));
+         setLoading(false);
+ 
+         // Define a function to reload user profile directly from Supabase to sync balances
+@@ -124,6 +146,7 @@
+                   phoneNumber: data.phone_number || base.phoneNumber,
+                   transactionPin: data.transaction_pin || base.transactionPin,
+                 };
++                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(updatedProfile));
++                return updatedProfile;
+               });
+             }
+@@ -148,6 +171,7 @@
+                   phoneNumber: updated.phone_number || base.phoneNumber,
+                   transactionPin: updated.transaction_pin || base.transactionPin,
+                 };
++                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(newProfile));
++                return newProfile;
+               });
+             }
