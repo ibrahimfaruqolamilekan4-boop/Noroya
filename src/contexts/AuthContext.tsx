@@ -60,6 +60,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         const sbUser = session.user;
 
+        // OPTIMISTIC LOAD: Check for cached real profile to unblock UI immediately
+        const cachedRealUser = localStorage.getItem(`vtu_user_cache_${sbUser.id}`);
+        if (cachedRealUser) {
+          try {
+             const parsedCache = JSON.parse(cachedRealUser);
+             setUserProfile(parsedCache);
+             setLoading(false); // Unblock the UI instantly!
+          } catch (e) {}
+        } else {
+             // If no cache, at least unblock with basic user details
+             setUserProfile({
+               uid: sbUser.id, 
+               email: sbUser.email || '', 
+               fullName: sbUser.user_metadata?.fullName || sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'User',
+               balance: 0, 
+               wallet_balance: 0, 
+               role: sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user', 
+               referralCode: '', 
+               phoneNumber: '', 
+               transactionPin: '', 
+               createdAt: new Date().toISOString()
+             });
+             setLoading(false);
+        }
+
         // Try to fetch profile from Supabase db first
         let sbProfile: any = null;
         try {
@@ -142,6 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
 
         setUserProfile(defaultProfile);
+        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(defaultProfile));
         setLoading(false);
 
         // Define a function to reload user profile directly from Supabase to sync balances
@@ -157,7 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUserProfile(prev => {
                 const base = prev || defaultProfile;
                 const latestBalance = data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance);
-                return {
+                const updatedProfile = {
                   ...base,
                   fullName: data.name || data.username || base.fullName,
                   balance: latestBalance,
@@ -165,6 +191,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   phoneNumber: data.phone_number || base.phoneNumber,
                   transactionPin: data.transaction_pin || base.transactionPin,
                 };
+                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(updatedProfile));
+                return updatedProfile;
               });
             }
           } catch (err) {
@@ -190,7 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUserProfile(prev => {
                   const base = prev || defaultProfile;
                   const latestBalance = updated.wallet_balance !== undefined ? updated.wallet_balance : (updated.balance ?? base.balance);
-                  return {
+                  const newProfile = {
                     ...base,
                     fullName: updated.name || updated.username || base.fullName,
                     balance: latestBalance,
@@ -198,6 +226,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     phoneNumber: updated.phone_number || base.phoneNumber,
                     transactionPin: updated.transaction_pin || base.transactionPin,
                   };
+                  localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(newProfile));
+                  return newProfile;
                 });
               }
             }
@@ -239,6 +269,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    if (userProfile) {
+      localStorage.removeItem(`vtu_user_cache_${userProfile.uid}`);
+    }
     localStorage.removeItem('vtu_simulated_user');
     await supabase.auth.signOut();
     setUserProfile(null);
