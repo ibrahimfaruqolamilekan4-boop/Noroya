@@ -322,6 +322,13 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               <span>Transfer</span>
             </button>
 
+            <button
+              onClick={() => setShowGlobalQR(true)}
+              className="hidden sm:flex items-center justify-center w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all border border-gray-200"
+              title="Show my QR Code"
+            >
+              <Scan size={18} />
+            </button>
             {/* Deposit funds button */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-fund-modal'))}
@@ -329,7 +336,14 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               style={{ backgroundColor: '#3B7A3B' }}
             >
               <span className="text-base leading-none">+</span>
-              <span>Deposit funds</span>
+              <span className="hidden sm:inline">Deposit funds</span>
+              <span className="sm:hidden">Deposit</span>
+            </button>
+            <button
+              onClick={() => setShowGlobalQR(true)}
+              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-xl bg-gray-100 text-gray-700 active:scale-95 border border-gray-200"
+            >
+              <Scan size={16} />
             </button>
 
             <div className="hidden sm:flex items-center gap-2.5">
