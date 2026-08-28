@@ -1,575 +1,1795 @@
 import React from 'react';
+import QRCode from 'react-qr-code';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Loader2, Printer, Copy, RefreshCw, Landmark, ShieldCheck } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Smartphone,
+  CreditCard,
+  History,
+  Users,
+  Settings,
+  Wallet,
+  LogOut,
+  Bell,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ChevronRight,
+  TrendingUp,
+  Zap,
+  Phone,
+  CheckCircle2,
+  AlertCircle,
+  Database,
+  X,
+  Share2,
+  Copy,
+  Gift,
+  Menu,
+  ShieldCheck,
+  Sun,
+  Moon,
+  MessageSquare,
+  PhoneCall,
+  Send,
+  Trophy,
+  Tv,
+  Briefcase,
+  Wifi,
+  Sparkles,
+  Monitor,
+  Lightbulb,
+  GraduationCap,
+  Dices,
+  RefreshCw,
+  Download,
+  Search,
+  Filter,
+  Clock,
+  Eye,
+  EyeOff,
+  ChevronDown,
+} from 'lucide-react';
+import { Scan } from "lucide-react";
 import { cn, formatCurrency } from '../lib/utils';
+import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import { subscribeToTransactions, subscribeToServicePlans } from '../lib/firestore';
+import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
-import SuccessFeedback from './SuccessFeedback';
+import { supabase } from '../lib/supabase';
+import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
-interface ProviderOption {
-  code: string;
-  name: string;
-  shortName: string;
-  region: string;
-  logoBg: string;
-  textColor: string;
-}
+import ServicePurchase from './ServicePurchase';
+import PayBillsSection from './PayBillsSection';
+import AdminPanelSection from './AdminPanelSection';
+import ElectricitySection from './ElectricitySection';
+import BettingSection from './BettingSection';
+import CableTvSection from './CableTvSection';
+import ResellerPortal from './ResellerPortal';
+import TransactionHistory from './TransactionHistory';
 
-export default function ElectricitySection() {
-  const { user } = useAuth();
-  
-  // Steps: 1 = Form & Provider select, 2 = Validation Receipt / Confirm, 3 = Receipt Success
-  const [step, setStep] = React.useState<1 | 2 | 3>(1);
-  const [provider, setProvider] = React.useState<ProviderOption | null>(null);
-  const [meterNumber, setMeterNumber] = React.useState('');
-  const [meterType, setMeterType] = React.useState<'prepaid' | 'postpaid'>('prepaid');
-  const [amount, setAmount] = React.useState('');
-  const [electricityProviders, setElectricityProviders] = React.useState<ProviderOption[]>([]);
-  const [providersLoading, setProvidersLoading] = React.useState(true);
+// Admin WhatsApp contacts — edit labels/numbers here any time.
+const ADMIN_CONTACTS = [
+  { label: 'Admin 1', number: '2348143889102' },
+  { label: 'Admin 2', number: '2347034519634' },
+  { label: 'Admin 3', number: '2349059530817' },
+];
+
+// ─── Design tokens (NOROYA redesign) ───────────────────────────────────────
+// Background: warm off-white #EDEDE9
+// Wallet card: deep forest green #132613
+// Brand green: #3B7A3B (buttons, accents)
+// CTA yellow-green: #B5D430
+// Text: #111111 (near-black)
+// Card: white #FFFFFF, shadow-sm
+// Border: #E5E5E0
+// ───────────────────────────────────────────────────────────────────────────
+
+export default function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void }) {
+  const { signOut, setSimulatedUser } = useAuth();
+  const [activeTab, setActiveTab] = React.useState('dashboard');
+  const [showGlobalQR, setShowGlobalQR] = React.useState(false);
+  const [defaultBillService, setDefaultBillService] = React.useState<'cable' | 'electricity' | 'exam' | 'betting' | null>(null);
+
+  const setTabAndService = (tab: string, serviceId?: any) => {
+    setActiveTab(tab);
+    if (tab === 'bills' && serviceId) {
+      setDefaultBillService(serviceId);
+    } else if (tab !== 'bills') {
+      setDefaultBillService(null);
+    }
+  };
+
+  const [transactions, setTransactions] = React.useState<Transaction[]>([]);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const [selectedReceiptTx, setSelectedReceiptTx] = React.useState<Transaction | null>(null);
+  const [showSupportHub, setShowSupportHub] = React.useState(false);
+  const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
+
+
+  const downloadQR = (id, filename) => {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width + 40; // padding
+      canvas.height = img.height + 40;
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 20, 20);
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = filename;
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  };
 
   React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/services/electricity');
-        const rows = await response.json();
-        if (!response.ok) throw new Error(rows?.error || 'Could not load electricity plans');
-        const grouped = new Map<string, ProviderOption>();
-        (Array.isArray(rows) ? rows : []).forEach((row: any) => {
-          const code = String(row.provider_or_network || '').trim().toUpperCase();
-          if (!code) return;
-          const name = String(row.item_name || `${code} Electricity`);
-          const current = grouped.get(code) || { code, name: `${code} Electricity Distribution`, shortName: code, region: 'Nigeria', logoBg: 'bg-amber-500', textColor: 'text-slate-950' };
-          grouped.set(code, current);
-        });
-        if (!cancelled) setElectricityProviders([...grouped.values()]);
-      } catch (error: any) { if (!cancelled) toast.error(error.message || 'Could not load active electricity services.'); }
-      finally { if (!cancelled) setProvidersLoading(false); }
-    })();
-    return () => { cancelled = true; };
+    const storedAnn = localStorage.getItem('vtu_latest_announcement');
+    if (storedAnn) setBroadcastAlert(storedAnn);
+  }, [activeTab]);
+
+  // Auto-logout after 15 minutes
+  React.useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    const INACTIVITY_TIME = 15 * 60 * 1000;
+    const handleAutoLogout = () => {
+      toast.error('Logged out automatically due to 15 minutes of inactivity.', { duration: 5000 });
+      handleLoggedOut();
+    };
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleAutoLogout, INACTIVITY_TIME);
+    };
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((e) => window.addEventListener(e, resetTimer));
+    resetTimer();
+    return () => {
+      clearTimeout(timeoutId);
+      activityEvents.forEach((e) => window.removeEventListener(e, resetTimer));
+    };
   }, []);
-  
-  // Validation State variables
-  const [isValidating, setIsValidating] = React.useState(false);
-  const [validatedAccount, setValidatedAccount] = React.useState<{
-    customerName: string;
-    address: string;
-    meterNumber: string;
-    provider: string;
-    type: string;
-    debtAmount: number;
-    minimumAmount: number;
-  } | null>(null);
 
-  // Loading spinner during final payment dispatch
-  const [isPaying, setIsPaying] = React.useState(false);
-  const [paymentReceipt, setPaymentReceipt] = React.useState<{
-    ref: string;
-    provider: string;
-    meterNumber: string;
-    meterType: string;
-    customerName: string;
-    address: string;
-    amount: number;
-    cashbackEarned: number;
-    token?: string;
-    date: string;
-  } | null>(null);
+  React.useEffect(() => {
+    const unsub = subscribeToTransactions(user.uid, (data) => {
+      setTransactions(data as Transaction[]);
+    });
+    return () => unsub();
+  }, [user.uid]);
 
-  // Quick Amount Selector
-  const QUICK_AMOUNTS = [1000, 2000, 5000, 10000, 20000, 50000];
+  const sidebarItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    { id: 'buy-data', label: 'Buy Data', icon: <Smartphone size={18} /> },
+    { id: 'buy-airtime', label: 'Buy Airtime', icon: <Zap size={18} /> },
+    { id: 'electricity', label: 'Electricity', icon: <Zap size={18} /> },
+    { id: 'cable', label: 'Cable TV', icon: <Tv size={18} /> },
+    { id: 'betting', label: 'Fund Betting', icon: <Trophy size={18} /> },
+    { id: 'bills', label: 'Pay Bills', icon: <CreditCard size={18} /> },
+    { id: 'history', label: 'Transactions', icon: <History size={18} /> },
+    { id: 'reseller', label: 'Reseller Portal', icon: <Briefcase size={18} /> },
+    { id: 'referrals', label: 'Referrals', icon: <Users size={18} /> },
+    { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
+  ];
 
-  const handleValidate = async (e: React.FormEvent) => {
+  if (user.role === 'admin') {
+    sidebarItems.push({ id: 'admin', label: 'Admin Control', icon: <ShieldCheck size={18} /> });
+  }
+
+  const handleLoggedOut = () => {
+    signOut();
+    onLogout();
+  };
+
+  // Page title per tab
+  const pageTitles: Record<string, { title: string; sub: string }> = {
+    dashboard: { title: `Good morning, ${user.fullName?.split(' ')[0] || 'there'} ✦`, sub: 'Everything you need, in one calm place.' },
+    'buy-data': { title: 'Buy data', sub: 'Simple, secure and ready when you are.' },
+    'buy-airtime': { title: 'Buy airtime', sub: 'Top up instantly across all networks.' },
+    electricity: { title: 'Pay electricity', sub: 'Prepaid and postpaid tokens.' },
+    cable: { title: 'Renew cable TV', sub: 'DStv, GOtv, StarTimes and more.' },
+    betting: { title: 'Fund betting', sub: 'Quick wallet top-up for all platforms.' },
+    bills: { title: 'Pay a bill', sub: 'More services in one place.' },
+    history: { title: 'View history', sub: 'Receipts & status.' },
+    reseller: { title: 'Reseller portal', sub: 'Wholesale pricing for resellers.' },
+    referrals: { title: 'Refer & earn', sub: 'Get your referral link.' },
+    settings: { title: 'Account settings', sub: 'Manage your profile and security.' },
+    admin: { title: 'Admin control', sub: 'Platform management.' },
+  };
+
+  const currentPage = pageTitles[activeTab] || pageTitles['dashboard'];
+
+  return (
+    <>
+    <div className="min-h-screen print:hidden" style={{ backgroundColor: '#EDEDE9', fontFamily: "'Inter', system-ui, sans-serif" }}>
+      {/* ── Mobile Drawer ────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+            />
+            <motion.aside
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+              className="absolute top-0 bottom-0 left-0 w-72 flex flex-col bg-white shadow-2xl"
+            >
+              {/* Drawer header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
+                    <span className="text-white font-black text-sm">N</span>
+                  </div>
+                  <span className="font-black text-gray-900 tracking-tight">NORODATA</span>
+                </div>
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-0.5">
+                {sidebarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => { setTabAndService(item.id); setIsMobileMenuOpen(false); }}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all',
+                      activeTab === item.id
+                        ? 'text-white'
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                    )}
+                    style={activeTab === item.id ? { backgroundColor: '#3B7A3B' } : {}}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </button>
+                ))}
+              </nav>
+
+              <div className="px-3 py-4 border-t border-gray-100">
+                <button
+                  onClick={handleLoggedOut}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-all"
+                >
+                  <LogOut size={18} />
+                  Logout
+                </button>
+              </div>
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Desktop Sidebar ──────────────────────────────────────────── */}
+      <aside className="hidden md:flex fixed top-0 left-0 bottom-0 w-60 flex-col bg-white border-r border-gray-100 z-40">
+        <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-100">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
+            <span className="text-white font-black text-sm">N</span>
+          </div>
+          <span className="font-black text-gray-900 tracking-tight text-base">NORODATA</span>
+        </div>
+
+        <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-0.5">
+          {sidebarItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setTabAndService(item.id)}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all',
+                activeTab === item.id
+                  ? 'text-white'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              )}
+              style={activeTab === item.id ? { backgroundColor: '#3B7A3B' } : {}}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="px-3 py-4 border-t border-gray-100">
+          <button
+            onClick={handleLoggedOut}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-all"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main content ─────────────────────────────────────────────── */}
+      <div className="md:ml-60 flex flex-col min-h-screen">
+
+        {/* ── Top header bar ─────────────────────────────────────────── */}
+        <header className="sticky top-0 z-30 bg-white border-b border-gray-100 px-4 md:px-8 h-16 flex items-center justify-between">
+          {/* Left: hamburger (mobile) + page title */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden w-9 h-9 flex items-center justify-center rounded-lg bg-gray-100 text-gray-600"
+            >
+              <Menu size={18} />
+            </button>
+            {/* Mobile logo */}
+            <div className="flex items-center gap-2 md:hidden">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
+                <span className="text-white font-black text-xs">N</span>
+              </div>
+              <span className="font-black text-gray-900 text-sm tracking-tight">NORODATA</span>
+            </div>
+          </div>
+
+          {/* Right: transfer + deposit buttons + profile */}
+          <div className="flex items-center gap-2">
+            {/* Transfer button */}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-transfer-modal'))}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 active:scale-95 border"
+              style={{ backgroundColor: '#F0F0EC', borderColor: '#D4D4CE', color: '#132613' }}
+            >
+              <Send size={14} />
+              <span>Transfer</span>
+            </button>
+
+            <button
+              onClick={() => setShowGlobalQR(true)}
+              className="hidden sm:flex items-center justify-center w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 transition-all border border-gray-200"
+              title="Show my QR Code"
+            >
+              <Scan size={18} />
+            </button>
+            {/* Deposit funds button */}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-fund-modal'))}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+              style={{ backgroundColor: '#3B7A3B' }}
+            >
+              <span className="text-base leading-none">+</span>
+              <span className="hidden sm:inline">Deposit funds</span>
+              <span className="sm:hidden">Deposit</span>
+            </button>
+            <button
+              onClick={() => setShowGlobalQR(true)}
+              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-xl bg-gray-100 text-gray-700 active:scale-95 border border-gray-200"
+            >
+              <Scan size={16} />
+            </button>
+
+            <div className="hidden sm:flex items-center gap-2.5">
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                style={{ backgroundColor: '#3B7A3B' }}
+              >
+                {(user.fullName?.[0] || 'U').toUpperCase()}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Broadcast alert */}
+        {broadcastAlert && (
+          <div className="px-6 py-3 text-white flex justify-between items-center text-sm" style={{ backgroundColor: '#3B7A3B' }}>
+            <div className="flex items-center gap-2 font-medium">
+              <span>📢</span>
+              <span>{broadcastAlert}</span>
+            </div>
+            <button
+              onClick={() => { setBroadcastAlert(null); localStorage.removeItem('vtu_latest_announcement'); }}
+              className="p-1 rounded-full bg-white/20 hover:bg-white/30 transition-all"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* ── Page heading ────────────────────────────────────────────── */}
+        <div className="px-4 md:px-8 pt-6 pb-2">
+          <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">{currentPage.title}</h1>
+          <p className="text-sm text-gray-500 mt-0.5 font-medium">{currentPage.sub}</p>
+        </div>
+
+        {/* ── Page content ────────────────────────────────────────────── */}
+        <main className="flex-1 px-4 md:px-8 py-4 pb-24">
+          {activeTab === 'dashboard' && (
+            <DashboardOverview
+              user={user}
+              setTab={setTabAndService}
+              transactions={transactions}
+              onSelectTx={setSelectedReceiptTx}
+            />
+          )}
+          {activeTab === 'buy-data' && <ServicePurchase type="data" />}
+          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
+          {activeTab === 'electricity' && <ElectricitySection />}
+          {activeTab === 'cable' && <CableTvSection />}
+          {activeTab === 'betting' && <BettingSection />}
+          {activeTab === 'reseller' && <ResellerPortal />}
+          {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
+          {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
+          {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
+          {activeTab === 'settings' && <SettingsSection user={user} />}
+          {activeTab === 'admin' && <AdminPanelSection />}
+        </main>
+      </div>
+
+      {/* ── Floating WhatsApp support button ─────────────────────────── */}
+      <div className="fixed right-5 bottom-6 z-40 print:hidden">
+        <button
+          onClick={() => setShowSupportHub(!showSupportHub)}
+          className="flex items-center gap-2 px-4 py-3 rounded-2xl text-white font-bold text-sm shadow-xl transition-all hover:scale-105 active:scale-95"
+          style={{ backgroundColor: '#25D366' }}
+          title="WhatsApp Support"
+        >
+          {/* WhatsApp SVG icon */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+            <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+          </svg>
+          <span>Support</span>
+          {showSupportHub ? <X size={14} /> : null}
+        </button>
+
+        <AnimatePresence>
+          {showSupportHub && (
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.95 }}
+              className="absolute bottom-16 right-0 w-72 bg-white rounded-2xl border border-gray-100 shadow-2xl p-5 space-y-3"
+            >
+              <div>
+                <h5 className="font-bold text-gray-900 text-sm">NORODATA Help Hub</h5>
+                <p className="text-xs text-gray-400 mt-0.5">24/7 support — we reply fast</p>
+              </div>
+              <div className="space-y-2">
+                {ADMIN_CONTACTS.map((admin) => (
+                  <a
+                    key={admin.number}
+                    href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Support,%20I%20need%20help%20with...`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-3 p-3 rounded-xl transition-all text-sm font-semibold text-white"
+                    style={{ backgroundColor: '#25D366' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                      <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                    </svg>
+                    WhatsApp — {admin.label}
+                  </a>
+                ))}
+                <a
+                  href="https://t.me/NORODATA_data_group"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-3 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl transition-all text-sm font-semibold"
+                >
+                  <Send size={15} /> Telegram channel
+                </a>
+                <a
+                  href="tel:+2348143889102"
+                  className="flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl transition-all text-sm font-semibold"
+                >
+                  <PhoneCall size={15} /> Call support line
+                </a>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* ── E-Receipt Modal ──────────────────────────────────────────── */}
+      <AnimatePresence>
+        {selectedReceiptTx && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedReceiptTx(null)}
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 z-10"
+            >
+              <div className="text-center space-y-2">
+                <div className="w-12 h-12 rounded-full bg-green-100 text-green-600 flex items-center justify-center mx-auto">
+                  <CheckCircle2 size={24} />
+                </div>
+                <h4 className="font-black text-gray-900 text-xl">Transaction Receipt</h4>
+                <p className="text-xs text-green-600 font-bold uppercase tracking-widest">Approved</p>
+              </div>
+
+              <div className="bg-gray-50 rounded-2xl p-5 text-center">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Amount Charged</p>
+                <p className="text-3xl font-black text-gray-900 mt-1 tracking-tight">
+                  {formatCurrency(selectedReceiptTx.amount)}
+                </p>
+              </div>
+
+              <div className="space-y-3 text-sm text-gray-700">
+                {[
+                  { label: 'Transaction ID', val: selectedReceiptTx.reference, mono: true },
+                  { label: 'Type', val: selectedReceiptTx.type?.toUpperCase() },
+                  { label: 'Description', val: selectedReceiptTx.description },
+                  { label: 'Date', val: new Date(selectedReceiptTx.createdAt).toLocaleString() },
+                ].map(({ label, val, mono }) => (
+                  <div key={label} className="flex justify-between items-start gap-4">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">{label}</span>
+                    <span className={cn('font-semibold text-right text-xs', mono && 'font-mono')}>{val}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Status</span>
+                  <span className="px-2.5 py-1 bg-green-500 text-white rounded-lg text-xs font-bold uppercase">
+                    {selectedReceiptTx.status}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`Receipt ID: ${selectedReceiptTx.reference}\nAmount: ₦${selectedReceiptTx.amount}\nDate: ${new Date(selectedReceiptTx.createdAt).toLocaleString()}\nStatus: SUCCESS`);
+                    toast.success('Copied!');
+                  }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3 text-sm transition-all"
+                >
+                  Copy Details
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="text-white font-bold rounded-xl py-3 text-sm transition-all"
+                  style={{ backgroundColor: '#3B7A3B' }}
+                >
+                  Print Receipt
+                </button>
+              </div>
+
+              <button
+                onClick={() => setSelectedReceiptTx(null)}
+                className="w-full text-center text-gray-400 text-xs font-semibold hover:text-gray-600"
+              >
+                Dismiss
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+
+      {/* Global QR Modal */}
+      <AnimatePresence>
+        {showGlobalQR && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowGlobalQR(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm print:hidden"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative bg-white rounded-3xl p-6 shadow-2xl z-10 max-w-sm w-full text-center print:hidden"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-gray-900 font-black text-lg">My Profile QR</h3>
+                <button onClick={() => setShowGlobalQR(false)} className="p-1.5 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+              
+              <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold mx-auto mb-3 shadow-sm" style={{ backgroundColor: '#3B7A3B' }}>
+                {(user.fullName?.[0] || 'U').toUpperCase()}
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-1">{user.fullName}</h2>
+              <p className="text-sm text-gray-500 mb-5 font-medium">Scan to send money or refer</p>
+
+              <div className="bg-white p-4 rounded-2xl inline-block border-2 border-gray-100 shadow-sm mx-auto mb-5">
+                <QRCode
+                  id="global-qr-code"
+                  value={`${window.location.origin}/signup?ref=${user.referralCode}`}
+                  size={220}
+                  bgColor={"#ffffff"}
+                  fgColor={"#132613"}
+                  level={"H"}
+                />
+              </div>
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/signup?ref=${user.referralCode}`);
+                    toast.success('Link copied!');
+                  }}
+                  className="flex-1 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all text-sm"
+                  style={{ backgroundColor: '#3B7A3B' }}
+                >
+                  Copy Link
+                </button>
+                <button 
+                  onClick={() => downloadQR("global-qr-code", "NORODATA-QR.png")}
+                  className="flex-1 py-3 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all border border-gray-200 text-sm"
+                >
+                  Download PNG
+                </button>
+              </div>
+              <div className="mt-2">
+                <button 
+                  onClick={() => window.print()}
+                  className="w-full py-3 rounded-xl font-bold text-gray-900 bg-white border-2 border-gray-100 hover:border-gray-300 active:scale-95 transition-all flex justify-center items-center gap-2 text-sm"
+                >
+                  🖨️ Print A4 Flyer
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* A4 Printable Flyer (Only visible when printing) */}
+      <div className="hidden print:flex fixed inset-0 z-[999999] bg-white w-full h-full flex-col items-center justify-center text-center p-8">
+        <div className="w-32 h-32 rounded-[2rem] flex items-center justify-center bg-[#3B7A3B] mb-6 shadow-lg border-4 border-gray-100">
+          <span className="text-white font-black text-7xl">N</span>
+        </div>
+        <h1 className="text-6xl font-black text-gray-900 mb-4 tracking-tighter">NORODATA</h1>
+        <h2 className="text-4xl font-bold text-[#3B7A3B] mb-16 tracking-tight">Buy Cheap Data Instantly!</h2>
+        
+        <div className="p-6 bg-white border-4 border-gray-100 rounded-[2rem] shadow-sm inline-block mb-16">
+          <QRCode
+            value={`${window.location.origin}/signup?ref=${user.referralCode}`}
+            size={400}
+            bgColor={"#ffffff"}
+            fgColor={"#132613"}
+            level={"H"}
+          />
+        </div>
+        
+        <p className="text-3xl font-bold text-gray-800 leading-snug">Scan to join & send money to<br/>{user.fullName}</p>
+        <p className="text-2xl font-black mt-6 tracking-wide text-[#3B7A3B]">{window.location.origin}</p>
+      </div>
+
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Dashboard Overview
+// ─────────────────────────────────────────────────────────────────
+interface ReferralUser {
+  uid: string;
+  fullName: string;
+  email: string;
+  createdAt: any;
+}
+
+function DashboardOverview({
+  user,
+  setTab,
+  transactions,
+  onSelectTx,
+}: {
+  user: UserProfile;
+  setTab: (tab: string, serviceId?: any) => void;
+  transactions: Transaction[];
+  onSelectTx?: (tx: Transaction) => void;
+}) {
+  const { setSimulatedUser } = useAuth();
+  const [currentBalance, setCurrentBalance] = React.useState(0);
+  const [hideBalance, setHideBalance] = React.useState(false);
+  const [isUpdating, setIsUpdating] = React.useState(false);
+
+  // Fund modal state
+  const [showFundModal, setShowFundModal] = React.useState(false);
+  const [fundingTab, setFundingTab] = React.useState<'bank' | 'gateway' | 'manual'>('bank');
+  const [opayAmount, setOpayAmount] = React.useState('2000');
+  const [manualAmount, setManualAmount] = React.useState('');
+  const [copiedAccount, setCopiedAccount] = React.useState(false);
+  const [fwLoading, setFwLoading] = React.useState(false);
+
+  // Transfer modal state
+  const [showTransferModal, setShowTransferModal] = React.useState(false);
+  const [transferUid, setTransferUid] = React.useState('');
+  const [transferAmount, setTransferAmount] = React.useState('');
+  const [transferNote, setTransferNote] = React.useState('');
+  const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
+  const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
+  const [transferLoading, setTransferLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    setCurrentBalance(user?.wallet_balance || user?.balance || 0);
+  }, [user?.wallet_balance, user?.balance]);
+
+  // Listen for fund modal event from header button
+  React.useEffect(() => {
+    const handler = () => setShowFundModal(true);
+    window.addEventListener('open-fund-modal', handler);
+    return () => window.removeEventListener('open-fund-modal', handler);
+  }, []);
+
+  // Listen for transfer modal event from header button
+  React.useEffect(() => {
+    const handler = () => setShowTransferModal(true);
+    window.addEventListener('open-transfer-modal', handler);
+    return () => window.removeEventListener('open-transfer-modal', handler);
+  }, []);
+
+  const refreshBalance = async () => {
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) return;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('wallet_balance')
+      .eq('id', authUser.id)
+      .single();
+    if (profile) setCurrentBalance(profile.wallet_balance || 0);
+  };
+
+  React.useEffect(() => {
+    const userId = (user as any)?.id || user?.uid;
+    refreshBalance();
+    if (!userId) return;
+    const channel = supabase
+      .channel('profile-changes')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.new?.wallet_balance !== undefined) setCurrentBalance(payload.new.wallet_balance);
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.uid, (user as any)?.id]);
+
+  const handleLookupRecipient = async () => {
+    if (!transferUid.trim()) { toast.error('Please enter recipient details'); return; }
+    setTransferLoading(true);
+    try {
+      const q = transferUid.trim();
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`email.eq.${q},phone_number.eq.${q},username.eq.${q},referral_code.eq.${q.toUpperCase()}`)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) { toast.error('User not found.'); setTransferLoading(false); return; }
+      if (data.id === (user as any).uid || data.id === (user as any).id) { toast.error('Cannot transfer to yourself.'); setTransferLoading(false); return; }
+      setTransferRecipient(data);
+      setTransferStep('confirm');
+    } catch (err: any) { toast.error(err.message || 'Failed to find recipient'); }
+    finally { setTransferLoading(false); }
+  };
+
+  const handleConfirmTransfer = async () => {
+    const amt = Number(transferAmount);
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    setTransferLoading(true);
+    const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    try {
+      const { data, error } = await supabase.rpc('transfer_funds', {
+        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote
+      });
+      if (error) throw error;
+      if (data.status === 'success') {
+        toast.success(`₦${amt.toLocaleString()} sent!`);
+        setShowTransferModal(false);
+        setTransferStep('input');
+        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null);
+        refreshBalance();
+      } else if (data.status === 'insufficient_funds') {
+        toast.error(`Insufficient balance.`);
+      } else { toast.error(data.message || 'Transfer failed'); }
+    } catch (err: any) { toast.error(err.message || 'Transfer failed'); }
+    finally { setTransferLoading(false); }
+  };
+
+  const handleFlutterwaveFundSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!provider) {
-      toast.error('Please select an electricity distribution provider.');
-      return;
-    }
-    if (!meterNumber.trim()) {
-      toast.error('Please enter your meter token ID or account number.');
-      return;
-    }
-    if (meterNumber.trim().length < 6) {
-      toast.error('Meter Number must be at least 6 digits long.');
-      return;
-    }
-    if (!amount || Number(amount) < 100) {
-      toast.error('Minimum electricity recharge amount is ₦100.00');
-      return;
-    }
-
-    setIsValidating(true);
+    const amt = Number(opayAmount);
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    setFwLoading(true);
+    const reference = `NOR-FW-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const loadScript = (): Promise<boolean> => new Promise((resolve) => {
+      if ((window as any).FlutterwaveCheckout) { resolve(true); return; }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.flutterwave.com/v3.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+    const scriptLoaded = await loadScript();
+    if (!scriptLoaded) { toast.error('Flutterwave failed to load.', { duration: 8000 }); setFwLoading(false); return; }
     try {
-      const response = await fetch('/api/v1/utility/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'electricity',
-          provider: provider.code,
-          number: meterNumber.trim()
-        })
-      });
-
-      const resData = await response.json();
-      if (response.ok && resData.success) {
-        setValidatedAccount({
-          customerName: resData.customerName,
-          address: resData.address || 'Address Verified',
-          meterNumber: resData.meterNumber,
-          provider: resData.provider,
-          type: meterType,
-          debtAmount: resData.debtAmount || 0,
-          minimumAmount: 100
-        });
-        setStep(2);
-        toast.success("Account Details Verified Successfully!");
-      } else {
-        toast.error(resData.error || "Verification failed. Check your meter number or provider.");
+      const pKeyResp = await fetch('/api/v1/payment/config').catch(() => null);
+      let flutterwavePublicKey = '';
+      if (pKeyResp && pKeyResp.ok) {
+        const configData = await pKeyResp.json();
+        flutterwavePublicKey = configData.flutterwavePublicKey || '';
       }
-    } catch (err) {
-      console.error(err);
-      toast.error("Account verification network timeout. Please type meter code again.");
-    } finally {
-      setIsValidating(false);
-    }
+      if (!flutterwavePublicKey) flutterwavePublicKey = (import.meta as any).env?.VITE_FLUTTERWAVE_PUBLIC_KEY || '';
+      flutterwavePublicKey = flutterwavePublicKey.replace(/^["']|["']$/g, '').trim();
+      if (!flutterwavePublicKey || flutterwavePublicKey.includes('xxxx')) {
+        setFwLoading(false); toast.error('Flutterwave not configured.', { duration: 8000 }); return;
+      }
+      const verifyOnServer = async (transactionId: string) => {
+        setFwLoading(false);
+        fetch('/api/payments/verify-flutterwave', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
+        }).catch(() => {});
+        toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
+        setShowFundModal(false); setOpayAmount('2000');
+        setTimeout(refreshBalance, 1500);
+      };
+      (window as any).FlutterwaveCheckout({
+        public_key: flutterwavePublicKey, tx_ref: reference, amount: amt, currency: 'NGN', country: 'NG',
+        payment_options: 'card, banktransfer',
+        customer: { email: user.email, phone_number: (user as any).phone_number || '08000000000', name: user.fullName || 'Customer' },
+        customizations: { title: 'NORODATA Wallet Funding', description: 'Wallet top-up via Flutterwave', logo: '' },
+        callback: (response: any) => {
+          if (response.status === 'successful' || response.status === 'success') {
+            verifyOnServer(String(response.transaction_id || 'simulated'));
+          } else { setFwLoading(false); toast.error('Payment not completed.'); }
+        },
+        onclose: () => { setFwLoading(false); toast('Payment cancelled.', { icon: 'ℹ️' }); }
+      });
+    } catch (err: any) { toast.error(`Flutterwave error: ${err.message}`); setFwLoading(false); }
   };
 
-  const handlePayment = async () => {
-    if (!user || !provider || !validatedAccount) return;
-    setIsPaying(true);
+  // Quick service grid
+  const quickServices = [
+    { id: 'buy-data', icon: '📶', label: 'Buy data', sub: 'From ₦50', color: '#E8F0E8' },
+    { id: 'buy-airtime', icon: '⚡', label: 'Buy airtime', sub: 'All networks', color: '#E8ECFF' },
+    { id: 'electricity', icon: '🔆', label: 'Pay electricity', sub: 'Instant delivery', color: '#FFF4E0' },
+    { id: 'cable', icon: '📺', label: 'Renew cable TV', sub: 'Keep watching', color: '#F0E8FF' },
+    { id: 'betting', icon: '🎯', label: 'Fund betting', sub: 'Quick top-up', color: '#FFF0E8' },
+    { id: 'bills', icon: '📋', label: 'Pay a bill', sub: 'More services', color: '#E8F4FF' },
+    { id: 'history', icon: '↗', label: 'View history', sub: 'Receipts & status', color: '#F4F4F4' },
+    { id: 'referrals', icon: '🌿', label: 'Refer & earn', sub: 'Get your link', color: '#E8F5E8' },
+  ];
 
-    const finalBillingAmount = Number(amount);
-    if (user.balance < finalBillingAmount) {
-      toast.error("Insufficient wallet balance. Please fund your wallet first.");
-      setIsPaying(false);
-      return;
-    }
+  // Compute spend this month from transactions
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const spendThisMonth = transactions
+    .filter((tx) => tx.type !== 'funding' && new Date(tx.createdAt) >= monthStart)
+    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
-    try {
-      const displayPlan = `${meterType.toUpperCase()} Electricity Unit Token (${provider.code})`;
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch('/api/buy-utility', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-        body: JSON.stringify({
-          userId: user.uid,
-          type: 'electricity',
-          provider: provider.code,
-          number: meterNumber.trim(),
-          plan: '',
-          amount: finalBillingAmount,
-          phone: (user as any)?.phone || (user as any)?.phone_number || meterNumber.trim()
-        })
+  return (
+    <div className="space-y-5 max-w-2xl mx-auto md:max-w-none">
+
+      {/* ── Wallet card ───────────────────────────────────────────── */}
+      <div
+        className="relative rounded-3xl p-6 overflow-hidden"
+        style={{ backgroundColor: '#132613' }}
+      >
+        {/* Decorative circle */}
+        <div
+          className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-20 pointer-events-none"
+          style={{ backgroundColor: '#3B7A3B' }}
+        />
+        <div
+          className="absolute -bottom-8 -right-4 w-32 h-32 rounded-full opacity-10 pointer-events-none"
+          style={{ backgroundColor: '#6AAF6A' }}
+        />
+
+        <div className="relative z-10">
+          {/* Label row */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold tracking-widest uppercase" style={{ color: '#8FB88F' }}>
+                AVAILABLE WALLET BALANCE
+              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            </div>
+            <button
+              onClick={() => setHideBalance(!hideBalance)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+            >
+              {hideBalance ? <EyeOff size={14} className="text-white" /> : <Eye size={14} className="text-white" />}
+            </button>
+          </div>
+
+          {/* Balance */}
+          <div className="mb-1">
+            <span className="text-4xl md:text-5xl font-black text-white tracking-tight font-mono">
+              {hideBalance ? '••••••' : formatCurrency(currentBalance)}
+            </span>
+            {isUpdating && <span className="text-xs text-green-400 ml-2 animate-pulse">Syncing…</span>}
+          </div>
+          <p className="text-xs mb-5" style={{ color: '#8FB88F' }}>
+            Wallet is active · Updated just now
+          </p>
+
+          {/* Bottom row */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs mb-0.5" style={{ color: '#8FB88F' }}>This month</p>
+              <p className="text-sm font-bold" style={{ color: '#B5D430' }}>
+                +{formatCurrency(spendThisMonth > 0 ? spendThisMonth : 0)} funded
+              </p>
+            </div>
+            <button
+              onClick={() => setShowFundModal(true)}
+              className="px-5 py-2.5 rounded-2xl text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+              style={{ backgroundColor: '#B5D430', color: '#132613' }}
+            >
+              Deposit money →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Spend + Month summary row ─────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Spend card */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">SPEND THIS MONTH</p>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-2xl font-black text-gray-900">{formatCurrency(spendThisMonth)}</span>
+            <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Live</span>
+          </div>
+          {/* Mini bar chart */}
+          <div className="flex items-end gap-1.5 h-10">
+            {[35, 55, 80, 45, 70, 100, 75].map((h, i) => (
+              <div
+                key={i}
+                style={{ height: `${h}%`, backgroundColor: i === 5 ? '#3B7A3B' : '#D4E8D4' }}
+                className="flex-1 rounded-t"
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Month in NORODATA */}
+        <div className="bg-green-50 rounded-2xl p-5 border border-green-100 flex flex-col justify-between">
+          <div>
+            <p className="text-xs font-black text-gray-900 uppercase tracking-widest mb-1">YOUR MONTH IN NORODATA</p>
+            <p className="text-sm text-gray-600 font-medium mt-1">
+              {transactions.length} successful transactions. Every action updates your wallet and ledger.
+            </p>
+          </div>
+          <button
+            onClick={() => setTab('history')}
+            className="mt-3 text-xs font-bold self-end"
+            style={{ color: '#3B7A3B' }}
+          >
+            See your activity →
+          </button>
+        </div>
+      </div>
+
+      {/* ── Quick actions grid ────────────────────────────────────── */}
+      <div>
+        <h2 className="text-lg font-black text-gray-900 mb-3">Start something</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {quickServices.map((svc) => (
+            <button
+              key={svc.id}
+              onClick={() => setTab(svc.id)}
+              className="bg-white hover:bg-gray-50 rounded-2xl p-4 border border-gray-100 shadow-sm text-left transition-all hover:-translate-y-0.5 hover:shadow-md active:scale-98 group"
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center mb-3 text-lg"
+                style={{ backgroundColor: svc.color }}
+              >
+                {svc.icon}
+              </div>
+              <p className="font-bold text-gray-900 text-sm">{svc.label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{svc.sub}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Recent activity ───────────────────────────────────────── */}
+      <SupabaseTransactionHistoryWidget user={user} onSelectTx={onSelectTx} setTab={setTab} />
+
+      {/* ── Fund Modal ────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showFundModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowFundModal(false)}
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden z-10"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#E8F5E8' }}>
+                    <Wallet size={18} style={{ color: '#3B7A3B' }} />
+                  </div>
+                  <h4 className="font-black text-gray-900 text-lg">Deposit Funds</h4>
+                </div>
+                <button onClick={() => setShowFundModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex p-2 mx-4 mt-4 bg-gray-100 rounded-xl gap-1">
+                {(['bank', 'gateway', 'manual'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setFundingTab(t)}
+                    className={cn('flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all',
+                      fundingTab === t ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700')}
+                  >
+                    {t === 'bank' ? 'Bank Transfer' : t === 'gateway' ? 'Card/Gateway' : 'Manual Request'}
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-6">
+                {fundingTab === 'bank' && (
+                  <div className="space-y-4">
+                    {/* OPay Bank Transfer */}
+                    <div className="rounded-2xl p-5 border-2 border-green-200 bg-green-50 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg" style={{ backgroundColor: '#3B7A3B' }}>
+                          🏦
+                        </div>
+                        <div>
+                          <p className="font-black text-gray-900 text-sm">OPay Bank Transfer</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Send money directly to our account</p>
+                        </div>
+                      </div>
+
+                      {/* Account Details */}
+                      <div className="bg-white rounded-xl p-4 space-y-3 border border-green-100">
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Bank Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">OPay</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('OPay');
+                                setCopiedAccount(true);
+                                toast.success('Bank copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Number</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono font-black text-gray-900 text-lg">9128086892</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('9128086892');
+                                setCopiedAccount(true);
+                                toast.success('Account number copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">OGUNKEYE RILWAN ADEWALE</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('OGUNKEYE RILWAN ADEWALE');
+                                setCopiedAccount(true);
+                                toast.success('Account name copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Instructions */}
+                      <div className="bg-white rounded-xl p-4 space-y-2 border border-green-100">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">NEXT STEPS:</p>
+                        <ol className="space-y-2 text-sm text-gray-700">
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
+                            <span>Transfer money to the account above</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
+                            <span>Take a screenshot of the payment proof</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
+                            <span>Message Admin on WhatsApp with the proof</span>
+                          </li>
+                        </ol>
+                      </div>
+
+                      {/* All Admin WhatsApp contacts */}
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Contact Admin via WhatsApp</p>
+                        {ADMIN_CONTACTS.map((admin) => (
+                          <a
+                            key={admin.number}
+                            href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Admin,%20I%20have%20sent%20money%20to%20the%20OPay%20account%209128086892.%20Please%20find%20attached%20proof%20of%20payment.`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+                            style={{ backgroundColor: '#25D366' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                            </svg>
+                            {admin.label} — {admin.number}
+                          </a>
+                        ))}
+                      </div>
+
+                      {/* Webhook notice */}
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3.5 space-y-1">
+                        <p className="text-xs font-bold text-yellow-800 flex items-center gap-2">
+                          <AlertCircle size={14} />
+                          Payment Gateway Notice
+                        </p>
+                        <p className="text-xs text-yellow-700">Our Flutterwave payment webhook is having issues. Bank transfer is currently the fastest way to fund your wallet.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {fundingTab === 'gateway' && (
+                  <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-4">
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
+                      <input
+                        type="number" required value={opayAmount}
+                        onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 2000"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={fwLoading || !opayAmount || Number(opayAmount) <= 0}
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50"
+                      style={{ backgroundColor: '#3B7A3B' }}
+                    >
+                      {fwLoading ? 'Initializing…' : 'Pay via Flutterwave'}
+                    </button>
+                  </form>
+                )}
+
+                {fundingTab === 'manual' && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount Transferred (₦)</label>
+                      <input
+                        type="number" value={manualAmount}
+                        onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
+                        placeholder="e.g. 5000"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
+                      />
+                    </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                      <p className="text-xs font-bold text-blue-900">ℹ️ Manual Transfer Request</p>
+                      <p className="text-xs text-blue-800">Enter the amount you transferred to our OPay account. Our admin will verify your payment proof on WhatsApp and top up your wallet within minutes.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!manualAmount) {
+                          toast.error('Enter amount');
+                          return;
+                        }
+                        navigator.clipboard.writeText(`Manual transfer request: ₦${manualAmount}\nPlease verify and credit my account.`);
+                        toast.success('Request info copied! Send to admin on WhatsApp.');
+                        setShowFundModal(false);
+                        setManualAmount('');
+                      }}
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all"
+                      style={{ backgroundColor: '#3B7A3B' }}
+                    >
+                      Copy & Send to Admin
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Transfer Modal ────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showTransferModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => { setShowTransferModal(false); setTransferStep('input'); }}
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-5 z-10"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-gray-900 text-xl">Send Money</h4>
+                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer via Transfer ID</p>
+                </div>
+                <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {transferStep === 'input' && (
+                <div className="space-y-5">
+                  {/* Transfer ID field — primary / most prominent */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-black text-gray-900 uppercase tracking-wider">Recipient Transfer ID</label>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E8F0E8', color: '#3B7A3B' }}>
+                        same as referral code
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={transferUid}
+                        onChange={(e) => setTransferUid(e.target.value)}
+                        placeholder="e.g. NORODATA-AB12C"
+                        className="w-full bg-gray-50 border-2 rounded-xl px-4 py-4 font-mono font-black text-gray-900 text-lg focus:outline-none transition-all uppercase tracking-wider placeholder:normal-case placeholder:font-normal placeholder:text-sm placeholder:tracking-normal"
+                        style={{ borderColor: transferUid ? '#3B7A3B' : '#E5E7EB' }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                      Ask the recipient to share their Transfer ID. They can find it on their dashboard under <strong>Refer & earn</strong> — it looks like <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">NORODATA-XXXXX</span>.
+                    </p>
+                  </div>
+
+                  {/* Your own Transfer ID for easy sharing */}
+                  {user.referralCode && (
+                    <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
+                        <p className="font-mono font-black text-gray-900 mt-0.5">{user.referralCode}</p>
+                      </div>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(user.referralCode); toast.success('Your Transfer ID copied!'); }}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
+                        style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
+                      >
+                        <Copy size={12} /> Copy mine
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Amount */}
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Amount (₦)</label>
+                    <input
+                      type="number"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 text-lg focus:outline-none focus:border-green-500 transition-all"
+                    />
+                  </div>
+
+                  {/* Note */}
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Note (optional)</label>
+                    <input
+                      type="text"
+                      value={transferNote}
+                      onChange={(e) => setTransferNote(e.target.value)}
+                      placeholder="What's this for?"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-900 focus:outline-none focus:border-green-500 transition-all"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleLookupRecipient}
+                    disabled={transferLoading || !transferUid || !transferAmount}
+                    className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all"
+                    style={{ backgroundColor: '#3B7A3B' }}
+                  >
+                    {transferLoading ? 'Looking up recipient…' : 'Find recipient & continue →'}
+                  </button>
+                </div>
+              )}
+
+              {transferStep === 'confirm' && transferRecipient && (
+                <div className="space-y-4">
+                  <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
+                    <p className="text-xs text-gray-400 font-bold uppercase">Sending to</p>
+                    <p className="font-black text-gray-900">{transferRecipient.full_name || transferRecipient.username || transferRecipient.email}</p>
+                    <p className="text-sm text-gray-500">{transferRecipient.phone_number || transferRecipient.email}</p>
+                    {transferNote && <p className="text-sm text-gray-600 italic">"{transferNote}"</p>}
+                    <div className="pt-3 border-t border-gray-200 flex justify-between items-center">
+                      <span className="text-xs text-gray-400 font-bold uppercase">Amount</span>
+                      <span className="text-xl font-black" style={{ color: '#3B7A3B' }}>₦{Number(transferAmount).toLocaleString()}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
+                      Back
+                    </button>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                      {transferLoading ? 'Sending…' : 'Confirm'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Supabase Transaction Widget (Recent Activity)
+// ─────────────────────────────────────────────────────────────────
+function SupabaseTransactionHistoryWidget({
+  user,
+  onSelectTx,
+  setTab,
+}: {
+  user: UserProfile;
+  onSelectTx?: (tx: Transaction) => void;
+  setTab: (tab: string) => void;
+}) {
+  const [txs, setTxs] = React.useState<Transaction[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const userId = user?.uid || (user as any)?.id;
+    if (!userId) { setLoading(false); return; }
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setTxs(data.map((row: any) => ({
+            ...row,
+            userId: row.user_id || row.userId,
+            createdAt: row.created_at || row.createdAt,
+          })));
+        }
+        setLoading(false);
       });
+  }, [user]);
 
-      const resData = await response.json();
-      if (response.ok && (resData.status === 'success' || resData.success === true)) {
-        const txRef = resData.transaction?.reference || `ELE-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-        const cashback = resData.transaction?.cashbackEarned || 0;
-        const meterToken = resData.transaction?.token || '';
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-black text-gray-900">Recent activity</h2>
+        <button
+          onClick={() => setTab('history')}
+          className="text-sm font-semibold transition-all"
+          style={{ color: '#3B7A3B' }}
+        >
+          View all →
+        </button>
+      </div>
 
-        setPaymentReceipt({
-          ref: txRef,
-          provider: provider.name,
-          meterNumber: meterNumber.trim(),
-          meterType: meterType.toUpperCase(),
-          customerName: validatedAccount.customerName,
-          address: validatedAccount.address,
-          amount: finalBillingAmount,
-          cashbackEarned: cashback,
-          token: meterToken || undefined,
-          date: new Date().toLocaleString()
-        });
+      {loading ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+          <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-2" style={{ borderColor: '#3B7A3B', borderTopColor: 'transparent' }} />
+          <p className="text-xs text-gray-400 font-medium">Loading transactions…</p>
+        </div>
+      ) : txs.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+          <p className="text-sm text-gray-400 font-medium">No transactions yet. Make your first purchase!</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+          {txs.map((tx, idx) => {
+            const isFunding = tx.type === 'funding';
+            const status = (tx.status || 'success').toLowerCase();
+            const isSuccess = status === 'success' || status === 'completed' || status === 'successful';
+            const isPending = status === 'pending';
 
-        toast.success("Electricity Subscription completed!");
-        setStep(3);
-      } else {
-        toast.error(resData.error || "Dispatched transaction was rejected by utility gateway.");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("High frequency gateway error. Re-requesting transaction...");
-    } finally {
-      setIsPaying(false);
+            return (
+              <div
+                key={tx.id || idx}
+                onClick={() => onSelectTx?.(tx)}
+                className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors cursor-pointer border-b border-gray-50 last:border-b-0"
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm shrink-0"
+                    style={{ backgroundColor: isSuccess ? '#3B7A3B' : isPending ? '#D4973B' : '#C0392B' }}
+                  >
+                    {isSuccess ? <CheckCircle2 size={16} /> : isPending ? <Clock size={16} /> : <AlertCircle size={16} />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 line-clamp-1">
+                      {tx.description || tx.type || 'Transaction'}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {tx.createdAt ? new Date(tx.createdAt).toLocaleString() : 'Recent'}
+                      {tx.reference && ` · ${tx.reference.slice(0, 12)}…`}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={cn('text-sm font-bold font-mono', isFunding ? 'text-green-600' : 'text-gray-900')}>
+                    {isFunding ? '+' : '-'}{formatCurrency(tx.amount || 0)}
+                  </p>
+                  <p
+                    className="text-xs font-semibold capitalize"
+                    style={{ color: isSuccess ? '#3B7A3B' : isPending ? '#D4973B' : '#C0392B' }}
+                  >
+                    {tx.status || 'completed'}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Referral Section
+// ─────────────────────────────────────────────────────────────────
+function ReferralSection({ user, transactions }: { user: UserProfile; transactions: Transaction[] }) {
+  const [referredUsers, setReferredUsers] = React.useState<ReferralUser[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [copiedLink, setCopiedLink] = React.useState(false);
+  const [copiedCode, setCopiedCode] = React.useState(false);
+  const [showQR, setShowQR] = React.useState(false);
+
+  React.useEffect(() => {
+    const q = query(collection(db, 'users', user.uid, 'referrals'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: ReferralUser[] = [];
+      snapshot.forEach((d) => { list.push({ id: d.id, ...d.data() } as any); });
+      setReferredUsers(list);
+      setLoading(false);
+    }, () => setLoading(false));
+    return () => unsub();
+  }, [user.uid]);
+
+  const commissionTx = transactions.filter(
+    (tx) => tx.type === 'funding' && (tx.description?.toLowerCase().includes('referral commission') || tx.description?.toLowerCase().includes('2% referral'))
+  );
+  const totalEarnedCommission = commissionTx.reduce((sum, tx) => sum + tx.amount, 0);
+  const getCommissionFromUser = (fullName: string) =>
+    commissionTx.filter((tx) => tx.description?.toLowerCase().includes(fullName.toLowerCase())).reduce((sum, tx) => sum + tx.amount, 0);
+
+  const referralLink = `${window.location.origin}?ref=${user.referralCode}`;
+  const handleCopyCode = () => { navigator.clipboard.writeText(user.referralCode); setCopiedCode(true); toast.success('Code copied!'); setTimeout(() => setCopiedCode(false), 2000); };
+  const handleCopyLink = () => { navigator.clipboard.writeText(referralLink); setCopiedLink(true); toast.success('Link copied!'); setTimeout(() => setCopiedLink(false), 2000); };
+
+  const shareText = `Join me on NORODATA for cheap data bundles: ${referralLink}`;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Hero */}
+      <div className="rounded-3xl p-7 text-white relative overflow-hidden" style={{ backgroundColor: '#132613' }}>
+        <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style={{ backgroundColor: '#3B7A3B' }} />
+        <div className="relative z-10">
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full mb-4" style={{ backgroundColor: 'rgba(181,212,48,0.2)', color: '#B5D430' }}>
+            <Gift size={12} /> Referral Program
+          </span>
+          <h3 className="text-2xl font-black mb-2">Refer & earn 2% commissions</h3>
+          <p className="text-sm mb-6" style={{ color: '#8FB88F' }}>
+            Invite friends and earn a 2% cash commission on every purchase they make — forever.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
+              <p className="text-xs mb-1" style={{ color: '#8FB88F' }}>Your code</p>
+              <div className="flex items-center justify-between">
+                <span className="font-mono font-black text-white">{user.referralCode}</span>
+                <button onClick={handleCopyCode} className="text-xs px-2 py-1 rounded-lg font-bold transition-all" style={{ backgroundColor: copiedCode ? '#B5D430' : 'rgba(255,255,255,0.15)', color: copiedCode ? '#132613' : '#fff' }}>
+                  {copiedCode ? '✓' : <Copy size={12} />}
+                </button>
+              </div>
+            </div>
+            <div className="rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
+              <p className="text-xs mb-1" style={{ color: '#8FB88F' }}>Your link</p>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs opacity-80 truncate max-w-[100px]">{referralLink}</span>
+                <button onClick={handleCopyLink} className="text-xs px-2 py-1 rounded-lg font-bold transition-all" style={{ backgroundColor: copiedLink ? '#B5D430' : '#fff', color: copiedLink ? '#132613' : '#3B7A3B' }}>
+                  {copiedLink ? '✓' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold" style={{ color: '#8FB88F' }}>Share via:</span>
+              <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white text-xs hover:scale-110 transition-all">W</a>
+              <a href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center text-white text-xs hover:scale-110 transition-all">T</a>
+              <a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs hover:scale-110 transition-all border border-white/10">X</a>
+            </div>
+            <button onClick={() => setShowQR(true)} className="text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all hover:bg-white hover:text-black" style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff' }}>
+              <Scan size={12} /> Show QR
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showQR && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  onClick={() => setShowQR(false)}
+                  className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+                />
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                  className="relative bg-white rounded-3xl p-6 shadow-2xl z-10 max-w-sm w-full text-center"
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-gray-900 font-black text-lg">Scan to join</h3>
+                    <button onClick={() => setShowQR(false)} className="p-1 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl inline-block border border-gray-100 shadow-sm mx-auto mb-4">
+                    <QRCode
+                      id="referral-qr-code"
+                      value={referralLink}
+                      size={200}
+                      bgColor={"#ffffff"}
+                      fgColor={"#132613"}
+                      level={"H"}
+                    />
+                  </div>
+                  <div className="flex gap-2 w-full mt-2">
+                    <button 
+                      onClick={() => downloadQR("referral-qr-code", "NORODATA-Referral-QR.png")}
+                      className="w-full py-2.5 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all border border-gray-200 text-sm"
+                    >
+                      Download PNG
+                    </button>
+                  </div>
+                  <div className="w-full mt-2">
+                    <button 
+                      onClick={() => window.print()}
+                      className="w-full py-2.5 rounded-xl font-bold text-gray-900 bg-white hover:border-gray-300 active:scale-95 transition-all border-2 border-gray-100 text-sm flex justify-center items-center gap-2"
+                    >
+                      🖨️ Print A4 Flyer
+                    </button>
+                  </div>
+                  <p className="text-gray-500 text-xs font-medium mt-3">Have your friends scan this QR code with their camera to join NORODATA directly.</p>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total referrals', val: referredUsers.length, icon: <Users size={20} />, iconBg: '#E8F0E8', iconColor: '#3B7A3B' },
+          { label: 'Active partners', val: referredUsers.length, icon: <CheckCircle2 size={20} />, iconBg: '#E8F5E8', iconColor: '#3B7A3B' },
+          { label: 'Commission earned', val: formatCurrency(totalEarnedCommission), icon: <Gift size={20} />, iconBg: '#FFF4E0', iconColor: '#D4973B' },
+        ].map(({ label, val, icon, iconBg, iconColor }) => (
+          <div key={label} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: iconBg }}>
+              <span style={{ color: iconColor }}>{icon}</span>
+            </div>
+            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">{label}</p>
+            <p className="text-xl font-black text-gray-900">{val}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+        <div className="p-5 border-b border-gray-50 flex items-center justify-between">
+          <div>
+            <h4 className="font-bold text-gray-900">Your referred network</h4>
+            <p className="text-xs text-gray-400 mt-0.5">Users who signed up with your link or code.</p>
+          </div>
+          <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: '#E8F0E8', color: '#3B7A3B' }}>{referredUsers.length} total</span>
+        </div>
+
+        {loading ? (
+          <div className="p-10 text-center text-sm text-gray-400">Loading…</div>
+        ) : referredUsers.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  <th className="px-5 py-3 text-left">Name / Email</th>
+                  <th className="px-5 py-3 text-left">Joined</th>
+                  <th className="px-5 py-3 text-left">Status</th>
+                  <th className="px-5 py-3 text-right">Commission</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {referredUsers.map((u) => (
+                  <tr key={u.uid} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-5 py-3.5">
+                      <p className="font-semibold text-gray-900">{u.fullName}</p>
+                      <p className="text-xs text-gray-400">{u.email}</p>
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-gray-400">
+                      {u.createdAt ? new Date(u.createdAt.seconds * 1000).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E8F5E8', color: '#3B7A3B' }}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> Active
+                      </span>
+                    </td>
+                    <td className="px-5 py-3.5 text-right font-mono font-bold text-sm" style={{ color: '#3B7A3B' }}>
+                      {formatCurrency(getCommissionFromUser(u.fullName))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="py-14 text-center space-y-3">
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto" style={{ backgroundColor: '#E8F0E8' }}>
+              <Gift size={24} style={{ color: '#3B7A3B' }} />
+            </div>
+            <p className="font-bold text-gray-900">No referrals yet</p>
+            <p className="text-xs text-gray-400 max-w-xs mx-auto">Share your link above to start earning commissions.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Settings Section
+// ─────────────────────────────────────────────────────────────────
+function SettingsSection({ user }: { user: UserProfile }) {
+  const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
+  const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
+  const [isUpdating, setIsUpdating] = React.useState(false);
+
+  const handleUpdateSecurity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (transactionPin && (transactionPin.length !== 4 || !/^\d+$/.test(transactionPin))) {
+      toast.error('Transaction PIN must be exactly 4 digits!'); return;
     }
-  };
-
-  const resetFlow = () => {
-    setProvider(null);
-    setMeterNumber('');
-    setAmount('');
-    setValidatedAccount(null);
-    setPaymentReceipt(null);
-    setStep(1);
+    if (phoneNumber && (phoneNumber.length < 10 || phoneNumber.length > 11)) {
+      toast.error('Enter a valid Nigerian phone number!'); return;
+    }
+    setIsUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ phone_number: phoneNumber, transaction_pin: transactionPin })
+        .eq('id', (user as any).uid || (user as any).id);
+      if (error) throw error;
+      toast.success('Profile updated! 🔐');
+    } catch (error: any) {
+      toast.error('Failed to update: ' + error.message);
+    } finally { setIsUpdating(false); }
   };
 
   return (
-    <div className="space-y-8 font-sans">
-      {/* Upper header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-xl font-bold tracking-tight text-slate-900">Electricity Bill Payment</h3>
-          <p className="text-xs text-slate-500 font-medium">Clear energy tokens & postpaid utility balance instantly</p>
+    <div className="space-y-6 max-w-2xl">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
+        {/* Profile info */}
+        <div className="p-6">
+          <h3 className="font-black text-gray-900 text-lg mb-5">Profile information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              { label: 'Full name', val: user.fullName },
+              { label: 'Email address', val: user.email },
+            ].map(({ label, val }) => (
+              <div key={label}>
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">{label}</label>
+                <input
+                  readOnly value={val}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-semibold text-gray-700 focus:outline-none"
+                />
+              </div>
+            ))}
+          </div>
         </div>
-        {provider && step === 1 && (
-          <button 
-            onClick={() => setProvider(null)}
-            className="flex items-center gap-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-full transition-all"
-          >
-            Change Provider
-          </button>
+
+        {/* Security */}
+        <form onSubmit={handleUpdateSecurity} className="p-6 space-y-5">
+          <div>
+            <h3 className="font-black text-gray-900 text-lg mb-1">Security credentials</h3>
+            <p className="text-xs text-gray-400">Keep your phone and PIN up to date.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Phone number</label>
+              <input
+                type="tel" maxLength={11} value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                placeholder="08123456789"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-semibold text-gray-900 focus:outline-none focus:border-green-500 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Transaction PIN (4 digits)</label>
+              <input
+                type="password" maxLength={4} value={transactionPin}
+                onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="••••"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold tracking-widest text-gray-900 focus:outline-none focus:border-green-500 transition-colors"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="submit" disabled={isUpdating}
+              className="px-6 py-3 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50 hover:brightness-110"
+              style={{ backgroundColor: '#3B7A3B' }}
+            >
+              {isUpdating ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+
+        {/* Reseller upgrade */}
+        {user.role === 'user' && (
+          <div className="p-6">
+            <h3 className="font-black text-lg mb-1" style={{ color: '#3B7A3B' }}>Upgrade to reseller</h3>
+            <p className="text-xs text-gray-400 mb-5">Get wholesale data prices and earn more.</p>
+            <div className="bg-green-50 border border-green-100 p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <p className="font-bold text-gray-900">Premium Reseller Account</p>
+                <p className="text-xs text-gray-500 font-mono mt-0.5">ONE-TIME FEE: ₦2,500.00</p>
+              </div>
+              <button className="px-5 py-2.5 text-white text-sm font-bold rounded-xl hover:brightness-110 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                Upgrade now
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
-      <AnimatePresence mode="wait">
-        {step === 1 && (
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            exit={{ opacity: 0 }} 
-            className="space-y-6"
-          >
-            {/* GRID 1: Select Provider */}
-            {!provider ? (
-              <div className="space-y-4">
-                {providersLoading && <p className="text-xs text-slate-500">Loading supported electricity providers…</p>}
-                {!providersLoading && electricityProviders.length === 0 && <p className="text-xs text-rose-500">No electricity providers are currently available.</p>}
-                <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
-                  Select Distribution Company (DISCO)
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  {electricityProviders.map((disc) => (
-                    <button
-                      key={disc.code}
-                      onClick={() => setProvider(disc)}
-                      className="border border-slate-100 bg-white rounded-3xl p-5 hover:border-amber-300 hover:shadow-lg hover:shadow-amber-50/40 text-left transition-all flex flex-col justify-between h-36 outline-none"
-                    >
-                      <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-sm", disc.logoBg, disc.textColor)}>
-                        {disc.code.slice(0, 3)}
-                      </div>
-                      <div className="mt-4">
-                        <h4 className="font-extrabold text-slate-800 text-sm tracking-tight truncate">{disc.shortName}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold mt-0.5">{disc.region}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              /* PROVIDER CHOSEN: Fill details Form */
-              <div className="bg-white border border-slate-100 rounded-[2.5rem] overflow-hidden shadow-sm max-w-2xl mx-auto">
-                {/* Active Disco Info Bar */}
-                <div className="p-6 border-b border-slate-50 bg-slate-50/20 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="p-2.5 bg-amber-50 text-amber-600 rounded-xl">
-                      <Zap size={20} />
-                    </span>
-                    <div>
-                      <h4 className="font-extrabold text-slate-900">{provider.name}</h4>
-                      <p className="text-[10px] text-slate-400 font-extrabold tracking-widest uppercase">Verified Instant Token Clearance</p>
-                    </div>
-                  </div>
-                  <div className="text-xs font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-lg">
-                    {provider.code}
-                  </div>
-                </div>
-
-                <form onSubmit={handleValidate} className="p-8 space-y-6">
-                  {/* Meter Type Choice */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Meter Mode</label>
-                    <div className="grid grid-cols-2 gap-4">
-                      <button
-                        type="button"
-                        onClick={() => setMeterType('prepaid')}
-                        className={cn(
-                          "py-4 rounded-2xl border text-sm font-extrabold text-center transition-all",
-                          meterType === 'prepaid' 
-                            ? "border-amber-500 bg-amber-50/40 text-amber-700" 
-                            : "border-slate-100 hover:bg-slate-50 text-slate-600"
-                        )}
-                      >
-                        ⚡ Prepaid (Generate Token PIN)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMeterType('postpaid')}
-                        className={cn(
-                          "py-4 rounded-2xl border text-sm font-extrabold text-center transition-all",
-                          meterType === 'postpaid' 
-                            ? "border-amber-500 bg-amber-50/40 text-amber-700" 
-                            : "border-slate-100 hover:bg-slate-50 text-slate-600"
-                        )}
-                      >
-                        📄 Postpaid (Direct Bill Settlement)
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Meter Number / Account Input */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 flex justify-between">
-                      <span>Meter Token Number / Account ID</span>
-                      <span className="text-slate-300 font-bold tracking-normal uppercase text-[9px]">Provider ID check safe</span>
-                    </label>
-                    <input
-                      required
-                      type="text"
-                      pattern="[0-9]*"
-                      inputMode="numeric"
-                      value={meterNumber}
-                      onChange={(e) => setMeterNumber(e.target.value.replace(/\D/g, ''))}
-                      placeholder="e.g. 54129874612"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4  px-5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500"
-                    />
-                  </div>
-
-                  {/* Specifying Amount */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Specify Subscription Amount (₦)</label>
-                    <input
-                      required
-                      type="text"
-                      pattern="[0-9]*"
-                      inputMode="numeric"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Minimum: ₦100.00"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500"
-                    />
-
-                    {/* Quick values buttons */}
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-3 select-none">
-                      {QUICK_AMOUNTS.map((val) => (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => setAmount(String(val))}
-                          className={cn(
-                            "py-2 rounded-xl text-xs font-semibold border transition-all",
-                            amount === String(val) 
-                              ? "bg-amber-500 text-white border-amber-500 font-bold" 
-                              : "bg-white text-slate-600 border-slate-100 hover:bg-slate-50"
-                          )}
-                        >
-                          + ₦{val.toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Actions buttons */}
-                  <div className="pt-4 flex gap-4">
-                    <button
-                      type="button"
-                      onClick={() => setProvider(null)}
-                      className="flex-1 py-4 rounded-2xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold transition-all text-sm"
-                    >
-                      Change Disco
-                    </button>
-                    <button
-                      disabled={isValidating}
-                      type="submit"
-                      className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
-                    >
-                      {isValidating ? (
-                        <>
-                          <Loader2 className="animate-spin" size={18} /> Validating Digital Account...
-                        </>
-                      ) : (
-                        <>
-                          Verify & Proceed <ArrowRight size={18} />
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {step === 2 && validatedAccount && provider && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.98 }} 
-            animate={{ opacity: 1, scale: 1 }} 
-            exit={{ opacity: 0 }} 
-            className="max-w-xl mx-auto space-y-6"
-          >
-            {/* STAGE 2: Verification summary */}
-            <div className="p-6 rounded-3xl bg-green-500/5 border border-green-100 flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0">
-                <ShieldCheck size={22} />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs uppercase font-black text-green-700 tracking-wider">Account Validation Confirmed</p>
-                <h4 className="font-extrabold text-slate-900 text-lg leading-snug">{validatedAccount.customerName}</h4>
-                <p className="text-xs text-slate-500 leading-relaxed font-sans mt-0.5">{validatedAccount.address}</p>
-              </div>
-            </div>
-
-            {/* In-depth Billing Invoice summary */}
-            <div className="p-6 bg-white rounded-[2rem] border border-slate-100 shadow-sm space-y-4 font-sans">
-              <h4 className="font-black text-slate-900 text-sm uppercase tracking-wider pl-1 pb-2 border-b border-slate-50">Transaction Bill Invoice</h4>
-              
-              <div className="divide-y divide-slate-150 divide-slate-100 text-xs">
-                <div className="py-3 flex justify-between">
-                  <span className="text-slate-400 font-medium">Service Operator</span>
-                  <span className="font-extrabold text-slate-800">{provider.name}</span>
-                </div>
-                <div className="py-3 flex justify-between">
-                  <span className="text-slate-400 font-medium font-sans">Meter Number Token ID</span>
-                  <span className="font-mono font-extrabold text-slate-800 tracking-wider">{validatedAccount.meterNumber}</span>
-                </div>
-                <div className="py-3 flex justify-between">
-                  <span className="text-slate-400 font-medium">Operation Scheme</span>
-                  <span className="font-extrabold text-slate-800 uppercase">{meterType} Token Delivery</span>
-                </div>
-                {validatedAccount.debtAmount > 0 ? (
-                  <div className="py-3 flex justify-between text-red-500">
-                    <span className="text-red-400 font-medium">Accumulated Out-of-cycle Debt</span>
-                    <span className="font-bold font-mono">₦{validatedAccount.debtAmount.toFixed(2)}</span>
-                  </div>
-                ) : null}
-                <div className="py-3 flex justify-between">
-                  <span className="text-slate-400 font-medium font-sans">Distribution Surcharge</span>
-                  <span className="font-bold text-emerald-600 uppercase flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded">FREE</span></span>
-                </div>
-                <div className="py-4 flex justify-between text-sm border-t border-dashed border-slate-200">
-                  <span className="text-slate-900 font-extrabold">Total Outflow Debit</span>
-                  <span className="text-lg font-black text-blue-600 font-mono">{formatCurrency(Number(amount))}</span>
-                </div>
-              </div>
-
-              {user && (
-                <div className="border border-dashed border-slate-200 bg-slate-50 p-3 rounded-xl flex justify-between items-center text-xs text-slate-500">
-                  <span>Current Bal: <strong>{formatCurrency(user.balance)}</strong></span>
-                  <span>Bal After: <strong className="text-slate-700">{formatCurrency(user.balance - Number(amount))}</strong></span>
-                </div>
-              )}
-            </div>
-
-            {/* Actions for flow */}
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={() => setStep(1)}
-                className="py-4 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-2xl font-bold transition-all text-sm"
-              >
-                Change Details
-              </button>
-              <button
-                disabled={isPaying}
-                onClick={handlePayment}
-                className="py-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
-              >
-                {isPaying ? (
-                  <>
-                    <Loader2 className="animate-spin" size={18} /> Instantly paying...
-                  </>
-                ) : (
-                  <>
-                    Confirm & Complete <CheckCircle2 size={18} />
-                  </>
-                )}
-              </button>
-            </div>
-          </motion.div>
-        )}
-
-        {step === 3 && paymentReceipt && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            exit={{ opacity: 0 }} 
-            className="max-w-xl mx-auto space-y-6"
-          >
-            {/* SUCCESS INTERFACE WITH METADATA TOKEN */}
-            <div className="text-center py-6 space-y-3">
-              <SuccessFeedback size={70} showConfetti={true} />
-              <div>
-                <h4 className="text-2xl font-black text-slate-900 mt-2">Payment Completed!</h4>
-                <p className="text-xs text-slate-400 font-extrabold tracking-widest uppercase">AUTOMATED ENERGY DISPATCH CLEAR</p>
-              </div>
-            </div>
-
-            {/* PREPAID KEY DISPLAY IF AVAILABLE */}
-            {paymentReceipt.token && (
-              <div className="p-6 rounded-3xl bg-amber-500/5 border border-amber-200 text-center space-y-1 relative overflow-hidden">
-                <p className="text-[10px] uppercase font-black text-amber-700 tracking-wider">PREPAID ENERGY TOKEN PIN</p>
-                <h5 className="font-mono font-black text-slate-900 text-2xl tracking-widest select-all relative z-10">{paymentReceipt.token}</h5>
-                <p className="text-xs text-amber-600 font-semibold max-w-sm mx-auto leading-relaxed">Copy or print this token key and input it in your physical prepaid meter monitor terminal.</p>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(paymentReceipt.token || '');
-                    toast.success('Token PIN Copied!');
-                  }}
-                  className="absolute top-4 right-4 text-amber-600 hover:text-amber-800 p-1.5 hover:bg-amber-100 rounded-full transition-all"
-                  title="Copy Token"
-                >
-                  <Copy size={16} />
-                </button>
-              </div>
-            )}
-
-            {/* Receipt Summary details */}
-            <div className="bg-slate-50 rounded-[2rem] border border-slate-100 p-6 space-y-3.5 divide-y divide-slate-100 text-xs">
-              <div className="py-2.5 flex justify-between items-center first:pt-0">
-                <span className="text-slate-400 font-medium">Merchant Business</span>
-                <span className="font-extrabold text-slate-800">NORODATA Hub</span>
-              </div>
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium">Distribution Operator</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.provider}</span>
-              </div>
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium">Customer Name</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.customerName}</span>
-              </div>
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium">Meter Identification</span>
-                <span className="font-mono font-extrabold text-slate-800">{paymentReceipt.meterNumber} ({paymentReceipt.meterType})</span>
-              </div>
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium">Outflow Settled Amount</span>
-                <span className="font-black text-slate-900 font-mono text-sm">{formatCurrency(paymentReceipt.amount)}</span>
-              </div>
-              {paymentReceipt.cashbackEarned > 0 ? (
-                <div className="py-2.5 flex justify-between items-center">
-                  <span className="text-amber-700 font-bold">Instantly Earned Cashback</span>
-                  <span className="font-black font-mono text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">
-                    + {formatCurrency(paymentReceipt.cashbackEarned)} Limitless
-                  </span>
-                </div>
-              ) : null}
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium font-sans">Reference Token ID</span>
-                <span className="font-mono font-extrabold text-slate-650">{paymentReceipt.ref}</span>
-              </div>
-              <div className="py-2.5 flex justify-between items-center">
-                <span className="text-slate-400 font-medium">Transaction Timestamp</span>
-                <span className="font-bold text-slate-700">{paymentReceipt.date}</span>
-              </div>
-            </div>
-
-            {/* Quick action buttons */}
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={() => window.print()}
-                className="py-4 rounded-xl bg-slate-900 text-white font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-black transition-all shadow-md"
-              >
-                <Printer size={16} /> Print E-Receipt
-              </button>
-              <button
-                onClick={resetFlow}
-                className="py-4 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-extrabold text-xs tracking-wider uppercase transition-all"
-              >
-                New Token Settlement
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Danger zone */}
+      <div className="bg-white rounded-2xl border border-red-100 p-6 space-y-4 shadow-sm">
+        <h3 className="font-black text-red-600 text-lg">Danger zone</h3>
+        <p className="text-sm text-gray-400">Once you delete your account, there is no recovering it.</p>
+        <button className="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-bold rounded-xl border border-red-200 transition-all">
+          Delete account
+        </button>
+      </div>
     </div>
   );
 }
