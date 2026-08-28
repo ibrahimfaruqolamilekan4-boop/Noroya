@@ -76,7 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                fullName: sbUser.user_metadata?.fullName || sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'User',
                balance: 0, 
                wallet_balance: 0, 
-               role: sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user', 
+               role: (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : 'user', 
                referralCode: '', 
                phoneNumber: '', 
                transactionPin: '', 
@@ -140,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 name: recoveryPayload.name,
                 username: recoveryPayload.username,
                 wallet_balance: 0.00,
-                role: sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user',
+                role: (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : 'user',
                 referral_code: generatedCode
               }]);
             } catch (userInsErr) {
@@ -159,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           fullName: sbProfile?.name || sbProfile?.username || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
           balance: initialBalance,
           wallet_balance: initialBalance,
-          role: sbProfile?.role || sbProfile?.user_role || (sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'admin' : 'user'),
+          role: sbProfile?.role || sbProfile?.user_role || ((sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : 'user'),
           referralCode: sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phone_number || '',
           transactionPin: sbProfile?.transaction_pin || '',
