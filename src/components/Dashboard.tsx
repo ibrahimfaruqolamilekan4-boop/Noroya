@@ -697,10 +697,9 @@ function DashboardOverview({
 
   // Fund modal state
   const [showFundModal, setShowFundModal] = React.useState(false);
-  const [fundingTab, setFundingTab] = React.useState<'automated' | 'gateway' | 'manual'>('automated');
-  const [opayAmount, setOpayAmount] = React.useState('2000');
+  const [fundingTab, setFundingTab] = React.useState<'bank' | 'manual'>('bank');
   const [manualAmount, setManualAmount] = React.useState('');
-  const [fwLoading, setFwLoading] = React.useState(false);
+  const [copiedAccount, setCopiedAccount] = React.useState(false);
 
   // Transfer modal state
   const [showTransferModal, setShowTransferModal] = React.useState(false);
@@ -754,21 +753,6 @@ function DashboardOverview({
     return () => { supabase.removeChannel(channel); };
   }, [user?.uid, (user as any)?.id]);
 
-  // Check payment result in URL
-  React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paymentResult = params.get('payment');
-    const ref = params.get('ref');
-    const amt = params.get('amount');
-    if (paymentResult === 'success' && ref) {
-      toast.success(`Successfully funded wallet with ${formatCurrency(Number(amt || 0))}!`, { duration: 5000, icon: '🎉' });
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (paymentResult === 'cancelled') {
-      toast.error('Payment cancelled.', { duration: 4500 });
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, []);
-
   const handleLookupRecipient = async () => {
     if (!transferUid.trim()) { toast.error('Please enter recipient details'); return; }
     setTransferLoading(true);
@@ -809,59 +793,6 @@ function DashboardOverview({
       } else { toast.error(data.message || 'Transfer failed'); }
     } catch (err: any) { toast.error(err.message || 'Transfer failed'); }
     finally { setTransferLoading(false); }
-  };
-
-  const handleFlutterwaveFundSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amt = Number(opayAmount);
-    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
-    setFwLoading(true);
-    const reference = `NOR-FW-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    const loadScript = (): Promise<boolean> => new Promise((resolve) => {
-      if ((window as any).FlutterwaveCheckout) { resolve(true); return; }
-      const script = document.createElement('script');
-      script.src = 'https://checkout.flutterwave.com/v3.js';
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-    const scriptLoaded = await loadScript();
-    if (!scriptLoaded) { toast.error('Flutterwave failed to load.', { duration: 8000 }); setFwLoading(false); return; }
-    try {
-      const pKeyResp = await fetch('/api/v1/payment/config').catch(() => null);
-      let flutterwavePublicKey = '';
-      if (pKeyResp && pKeyResp.ok) {
-        const configData = await pKeyResp.json();
-        flutterwavePublicKey = configData.flutterwavePublicKey || '';
-      }
-      if (!flutterwavePublicKey) flutterwavePublicKey = (import.meta as any).env?.VITE_FLUTTERWAVE_PUBLIC_KEY || '';
-      flutterwavePublicKey = flutterwavePublicKey.replace(/^["']|["']$/g, '').trim();
-      if (!flutterwavePublicKey || flutterwavePublicKey.includes('xxxx')) {
-        setFwLoading(false); toast.error('Flutterwave not configured.', { duration: 8000 }); return;
-      }
-      const verifyOnServer = async (transactionId: string) => {
-        setFwLoading(false);
-        fetch('/api/payments/verify-flutterwave', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
-        }).catch(() => {});
-        toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
-        setShowFundModal(false); setOpayAmount('2000');
-        setTimeout(refreshBalance, 1500);
-      };
-      (window as any).FlutterwaveCheckout({
-        public_key: flutterwavePublicKey, tx_ref: reference, amount: amt, currency: 'NGN', country: 'NG',
-        payment_options: 'card, banktransfer',
-        customer: { email: user.email, phone_number: (user as any).phone_number || '08000000000', name: user.fullName || 'Customer' },
-        customizations: { title: 'NORODATA Wallet Funding', description: 'Wallet top-up via Flutterwave', logo: '' },
-        callback: (response: any) => {
-          if (response.status === 'successful' || response.status === 'success') {
-            verifyOnServer(String(response.transaction_id || 'simulated'));
-          } else { setFwLoading(false); toast.error('Payment not completed.'); }
-        },
-        onclose: () => { setFwLoading(false); toast('Payment cancelled.', { icon: 'ℹ️' }); }
-      });
-    } catch (err: any) { toast.error(`Flutterwave error: ${err.message}`); setFwLoading(false); }
   };
 
   // Quick service grid
@@ -1042,73 +973,136 @@ function DashboardOverview({
 
               {/* Tabs */}
               <div className="flex p-2 mx-4 mt-4 bg-gray-100 rounded-xl gap-1">
-                {(['automated', 'gateway', 'manual'] as const).map((t) => (
+                {(['bank', 'manual'] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setFundingTab(t)}
                     className={cn('flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all',
                       fundingTab === t ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700')}
                   >
-                    {t === 'automated' ? 'Bank Transfer' : t === 'gateway' ? 'Card/Gateway' : 'Manual'}
+                    {t === 'bank' ? 'Bank Transfer' : 'Manual Request'}
                   </button>
                 ))}
               </div>
 
               <div className="p-6">
-                {fundingTab === 'automated' && (
+                {fundingTab === 'bank' && (
                   <div className="space-y-4">
-                    {/* Coming soon state */}
-                    <div className="rounded-2xl p-6 text-center space-y-4" style={{ backgroundColor: '#F5F7F5', border: '1.5px dashed #C8D8C8' }}>
-                      <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto" style={{ backgroundColor: '#E8F0E8' }}>
-                        <span className="text-2xl">🏦</span>
+                    {/* OPay Bank Transfer */}
+                    <div className="rounded-2xl p-5 border-2 border-green-200 bg-green-50 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg" style={{ backgroundColor: '#3B7A3B' }}>
+                          🏦
+                        </div>
+                        <div>
+                          <p className="font-black text-gray-900 text-sm">OPay Bank Transfer</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Send money directly to our account</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-black text-gray-900 text-base">Bank Transfer — Coming Soon</p>
-                        <p className="text-sm text-gray-500 mt-1 leading-relaxed">
-                          We're setting up a dedicated virtual bank account for your wallet. Once ready, transfers will credit your balance automatically.
+
+                      {/* Account Details */}
+                      <div className="bg-white rounded-xl p-4 space-y-3 border border-green-100">
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Bank Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">OPay</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('OPay');
+                                setCopiedAccount(true);
+                                toast.success('Bank copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Number</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono font-black text-gray-900 text-lg">8143889102</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('8143889102');
+                                setCopiedAccount(true);
+                                toast.success('Account number copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">Ibrahim Faruq OLAMILEKAN</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('Ibrahim Faruq OLAMILEKAN');
+                                setCopiedAccount(true);
+                                toast.success('Account name copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Instructions */}
+                      <div className="bg-white rounded-xl p-4 space-y-2 border border-green-100">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">NEXT STEPS:</p>
+                        <ol className="space-y-2 text-sm text-gray-700">
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
+                            <span>Transfer money to the account above</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
+                            <span>Take a screenshot of the payment proof</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
+                            <span>Message Admin on WhatsApp with the proof</span>
+                          </li>
+                        </ol>
+                      </div>
+
+                      {/* Admin WhatsApp link */}
+                      <a
+                        href={`https://wa.me/2348143889102?text=Hello%20NORODATA%20Admin,%20I%20have%20sent%20money%20to%20the%20OPay%20account.%20Please%20find%20attached%20proof%20of%20payment.`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+                        style={{ backgroundColor: '#25D366' }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                          <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                        </svg>
+                        Message Admin on WhatsApp
+                      </a>
+
+                      {/* Webhook notice */}
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3.5 space-y-1">
+                        <p className="text-xs font-bold text-yellow-800 flex items-center gap-2">
+                          <AlertCircle size={14} />
+                          Payment Gateway Notice
                         </p>
-                      </div>
-                      <div className="bg-white rounded-xl p-4 border border-gray-100 text-left">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">In the meantime, you can:</p>
-                        <ul className="space-y-2 text-sm text-gray-600">
-                          <li className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
-                            Fund via Card/Gateway (Flutterwave)
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
-                            Submit a Manual transfer request
-                          </li>
-                          <li className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
-                            Contact support on WhatsApp
-                          </li>
-                        </ul>
+                        <p className="text-xs text-yellow-700">Our Flutterwave payment webhook is having issues. Bank transfer is currently the fastest way to fund your wallet.</p>
                       </div>
                     </div>
                   </div>
-                )}
-
-                {fundingTab === 'gateway' && (
-                  <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-4">
-                    <div>
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
-                      <input
-                        type="number" required value={opayAmount}
-                        onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
-                        placeholder="e.g. 2000"
-                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={fwLoading || !opayAmount || Number(opayAmount) <= 0}
-                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50"
-                      style={{ backgroundColor: '#3B7A3B' }}
-                    >
-                      {fwLoading ? 'Initializing…' : 'Pay via Flutterwave'}
-                    </button>
-                  </form>
                 )}
 
                 {fundingTab === 'manual' && (
@@ -1122,16 +1116,25 @@ function DashboardOverview({
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
                       />
                     </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                      <p className="text-xs font-bold text-blue-900">ℹ️ Manual Transfer Request</p>
+                      <p className="text-xs text-blue-800">Enter the amount you transferred to our OPay account. Our admin will verify your payment proof on WhatsApp and top up your wallet within minutes.</p>
+                    </div>
                     <button
                       onClick={() => {
-                        if (!manualAmount) return toast.error('Enter amount');
-                        toast.success('Request submitted. Awaiting admin approval.');
+                        if (!manualAmount) {
+                          toast.error('Enter amount');
+                          return;
+                        }
+                        navigator.clipboard.writeText(`Manual transfer request: ₦${manualAmount}\nPlease verify and credit my account.`);
+                        toast.success('Request info copied! Send to admin on WhatsApp.');
                         setShowFundModal(false);
+                        setManualAmount('');
                       }}
                       className="w-full text-white font-bold rounded-xl py-3.5 transition-all"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
-                      Confirm transfer made
+                      Copy & Send to Admin
                     </button>
                   </div>
                 )}
