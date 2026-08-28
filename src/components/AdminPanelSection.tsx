@@ -33,6 +33,7 @@ const getSession = async () => {
   return session;
 };
 import { useSupabaseError } from '../hooks/useSupabaseError';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   collection, 
   query, 
@@ -82,6 +83,8 @@ export const ensureUUID = (strId: string): string => {
 };
 
 export default function AdminPanelSection() {
+  const { user } = useAuth();
+  const isRestrictedAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
@@ -109,7 +112,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>('dashboard');
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>(isRestrictedAdmin ? 'user-mgmt' : 'dashboard');
 
   // Mozosubz Data Plans States & Functions
   const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
@@ -858,6 +861,8 @@ export default function AdminPanelSection() {
 
       {/* Tab Switcher */}
       <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-3xl select-none font-bold">
+        {!isRestrictedAdmin && (
+          <>
         <button
           type="button"
           onClick={() => setAdminSubTab('service-plans')}
@@ -924,6 +929,8 @@ export default function AdminPanelSection() {
           >
             🧾 Transactions
           </button>
+          </>
+        )}
           <button
             onClick={() => setAdminSubTab('user-mgmt')}
             className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
@@ -934,6 +941,7 @@ export default function AdminPanelSection() {
           >
             👤 User Management
           </button>
+        {!isRestrictedAdmin && (
           <button
             onClick={() => setAdminSubTab('provider-status')}
             className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
@@ -944,15 +952,16 @@ export default function AdminPanelSection() {
           >
             🛰️ Provider Status
           </button>
+        )}
         {/* Monnify config option completely deleted */}
       </div>
 
-      {adminSubTab === 'dashboard' && <DashboardOverviewTab />}
-      {adminSubTab === 'transactions' && <TransactionsTab />}
+      {!isRestrictedAdmin && adminSubTab === 'dashboard' && <DashboardOverviewTab />}
+      {!isRestrictedAdmin && adminSubTab === 'transactions' && <TransactionsTab />}
       {adminSubTab === 'user-mgmt' && <UserManagementTab />}
-      {adminSubTab === 'provider-status' && <ProviderStatusTab />}
+      {!isRestrictedAdmin && adminSubTab === 'provider-status' && <ProviderStatusTab />}
 
-      {adminSubTab === 'service-plans' && (
+      {!isRestrictedAdmin && adminSubTab === 'service-plans' && (
         /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
         <div className="space-y-6 pb-12">
           {/* Header Action Dashboard with Option C Neo-Brutalis styling */}
@@ -1732,7 +1741,7 @@ export default function AdminPanelSection() {
         </div>
       )}
 
-      {adminSubTab === 'mozosubz-plans' && (
+      {!isRestrictedAdmin && adminSubTab === 'mozosubz-plans' && (
         <div className="space-y-6 pb-12">
           {/* Header Action Dashboard */}
           <div className="bg-blue-50 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
@@ -1923,7 +1932,7 @@ export default function AdminPanelSection() {
         </div>
       )}
 
-      {adminSubTab === 'opay-receipts' && (
+      {!isRestrictedAdmin && adminSubTab === 'opay-receipts' && (
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
           <div className="flex justify-between items-center pb-6 border-b border-slate-50">
             <div>
@@ -2157,7 +2166,7 @@ export default function AdminPanelSection() {
         )}
       </AnimatePresence>
 
-      {adminSubTab === 'pricing-manager' && (
+      {!isRestrictedAdmin && adminSubTab === 'pricing-manager' && (
         <div className="p-4 sm:p-6">
           <AdminPricingManager />
         </div>

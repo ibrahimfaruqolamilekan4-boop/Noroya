@@ -316,13 +316,16 @@ async function startServer() {
   // Only the hardcoded owner email is recognised as admin.
   // No role field, no body flag, no JWT claim can override this.
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
-  const requireAdmin = async (req: any, res: any): Promise<boolean> => {
+  const requireAdmin = async (req: any, res: any, allowSubAdmin = false): Promise<boolean> => {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     if (!token) { res.status(401).json({ error: "Unauthorized: no session token." }); return false; }
     try {
       const { data: { user }, error } = await supabase.auth.getUser(token);
       if (error || !user) { res.status(401).json({ error: "Unauthorized: invalid session." }); return false; }
-      if (user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      const email = user.email?.toLowerCase() || '';
+      const isMainAdmin = email === ADMIN_EMAIL.toLowerCase();
+      const isSubAdmin = email === 'adewaleogunkeye200@gmail.com';
+      if (!isMainAdmin && !(allowSubAdmin && isSubAdmin)) {
         res.status(403).json({ error: "Forbidden: admin access only." }); return false;
       }
       return true;
@@ -4297,7 +4300,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
   // ─── Admin: Users list (paginated, searchable) ──────────────────────────
   app.get("/api/admin/users", async (req, res) => {
-    if (!await requireAdmin(req, res)) return;
+    if (!await requireAdmin(req, res, true)) return;
     try {
       const limit = Math.min(Number(req.query.limit) || 25, 100);
       const offset = Number(req.query.offset) || 0;
@@ -4325,7 +4328,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
   // ─── Admin: Single user detail + their transactions ─────────────────────
   app.get("/api/admin/users/:id", async (req, res) => {
-    if (!await requireAdmin(req, res)) return;
+    if (!await requireAdmin(req, res, true)) return;
     try {
       const userId = req.params.id;
       const { data: profile, error: profErr } = await supabase
@@ -4355,7 +4358,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
   // ─── Admin: Adjust a user's wallet balance (credit or debit) ────────────
   app.post("/api/admin/users/:id/adjust-balance", async (req, res) => {
-    if (!await requireAdmin(req, res)) return;
+    if (!await requireAdmin(req, res, true)) return;
     try {
       const userId = req.params.id;
       const { amount, direction, reason } = req.body;
