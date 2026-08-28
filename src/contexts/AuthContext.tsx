@@ -159,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           fullName: sbProfile?.name || sbProfile?.username || sbUser.user_metadata?.fullName || sbUser.user_metadata?.full_name || 'User',
           balance: initialBalance,
           wallet_balance: initialBalance,
-          role: sbProfile?.role || sbProfile?.user_role || ((sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : 'user'),
+          role: ((sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : (sbProfile?.role || sbProfile?.user_role || 'user')),
           referralCode: sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phone_number || '',
           transactionPin: sbProfile?.transaction_pin || '',
