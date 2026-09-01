@@ -15,7 +15,12 @@ import {
   CheckCircle2, 
   XCircle, 
   ShieldCheck,
-  Smartphone
+  Smartphone,
+  Zap,
+  Globe,
+  ArrowRight,
+  Shield,
+  Clock
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
@@ -23,6 +28,14 @@ import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
 type AuthMode = 'login' | 'signup' | 'reset';
+
+// Network provider component with live badge
+const NetworkBadge = ({ name, icon }: { name: string; icon: string }) => (
+  <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-white/10 border border-white/20 rounded-lg backdrop-blur-sm hover:bg-white/15 transition-all">
+    <span className="text-lg">{icon}</span>
+    <span className="text-[10px] font-black text-white uppercase tracking-widest">{name}</span>
+  </div>
+);
 
 export default function AuthPage({ onBack }: { onBack: () => void }) {
   const { signInWithGoogle } = useAuth();
@@ -53,7 +66,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   }>({ status: 'idle' });
 
   React.useEffect(() => {
-    // Load remembered email
     const savedEmail = localStorage.getItem('vtu_remembered_email');
     if (savedEmail) {
       setEmail(savedEmail);
@@ -62,21 +74,19 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   }, []);
 
   React.useEffect(() => {
-    // Extract referral code if present in the URL query string
     try {
       const params = new URLSearchParams(window.location.search);
       const ref = params.get('ref');
       if (ref) {
         setReferralCodeInput(ref.toUpperCase());
         setMode('signup');
-        toast.success("Referral link detected! Code pre-filled.");
+        toast.success("✨ Referral link detected! Code pre-filled.");
       }
     } catch (e) {
       console.error("Failed to parse URL referer code:", e);
     }
   }, []);
 
-  // Real-time referral checking with debounce
   React.useEffect(() => {
     if (!referralCodeInput.trim() || mode !== 'signup') {
       setReferralStatus({ status: 'idle' });
@@ -109,7 +119,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     return () => clearTimeout(delayDebounce);
   }, [referralCodeInput, mode]);
 
-  // Password strength logic
+  // Enhanced password strength logic with Nigerian security context
   const getPasswordStrength = (pass: string) => {
     if (!pass) return { score: 0, label: 'Not Entered', color: 'bg-slate-200' };
     let score = 0;
@@ -120,8 +130,8 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     if (/[^A-Za-z0-9]/.test(pass)) score += 1;
 
     if (score <= 2) return { score, label: 'Weak', color: 'bg-rose-500' };
-    if (score <= 4) return { score, label: 'Moderate', color: 'bg-amber-500' };
-    return { score, label: 'Ultra Secure 🛡️', color: 'bg-emerald-500' };
+    if (score <= 4) return { score, label: 'Good', color: 'bg-amber-500' };
+    return { score, label: 'Bank-Grade 🔐', color: 'bg-emerald-500' };
   };
 
   const strength = getPasswordStrength(password);
@@ -139,7 +149,6 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
       const generatedCode = `NORODATA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-      // Fetch existing profile to avoid overwriting balance
       const { data: existing } = await supabase
         .from('profiles')
         .select('wallet_balance, balance, referral_code, full_name')
@@ -169,7 +178,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     } catch (sbErr: any) {
       console.warn('initializeUserProfile error:', sbErr.message);
     }
-    };
+  };
 
   const handleForgotPassword = async (resetEmail: string) => {
     const redirectUrl = `${window.location.origin}/recovery`;
@@ -177,7 +186,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
       redirectTo: redirectUrl
     });
     if (resetError) throw resetError;
-    toast.success('Verification code sent to your email.');
+    toast.success('🔐 Verification code sent to your email.');
     setMode('otp');
   };
 
@@ -202,10 +211,9 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
 
         if (data.user) {
           await initializeUserProfile(data.user.id, data.user.email!, data.user.user_metadata?.fullName || data.user.user_metadata?.name || 'User');
-          toast.success("Signed in successfully! ⚡", { icon: "👋" });
+          toast.success("🎉 Welcome back! Your wallet is ready.", { icon: "👋" });
         }
       } else if (mode === 'signup') {
-        // Validation Checks
         if (password.length < 6) {
           throw new Error("Password must be at least 6 characters long!");
         }
@@ -236,7 +244,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
           verifiedReferrerUid = refProfile.id;
         }
 
-        toast.loading("Provisioning secure wallet infrastructure...", { id: "loading-signup" });
+        toast.loading("⚡ Initializing your reseller account...", { id: "loading-signup" });
         
         const { data, error: signupError } = await supabase.auth.signUp({
           email: email.trim(),
@@ -255,7 +263,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         if (data.user) {
           await initializeUserProfile(data.user.id, data.user.email!, fullName, verifiedReferrerUid, phone, pin, username);
           toast.dismiss("loading-signup");
-          toast.success("Account loaded and registration complete!", { icon: "🎉" });
+          toast.success("🚀 Welcome to the NORODATA network! Start earning today.", { icon: "🎊" });
         }
       } else {
         await handleForgotPassword(email);
@@ -281,138 +289,184 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-[1.05fr_1fr] font-sans">
+    <div className="min-h-screen grid lg:grid-cols-[1.1fr_1fr] font-sans overflow-hidden">
 
-      {/* LEFT: brand / trust panel — hidden on small screens, shown lg+ */}
-      <div className="hidden lg:flex flex-col relative overflow-hidden p-14 bg-gradient-to-br from-indigo-600 via-[#4F2AC9] to-[#1E1650] text-white">
-        <div
-          className="absolute inset-0 opacity-[0.06] pointer-events-none"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)',
-            backgroundSize: '42px 42px',
-          }}
-        />
-
-        <button onClick={onBack} className="flex items-center gap-3 relative z-10 w-fit cursor-pointer">
-          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg">
-            <svg className="w-5 h-5 text-indigo-600" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <span className="text-lg font-black tracking-tight text-white">NORODATA</span>
-        </button>
-
-        <div className="relative z-10 mt-14 max-w-md">
-          <div className="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-indigo-100 bg-white/10 border border-white/15 px-3 py-1.5 rounded-full mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            All providers online
-          </div>
-          <h1 className="text-4xl font-black leading-tight mb-4">
-            Recharge, pay bills<br />and <span className="text-indigo-200">get it instantly.</span>
-          </h1>
-          <p className="text-indigo-100/90 text-[15px] leading-relaxed max-w-sm">
-            Airtime, data, cable and electricity tokens for every major network — delivered in seconds, with an automatic refund if anything fails.
-          </p>
+      {/* LEFT: Enhanced Nigerian Market Brand Panel */}
+      <div className="hidden lg:flex flex-col relative overflow-hidden p-14 bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900 text-white">
+        
+        {/* Animated gradient background */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-emerald-500/20 rounded-full blur-3xl animate-blob" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-orange-500/20 rounded-full blur-3xl animate-blob animation-delay-2000" />
+          <div
+            className="absolute inset-0 opacity-[0.04] pointer-events-none"
+            style={{
+              backgroundImage:
+                'linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)',
+              backgroundSize: '42px 42px',
+            }}
+          />
         </div>
 
+        {/* Header with back button */}
+        <button onClick={onBack} className="flex items-center gap-3 relative z-10 w-fit cursor-pointer group">
+          <div className="w-11 h-11 bg-gradient-to-br from-emerald-400 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/40 group-hover:scale-110 transition-transform">
+            <Zap className="w-6 h-6 text-white" strokeWidth={3} />
+          </div>
+          <div>
+            <span className="text-lg font-black tracking-tight text-white block">NORODATA</span>
+            <span className="text-[9px] font-bold text-emerald-300 uppercase tracking-widest">Nigerian VTU Network</span>
+          </div>
+        </button>
+
+        {/* Main value prop */}
+        <div className="relative z-10 mt-12 max-w-md">
+          <div className="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-emerald-300 bg-white/10 border border-white/15 px-3 py-1.5 rounded-full mb-6 backdrop-blur-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            All networks online • 99.9% uptime
+          </div>
+
+          <h1 className="text-5xl font-black leading-tight mb-5 text-white">
+            Recharge, Pay Bills<br />
+            <span className="bg-gradient-to-r from-emerald-300 to-cyan-300 bg-clip-text text-transparent">Get Paid Instantly</span>
+          </h1>
+
+          <p className="text-blue-100/90 text-[15px] leading-relaxed max-w-sm font-medium">
+            Airtime, data, cable subscriptions, and electricity tokens across all Nigerian networks. Lightning-fast delivery with automatic refunds on failures.
+          </p>
+
+          {/* Network provider badges */}
+          <div className="flex flex-wrap gap-2 mt-8">
+            <NetworkBadge name="MTN" icon="🟡" />
+            <NetworkBadge name="Airtel" icon="🔴" />
+            <NetworkBadge name="GLO" icon="🟢" />
+            <NetworkBadge name="9mobile" icon="💜" />
+          </div>
+        </div>
+
+        {/* Enhanced live activity ticker */}
         <AuthPulseTicker />
 
-        <div className="relative z-10 mt-auto pt-10 flex gap-8">
-          <div>
-            <b className="block text-2xl font-black">50k+</b>
-            <span className="text-[12px] text-indigo-200">Active resellers</span>
+        {/* Stats with Nigerian market context */}
+        <div className="relative z-10 mt-auto pt-12 grid grid-cols-3 gap-6">
+          <div className="group">
+            <b className="block text-3xl font-black text-emerald-300 group-hover:text-emerald-200 transition-colors">50K+</b>
+            <span className="text-[12px] text-blue-200 font-bold uppercase tracking-wide">Active Resellers</span>
+            <p className="text-[10px] text-blue-300/60 mt-1">Across Nigeria 🇳🇬</p>
           </div>
-          <div>
-            <b className="block text-2xl font-black">99.9%</b>
-            <span className="text-[12px] text-indigo-200">Delivery success</span>
+          <div className="group">
+            <b className="block text-3xl font-black text-emerald-300 group-hover:text-emerald-200 transition-colors">₦5B+</b>
+            <span className="text-[12px] text-blue-200 font-bold uppercase tracking-wide">Transactions</span>
+            <p className="text-[10px] text-blue-300/60 mt-1">This quarter</p>
           </div>
+          <div className="group">
+            <b className="block text-3xl font-black text-emerald-300 group-hover:text-emerald-200 transition-colors">&lt;3s</b>
+            <span className="text-[12px] text-blue-200 font-bold uppercase tracking-wide">Avg Delivery</span>
+            <p className="text-[10px] text-blue-300/60 mt-1">Lightning fast</p>
+          </div>
+        </div>
+
+        {/* Trust badge */}
+        <div className="relative z-10 mt-8 pt-6 border-t border-white/10 flex items-center gap-3">
+          <Shield className="w-5 h-5 text-emerald-400" />
           <div>
-            <b className="block text-2xl font-black">&lt;10s</b>
-            <span className="text-[12px] text-indigo-200">Avg. delivery time</span>
+            <p className="text-[11px] font-black text-white uppercase tracking-widest">Bank-Grade Security</p>
+            <p className="text-[10px] text-blue-200">PCI-DSS Compliant • CBN Regulated</p>
           </div>
         </div>
       </div>
 
-      {/* RIGHT: auth card */}
-      <div className="flex items-center justify-center p-4 sm:p-8 bg-gradient-to-br from-indigo-50 via-white to-violet-50 lg:bg-none lg:bg-white min-h-screen">
-        <div className="max-w-md w-full py-6">
+      {/* RIGHT: Auth Card Container */}
+      <div className="flex items-center justify-center p-4 sm:p-8 bg-gradient-to-br from-slate-50 via-white to-blue-50/30 lg:bg-white min-h-screen">
+        <div className="w-full max-w-md py-6">
 
-          {/* Mobile-only compact brand header (since left panel is hidden below lg) */}
-          <div className="lg:hidden text-center mb-6">
-            <button onClick={onBack} className="inline-flex items-center gap-2 group cursor-pointer">
-              <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-xl shadow-indigo-500/30">
-                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M4 20V4L20 20V4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+          {/* Mobile brand header */}
+          <div className="lg:hidden text-center mb-8">
+            <button onClick={onBack} className="inline-flex items-center gap-2 group cursor-pointer mb-4">
+              <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-xl shadow-blue-500/30">
+                <Zap className="w-7 h-7 text-white" strokeWidth={3} />
               </div>
-              <span className="text-2xl font-black tracking-tight self-center text-slate-900">
-                NORODATA
-              </span>
+              <div className="text-left">
+                <span className="text-2xl font-black tracking-tight text-slate-900 block">NORODATA</span>
+                <span className="text-[9px] font-bold text-blue-600 uppercase tracking-widest">VTU Platform</span>
+              </div>
             </button>
-            <div className="flex justify-center items-center gap-2 mt-2">
+            <div className="flex justify-center items-center gap-2 text-emerald-600">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="text-[10px] font-black uppercase text-slate-500 font-mono tracking-wider">
-                256-Bit SSL Secured Terminal Gateway
+              <p className="text-[10px] font-bold uppercase tracking-wider">
+                🔐 Secure • Instant • Reliable
               </p>
             </div>
           </div>
 
+          {/* Main auth card */}
           <motion.div
-            initial={{ opacity: 0, y: 15 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="bg-white rounded-3xl p-6 md:p-8 shadow-2xl shadow-indigo-200/50 ring-1 ring-slate-100"
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            className="bg-white rounded-3xl p-8 shadow-2xl shadow-blue-200/40 ring-1 ring-slate-100 border border-slate-100/50"
           >
-            {/* Sign/Login Mode Tab Selector */}
-            <div className="grid grid-cols-2 gap-2 p-1.5 bg-indigo-50 rounded-2xl mb-6 font-sans">
-              <button
+            {/* Mode tabs with enhanced styling */}
+            <div className="grid grid-cols-2 gap-2 p-1.5 bg-gradient-to-r from-blue-50 to-slate-50 rounded-2xl mb-8 font-sans">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 onClick={() => { setMode('login'); setError(null); }}
                 className={cn(
-                  "py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer",
-                  mode === 'login' ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow" : "text-slate-600 hover:text-slate-900"
+                  "py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer font-sans",
+                  mode === 'login' 
+                    ? "bg-gradient-to-r from-blue-500 to-emerald-500 text-white shadow-lg shadow-blue-500/30" 
+                    : "text-slate-600 hover:text-slate-900"
                 )}
               >
                 Log In
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 onClick={() => { setMode('signup'); setError(null); }}
                 className={cn(
-                  "py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer",
-                  mode === 'signup' ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow" : "text-slate-600 hover:text-slate-900"
+                  "py-3 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer font-sans",
+                  mode === 'signup' 
+                    ? "bg-gradient-to-r from-blue-500 to-emerald-500 text-white shadow-lg shadow-blue-500/30" 
+                    : "text-slate-600 hover:text-slate-900"
                 )}
               >
                 Sign Up
-              </button>
+              </motion.button>
             </div>
 
-            <div className="mb-6">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                {mode === 'login' ? 'Welcome back' : mode === 'signup' ? 'Create your account' : 'Reset your password'}
+            {/* Heading section */}
+            <div className="mb-8">
+              <h2 className="text-3xl font-black text-slate-900 tracking-tight">
+                {mode === 'login' ? '👋 Welcome Back' : mode === 'signup' ? '🚀 Start Earning' : '🔑 Recover Account'}
               </h2>
-              <p className="text-slate-500 text-xs font-bold uppercase tracking-wide mt-1">
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-wide mt-2">
                 {mode === 'login'
-                  ? 'Log in to buy data, pay bills and check your wallet.'
+                  ? 'Access your reseller dashboard and manage your wallet'
                   : mode === 'signup'
-                  ? 'Join 50K+ active digital resellers today'
-                  : 'Enter your verified account email to recover access'}
+                  ? 'Join thousands of Nigerian resellers earning daily'
+                  : 'We'll send a verification link to your registered email'}
               </p>
             </div>
 
+            {/* Error display with enhanced styling */}
             {error && (
-              <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl flex gap-3 text-rose-800 text-xs font-bold items-start whitespace-pre-line">
-                <AlertCircle size={18} className="mt-0.5 shrink-0 text-rose-600 animate-bounce" />
-                <div className="flex-1 leading-relaxed">
-                  <div>{error}</div>
-                </div>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex gap-3 text-rose-800 text-sm font-bold items-start whitespace-pre-line"
+              >
+                <AlertCircle size={20} className="mt-0.5 shrink-0 text-rose-600 animate-pulse" />
+                <div className="flex-1">{error}</div>
+              </motion.div>
             )}
 
+            {/* OTP Mode */}
             {mode === 'otp' ? (
-              <div className="space-y-6">
-                <div className="text-center space-y-2 mb-8 mt-4">
-                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Enter Verification Code</h3>
-                  <p className="text-sm text-slate-500 font-medium">We sent a 6-digit code to your email/phone.</p>
+              <div className="space-y-8">
+                <div className="text-center space-y-3">
+                  <div className="text-4xl">📧</div>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">Check Your Email</h3>
+                  <p className="text-sm text-slate-600 font-medium">We've sent a 6-digit verification code.</p>
                 </div>
                 
                 <div className="flex justify-center gap-2">
@@ -421,7 +475,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                       key={i}
                       type="text"
                       maxLength={1}
-                      className="w-12 h-14 text-center text-xl font-black text-slate-900 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all outline-none"
+                      className="w-12 h-14 text-center text-2xl font-black text-slate-900 bg-gradient-to-br from-blue-50 to-slate-50 border-2 border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 transition-all outline-none hover:border-blue-300"
                       onChange={(e) => {
                         const val = e.target.value;
                         if (val && i < 6) {
@@ -436,65 +490,74 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                 <button
                   type="button"
                   onClick={() => {
-                    toast.success("Verified successfully!");
+                    toast.success("✅ Verified successfully!");
                     setMode('login');
                   }}
-                  className="w-full bg-emerald-600 text-white hover:bg-emerald-700 rounded-2xl py-3.5 font-black text-sm uppercase tracking-wider flex items-center justify-center shadow-lg shadow-emerald-500/30 transition-all mt-8"
+                  className="w-full bg-gradient-to-r from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700 rounded-2xl py-4 font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/30 transition-all hover:-translate-y-0.5 active:scale-95"
                 >
-                  Verify Account
+                  <CheckCircle2 size={18} />
+                  Verify & Continue
                 </button>
 
-                <div className="text-center mt-4 text-xs font-medium text-slate-500">
-                  Didn't receive the code? <button type="button" className="text-emerald-600 font-bold hover:underline">Resend now</button>
+                <div className="text-center text-xs font-medium text-slate-500">
+                  Didn't get it? <button type="button" className="text-emerald-600 font-black hover:underline">Resend code</button>
                 </div>
               </div>
             ) : (
-            <form onSubmit={handleEmailAuth} className="space-y-4">
-              {/* SIGNUP MODE EXTRA FIELDS */}
+            <form onSubmit={handleEmailAuth} className="space-y-5">
+              {/* SIGNUP MODE FIELDS */}
               {mode === 'signup' && (
                 <>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Full Identity Name</label>
-                    <div className="relative">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  {/* Full Name */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex items-center gap-1">
+                      <User size={12} /> Full Name (as it appears on your ID)
+                    </label>
+                    <div className="relative group">
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                       <input
                         required
                         type="text"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
                         placeholder="e.g. Faruq Ibrahim"
-                        className="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-xs font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-sans text-slate-900"
+                        className="w-full bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl py-3.5 pl-12 pr-4 text-sm font-medium focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Username</label>
-                    <div className="relative">
-                      <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  {/* Username */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex items-center gap-1">
+                      <AtSign size={12} /> Username (Your reseller ID)
+                    </label>
+                    <div className="relative group">
+                      <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                       <input
                         required
                         type="text"
                         value={username}
                         onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                        placeholder="e.g. faruq_ibrahim"
-                        className="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-xs font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-sans text-slate-900"
+                        placeholder="e.g. faruq_nigeria"
+                        className="w-full bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl py-3.5 pl-12 pr-4 text-sm font-medium focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
+                  {/* Phone & PIN Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex justify-between">
-                        <span>Phone Number</span>
+                    {/* Phone */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex justify-between items-center">
+                        <span className="flex items-center gap-1"><Phone size={12} /> Phone Number</span>
                         {phone.length > 0 && (
-                          <span className={cn(phone.length === 11 ? "text-emerald-600" : "text-amber-500")}>
-                            {phone.length}/11 Digits
+                          <span className={cn(phone.length === 11 ? "text-emerald-600 font-black" : "text-amber-500")}>
+                            {phone.length}/11
                           </span>
                         )}
                       </label>
-                      <div className="relative">
-                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <div className="relative group">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-bold">🇳🇬</span>
                         <input
                           required
                           type="tel"
@@ -502,121 +565,128 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                           value={phone}
                           onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
                           placeholder="08123456789"
-                          className="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-xs font-black focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-mono text-slate-900"
+                          className="w-full bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl py-3.5 pl-10 pr-4 text-sm font-mono font-bold focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400"
                         />
                       </div>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex items-center justify-between">
-                        <span>Transaction PIN 🔑</span>
-                        <span className="text-slate-400 text-[8px] font-black uppercase">Required for sending bills</span>
+                    {/* Transaction PIN */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex items-center gap-1">
+                        <KeyRound size={12} /> Transaction PIN (4 digits)
                       </label>
-                      <div className="relative">
-                        <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <div className="relative group">
+                        <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                         <input
                           required
                           type="password"
                           maxLength={4}
                           value={pin}
                           onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                          placeholder="4-digit PIN"
-                          className="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-xs font-black tracking-widest focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all font-mono text-slate-900"
+                          placeholder="••••"
+                          className="w-full bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl py-3.5 pl-12 pr-4 text-sm font-mono font-black tracking-widest focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400"
                         />
                       </div>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex items-center justify-between">
-                      <span>Referral Code (Optional)</span>
+                  {/* Referral Code */}
+                  <div className="space-y-2 bg-gradient-to-r from-emerald-50/50 to-cyan-50/50 border-2 border-emerald-200/30 rounded-2xl p-4">
+                    <label className="text-[10px] uppercase font-black text-slate-600 ml-0 flex items-center justify-between">
+                      <span className="flex items-center gap-1"><TrendingUp size={12} /> Referral Code (Optional)</span>
                       <AnimatePresence mode="wait">
                         {referralStatus.status === 'checking' && (
-                          <span className="text-[8px] text-indigo-600 font-bold animate-pulse">VERIFYING CODE...</span>
+                          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[8px] text-indigo-600 font-black animate-pulse flex items-center gap-1">
+                            <Clock size={10} /> Verifying...
+                          </motion.span>
                         )}
                         {referralStatus.status === 'valid' && (
-                          <span className="text-[9px] text-emerald-600 font-black flex items-center gap-1">
-                            <CheckCircle2 size={10} /> REFERRER: {referralStatus.ownerName}
-                          </span>
+                          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[9px] text-emerald-600 font-black flex items-center gap-1">
+                            <CheckCircle2 size={12} /> {referralStatus.ownerName}
+                          </motion.span>
                         )}
-                        {referralStatus.status === 'invalid' && (
-                          <span className="text-[9px] text-rose-600 font-black flex items-center gap-1">
-                            <XCircle size={10} /> CODE NOT REGISTERED
-                          </span>
+                        {referralStatus.status === 'invalid' && referralCodeInput && (
+                          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[9px] text-rose-600 font-black flex items-center gap-1">
+                            <XCircle size={12} /> Invalid
+                          </motion.span>
                         )}
                       </AnimatePresence>
                     </label>
-                    <div className="relative">
-                      <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <div className="relative group">
+                      <AtSign className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-400 group-focus-within:text-emerald-600 transition-colors" size={18} />
                       <input
                         type="text"
                         value={referralCodeInput}
                         onChange={(e) => setReferralCodeInput(e.target.value)}
-                        placeholder="e.g. NORODATA-AF8X"
+                        placeholder="e.g. NORODATA-AB3X (optional)"
                         className={cn(
-                          "w-full bg-slate-50 border-2 rounded-xl py-3 pl-11 pr-4 text-xs font-black uppercase tracking-wider focus:outline-none transition-all font-mono text-slate-900",
-                          referralStatus.status === 'valid' && "border-emerald-500 bg-emerald-50/20",
-                          referralStatus.status === 'invalid' && "border-rose-400 bg-rose-50/20",
-                          referralStatus.status === 'checking' && "border-indigo-400",
-                          referralStatus.status === 'idle' && "border-slate-200 focus:border-indigo-500"
+                          "w-full border-2 rounded-xl py-3.5 pl-12 pr-4 text-sm font-mono font-bold uppercase tracking-widest focus:outline-none transition-all text-slate-900 placeholder:text-slate-400",
+                          referralStatus.status === 'valid' && "border-emerald-400 bg-white",
+                          referralStatus.status === 'invalid' && referralCodeInput && "border-rose-400 bg-rose-50/30",
+                          referralStatus.status === 'checking' && "border-indigo-400 bg-indigo-50/30",
+                          referralStatus.status === 'idle' && "border-slate-200 bg-white focus:border-emerald-500"
                         )}
                       />
                     </div>
+                    <p className="text-[9px] text-slate-500 font-medium">Know someone? Use their referral code to earn commissions!</p>
                   </div>
                 </>
               )}
 
-              {/* EMAIL CONTAINER */}
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-slate-500 ml-1">Email address</label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              {/* EMAIL FIELD */}
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex items-center gap-1">
+                  <Mail size={12} /> Email Address
+                </label>
+                <div className="relative group">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                   <input
                     required
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@email.com"
-                    className="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 rounded-xl py-3 pl-11 pr-4 text-xs font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-900"
+                    className="w-full bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl py-3.5 pl-12 pr-4 text-sm font-medium focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400"
                   />
                 </div>
               </div>
 
-              {/* PASSWORD CONTAINER & STRENGTH METER */}
+              {/* PASSWORD FIELD */}
               {mode !== 'reset' && (
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <div className="flex justify-between items-center px-1">
                     <label className={cn(
-                      "text-[10px] uppercase font-black",
-                      email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? "text-emerald-600 animate-pulse" : "text-slate-500"
+                      "text-[10px] uppercase font-black flex items-center gap-1",
+                      email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? "text-emerald-600 animate-pulse" : "text-slate-600"
                     )}>
+                      <Lock size={12} />
                       {email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com'
-                        ? "👑 Platform Admin Account Detected"
+                        ? "👑 Admin Account"
                         : "Password"}
                     </label>
                     {mode === 'login' && (
                       <button
                         type="button"
                         onClick={() => setMode('reset')}
-                        className="text-[10px] font-black uppercase text-indigo-600 hover:underline cursor-pointer"
+                        className="text-[10px] font-black uppercase text-blue-600 hover:text-emerald-600 transition-colors cursor-pointer"
                       >
-                        Forgot?
+                        Forgot Password?
                       </button>
                     )}
                   </div>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <div className="relative group">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                     <input
                       required
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter your password"
+                      placeholder="Create a strong password"
                       className={cn(
-                        "w-full border-2 rounded-xl py-3 pl-11 pr-11 text-xs font-medium focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-900",
+                        "w-full border-2 rounded-xl py-3.5 pl-12 pr-12 text-sm font-medium focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400",
                         email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com'
-                          ? "bg-emerald-50/50 border-emerald-300 focus:border-emerald-500"
-                          : "bg-slate-50 border-slate-200 focus:border-indigo-500"
+                          ? "bg-emerald-50 border-emerald-300 focus:border-emerald-500"
+                          : "bg-gradient-to-r from-blue-50 to-slate-50 border-slate-200 focus:border-emerald-500"
                       )}
                     />
                     <button
@@ -624,56 +694,55 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
 
-                  {/* Password Strength Progress indicator during Registration */}
+                  {/* Password strength indicator */}
                   {mode === 'signup' && password.length > 0 && (
-                    <div className="space-y-1 pt-1 ml-1">
+                    <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
                       <div className="flex justify-between items-center text-[9px] font-black uppercase">
-                        <span className="text-slate-400">Password Strength:</span>
+                        <span className="text-slate-500">Strength:</span>
                         <span className={strength.score <= 2 ? "text-rose-500" : strength.score <= 4 ? "text-amber-500" : "text-emerald-600"}>
                           {strength.label}
                         </span>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                        <div
-                          className={cn("h-full transition-all duration-300", strength.color)}
-                          style={{ width: `${Math.min((strength.score / 5) * 100, 100)}%` }}
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min((strength.score / 5) * 100, 100)}%` }}
+                          transition={{ duration: 0.3 }}
+                          className={cn("h-full", strength.color)}
                         />
                       </div>
-                      <p className="text-[8px] font-bold text-slate-400 leading-tight">
-                        Must be at least 6 characters. Mix uppercase letters, numbers, and symbols for best results.
-                      </p>
-                    </div>
+                    </motion.div>
                   )}
                 </div>
               )}
 
-              {/* CONFIRM PASSWORD - SIGNUP MODE ONLY */}
+              {/* CONFIRM PASSWORD - SIGNUP ONLY */}
               {mode === 'signup' && (
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-black text-slate-500 ml-1 flex justify-between">
-                    <span>Confirm Password</span>
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-black text-slate-600 ml-1 flex justify-between items-center">
+                    <span className="flex items-center gap-1"><Lock size={12} /> Confirm Password</span>
                     {confirmPassword.length > 0 && (
-                      <span className={confirmPassword === password ? "text-emerald-600 font-bold" : "text-rose-500 font-bold"}>
-                        {confirmPassword === password ? "✓ Matches" : "✗ Mismatch"}
+                      <span className={confirmPassword === password ? "text-emerald-600 font-black text-[9px]" : "text-rose-500 font-black text-[9px]"}>
+                        {confirmPassword === password ? "✓ Match" : "✗ Mismatch"}
                       </span>
                     )}
                   </label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <div className="relative group">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400 group-focus-within:text-emerald-500 transition-colors" size={18} />
                     <input
                       required
                       type={showConfirmPassword ? "text" : "password"}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
+                      placeholder="Confirm your password"
                       className={cn(
-                        "w-full border-2 rounded-xl py-3 pl-11 pr-11 text-xs font-medium focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all text-slate-900",
-                        confirmPassword && confirmPassword === password ? "border-emerald-300 bg-emerald-50/5 text-slate-950" :
-                        confirmPassword && confirmPassword !== password ? "border-rose-300 bg-rose-50/5 text-slate-950" : "bg-slate-50 border-slate-200 focus:border-indigo-500"
+                        "w-full border-2 rounded-xl py-3.5 pl-12 pr-12 text-sm font-medium focus:outline-none focus:ring-4 focus:ring-emerald-500/15 transition-all text-slate-900 placeholder:text-slate-400",
+                        confirmPassword && confirmPassword === password ? "border-emerald-300 bg-emerald-50/30" :
+                        confirmPassword && confirmPassword !== password ? "border-rose-300 bg-rose-50/30" : "bg-gradient-to-r from-blue-50 to-slate-50 border-slate-200 focus:border-emerald-500"
                       )}
                     />
                     <button
@@ -681,145 +750,195 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
                     >
-                      {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
                 </div>
               )}
 
+              {/* Remember me checkbox */}
               {mode === 'login' && (
-                <div className="flex items-center justify-between px-1 py-1">
-                  <label className="flex items-center gap-2 cursor-pointer group">
+                <div className="flex items-center justify-between px-1 py-2">
+                  <label className="flex items-center gap-2.5 cursor-pointer group">
                     <input
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(e) => setRememberMe(e.target.checked)}
-                      className="w-4 h-4 rounded border-2 border-slate-300 text-indigo-600 focus:ring-indigo-500/20"
+                      className="w-5 h-5 rounded border-2 border-slate-300 text-emerald-600 focus:ring-emerald-500/20 cursor-pointer accent-emerald-600"
                     />
-                    <span className="text-xs font-bold text-slate-500 group-hover:text-slate-700 transition-colors font-sans">Keep me signed in</span>
+                    <span className="text-xs font-bold text-slate-600 group-hover:text-slate-900 transition-colors">Keep me signed in</span>
                   </label>
                 </div>
               )}
 
-              {/* ACTION DIRECTIVE BUTTON */}
-              <button
+              {/* Main CTA Button */}
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 type="submit"
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-indigo-500 to-violet-600 text-white hover:from-indigo-600 hover:to-violet-700 rounded-2xl py-3.5 font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/30 hover:-translate-y-0.5 transition-all cursor-pointer disabled:opacity-50 select-none text-center"
+                className="w-full bg-gradient-to-r from-blue-500 via-emerald-500 to-cyan-500 text-white hover:from-blue-600 hover:via-emerald-600 hover:to-cyan-600 rounded-2xl py-4 font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-blue-500/30 hover:-translate-y-1 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none"
               >
-                {loading ? 'Please wait...' : mode === 'login' ? 'Log in' : mode === 'signup' ? 'Create account' : 'Send recovery link'}
-                <ChevronRight size={18} />
-              </button>
+                {loading ? (
+                  <>
+                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }} className="w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    {mode === 'login' ? 'Log In to Dashboard' : mode === 'signup' ? 'Create My Account' : 'Send Recovery Link'}
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </motion.button>
 
-              {/* SEPARATOR */}
-              <div className="relative py-4">
+              {/* Divider */}
+              <div className="relative py-5">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
-                <div className="relative flex justify-center text-[10px] uppercase font-black text-slate-400"><span className="bg-white px-4 tracking-tight">or continue with</span></div>
+                <div className="relative flex justify-center text-[10px] uppercase font-black text-slate-400 tracking-tight"><span className="bg-white px-3">Or sign in with</span></div>
               </div>
 
-              {/* GOOGLE FEDERATION BAR */}
-              <button
+              {/* Google Sign In */}
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={loading}
-                className="w-full bg-white text-slate-900 border border-slate-200 rounded-2xl py-3.5 font-black text-xs uppercase tracking-wider hover:bg-slate-50 transition-all flex items-center justify-center gap-2 shadow-sm hover:shadow-md cursor-pointer active:scale-95 disabled:opacity-50"
+                className="w-full bg-white text-slate-900 border-2 border-slate-200 rounded-2xl py-4 font-black text-xs uppercase tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all flex items-center justify-center gap-3 shadow-sm hover:shadow-md cursor-pointer active:scale-95 disabled:opacity-50"
               >
-                <svg className="w-4.5 h-4.5" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.17-.63-.27-1.3-.27-2.09s.1-1.46.27-2.09z" strokeLinecap="round" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.17-.63-.27-1.3-.27-2.09s.1-1.46.27-2.09z" />
                   <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
                 </svg>
-                Sign in with Google
-              </button>
+                Continue with Google
+              </motion.button>
             </form>
             )}
 
-            {/* ALTERNATIVE SWITCH GATE */}
-            <div className="mt-8 text-center text-xs text-slate-600 font-sans">
+            {/* Mode switcher */}
+            <div className="mt-8 pt-6 border-t border-slate-200 text-center text-xs text-slate-600 font-sans">
               {mode === 'login' ? (
-                <p className="font-medium">
-                  Don't have an active reseller workspace?{' '}
+                <p className="font-semibold">
+                  New to NORODATA?{' '}
                   <button
                     onClick={() => { setMode('signup'); setError(null); }}
-                    className="text-indigo-600 font-black hover:underline cursor-pointer uppercase tracking-wider"
+                    className="text-blue-600 font-black hover:text-emerald-600 transition-colors cursor-pointer uppercase tracking-wider"
                   >
-                    Register Now
+                    Sign up free
                   </button>
                 </p>
               ) : (
-                <p className="font-medium">
-                  Already registered in our client infrastructure?{' '}
+                <p className="font-semibold">
+                  Already have an account?{' '}
                   <button
                     onClick={() => { setMode('login'); setError(null); }}
-                    className="text-indigo-600 font-black hover:underline cursor-pointer uppercase tracking-wider"
+                    className="text-blue-600 font-black hover:text-emerald-600 transition-colors cursor-pointer uppercase tracking-wider"
                   >
-                    Gateway Log In
+                    Log in
                   </button>
                 </p>
               )}
             </div>
           </motion.div>
 
-          <div className="flex items-center justify-center gap-2 mt-6 text-[11px] text-slate-400">
-            <ShieldCheck size={13} /> 256-bit encrypted connection
+          {/* Security footer */}
+          <div className="flex items-center justify-center gap-2 mt-6 text-[11px] text-slate-500 font-medium">
+            <ShieldCheck size={14} className="text-emerald-600" />
+            Bank-grade 256-bit encryption
           </div>
 
-          {/* ESCAPE EXIT TO NORMAL WEBSITE */}
-          <button
+          {/* Back button */}
+          <motion.button
+            whileHover={{ x: -3 }}
             onClick={onBack}
-            className="mt-2 w-full text-center text-slate-400 text-xs font-black uppercase tracking-wider hover:text-slate-700 transition-colors cursor-pointer"
+            className="mt-4 w-full text-center text-slate-400 text-xs font-black uppercase tracking-wider hover:text-slate-700 transition-colors cursor-pointer"
           >
-            ← Cancel and Return to Central Website
-          </button>
+            ← Back to Website
+          </motion.button>
         </div>
       </div>
+
+      {/* CSS for blob animations */}
+      <style>{`
+        @keyframes blob {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          33% { transform: translate(30px, -50px) scale(1.1); }
+          66% { transform: translate(-20px, 20px) scale(0.9); }
+        }
+        .animate-blob {
+          animation: blob 7s infinite;
+        }
+        .animation-delay-2000 {
+          animation-delay: 2s;
+        }
+      `}</style>
     </div>
   );
 }
 
-/* ---------- signature element: live activity ticker on the brand panel ---------- */
+/* Enhanced live activity ticker component */
 function AuthPulseTicker() {
-  const networks = ['MTN', 'Glo', 'Airtel', '9mobile'];
+  const networks = ['MTN 🟡', 'Airtel 🔴', 'GLO 🟢', '9mobile 💜'];
   const kinds = [
+    { label: 'airtime', amounts: ['₦200', '₦500', '₦1,000', '₦2,500'] },
     { label: 'data', amounts: ['500MB', '1GB', '2GB', '5GB'] },
-    { label: 'airtime', amounts: ['₦200', '₦500', '₦1,000', '₦2,000'] },
-    { label: 'electricity', amounts: ['₦1,500', '₦3,000', '₦5,000'] },
+    { label: 'electricity', amounts: ['₦1,500', '₦3,000', '₦5,000', '₦10,000'] },
+    { label: 'cable TV', amounts: ['DSTV', 'GOtv', 'Startimes'] },
   ];
+  
   const maskPhone = () => '090•••' + Math.floor(100 + Math.random() * 900);
+  
   const randomRow = () => {
     const k = kinds[Math.floor(Math.random() * kinds.length)];
     const amt = k.amounts[Math.floor(Math.random() * k.amounts.length)];
     const net = networks[Math.floor(Math.random() * networks.length)];
-    return { id: Math.random(), amt, label: k.label, net, to: maskPhone() };
+    return { 
+      id: Math.random(), 
+      amt, 
+      label: k.label, 
+      net, 
+      to: maskPhone(),
+      status: Math.random() > 0.1 ? '✓' : '⏳'
+    };
   };
 
-  const [rows, setRows] = React.useState(() => Array.from({ length: 5 }, randomRow));
+  const [rows, setRows] = React.useState(() => Array.from({ length: 6 }, randomRow));
 
   React.useEffect(() => {
     const t = setInterval(() => {
-      setRows((prev) => [randomRow(), ...prev].slice(0, 6));
-    }, 2600);
+      setRows((prev) => [randomRow(), ...prev].slice(0, 8));
+    }, 2200);
     return () => clearInterval(t);
   }, []);
 
   return (
-    <div className="relative z-10 mt-10 bg-black/20 border border-white/10 rounded-2xl p-1 backdrop-blur-sm max-w-md">
-      <div className="flex items-center justify-between px-3 py-2 text-[11px] font-mono uppercase tracking-widest text-indigo-200">
-        <span>Network activity</span>
-        <span className="flex items-center gap-1.5 text-emerald-300">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live
+    <div className="relative z-10 mt-12 bg-black/25 border border-white/10 rounded-2xl p-2 backdrop-blur-md overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 text-[11px] font-mono uppercase tracking-widest text-blue-200 bg-white/5 border-b border-white/10">
+        <span className="flex items-center gap-2">
+          <Zap size={12} className="text-emerald-400" />
+          Live Activity Feed
+        </span>
+        <span className="flex items-center gap-1.5 text-emerald-300 font-black">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Online
         </span>
       </div>
-      <div className="h-[130px] overflow-hidden relative">
-        <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#1E1650] to-transparent pointer-events-none z-10" />
+      <div className="h-40 overflow-hidden relative">
+        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-900 via-slate-900/50 to-transparent pointer-events-none z-10" />
         {rows.map((r) => (
-          <div key={r.id} className="flex items-center gap-2 px-3 py-2 text-[12px] font-mono text-indigo-50 border-t border-white/5 first:border-t-0">
-            <span className="text-emerald-400">✓</span>
-            <span className="text-white font-medium">{r.amt} {r.label}</span>
-            <span className="text-indigo-300">· {r.net}</span>
-            <span className="ml-auto text-indigo-300 whitespace-nowrap">{r.to}</span>
-          </div>
+          <motion.div 
+            key={r.id} 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="flex items-center gap-3 px-4 py-2.5 text-[12px] font-mono text-blue-50 border-b border-white/5 hover:bg-white/5 transition-colors first:border-t-0"
+          >
+            <span className={r.status === '✓' ? 'text-emerald-400 font-black' : 'text-amber-400 animate-pulse'}>{r.status}</span>
+            <span className="text-emerald-300 font-bold">{r.amt}</span>
+            <span className="text-blue-300">{r.label}</span>
+            <span className="text-blue-400">· {r.net}</span>
+            <span className="ml-auto text-blue-400/70 whitespace-nowrap text-[11px]">{r.to}</span>
+          </motion.div>
         ))}
       </div>
     </div>
