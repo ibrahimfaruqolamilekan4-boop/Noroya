@@ -4356,6 +4356,45 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
+  // ─── Admin: Ban a user ──────────────────────────
+  app.post("/api/admin/users/:id/ban", async (req, res) => {
+    if (!await requireAdmin(req, res, true)) return;
+    try {
+      const userId = req.params.id;
+      // 1. Get user email
+      const { data: profile, error: profErr } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profErr) throw new Error(profErr.message);
+      if (!profile || !profile.email) return res.status(404).json({ error: "User email not found." });
+
+      // 2. Add to banned_emails table
+      const { error: banErr } = await supabase
+        .from('banned_emails')
+        .insert([{ email: profile.email }]);
+        
+      if (banErr && banErr.code !== '23505') { // Ignore unique constraint violation
+        console.error("Error inserting into banned_emails:", banErr);
+      }
+
+      // 3. Try deleting auth user to immediately revoke access (Requires Service Role key)
+      const { error: delErr } = await supabase.auth.admin.deleteUser(userId);
+      if (delErr) {
+        console.warn("Could not delete from auth.users (make sure SUPABASE_SERVICE_ROLE_KEY is set):", delErr.message);
+        // Fallback: Just mark their profile role as 'banned' so they can't do anything
+        await supabase.from('profiles').update({ role: 'banned', user_role: 'banned' }).eq('id', userId);
+      }
+
+      return res.json({ success: true, message: "User has been banned and blacklisted." });
+    } catch (err: any) {
+      console.error("[Admin Ban User Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Admin: Adjust a user's wallet balance (credit or debit) ────────────
   app.post("/api/admin/users/:id/adjust-balance", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;

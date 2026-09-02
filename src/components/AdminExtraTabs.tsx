@@ -242,6 +242,7 @@ export function UserManagementTab() {
   const [adjustDirection, setAdjustDirection] = React.useState<'credit' | 'debit'>('credit');
   const [adjustReason, setAdjustReason] = React.useState('');
   const [adjusting, setAdjusting] = React.useState(false);
+  const [isBanning, setIsBanning] = React.useState(false);
   const [message, setMessage] = React.useState('');
   const limit = 20;
 
@@ -274,6 +275,26 @@ export function UserManagementTab() {
       setMessage(e.message);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const submitBan = async () => {
+    if (!selectedUser) return;
+    if (!window.confirm(`Are you sure you want to permanently BAN ${selectedUser.email}? This will revoke their access completely.`)) return;
+    
+    setIsBanning(true);
+    setMessage('');
+    try {
+      const json = await authedFetch(`/api/admin/users/${selectedUser.id}/ban`, {
+        method: 'POST'
+      });
+      setMessage('User has been banned successfully.');
+      await load();
+      setSelectedUser(null);
+    } catch(e: any) {
+      setMessage(e.message);
+    } finally {
+      setIsBanning(false);
     }
   };
 
@@ -404,12 +425,21 @@ export function UserManagementTab() {
                   />
                   <button
                     onClick={submitAdjustment}
-                    disabled={adjusting}
+                    disabled={adjusting || isBanning}
                     className="w-full py-2 rounded-lg bg-slate-900 text-white text-sm font-bold font-sans disabled:opacity-50"
                   >
                     {adjusting ? 'Processing…' : `${adjustDirection === 'credit' ? 'Credit' : 'Debit'} Wallet`}
                   </button>
-                  {message && <p className="text-xs text-center font-sans text-indigo-600">{message}</p>}
+                  
+                  <button
+                    onClick={submitBan}
+                    disabled={isBanning || adjusting}
+                    className="w-full py-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 border border-red-200 text-sm font-bold font-sans disabled:opacity-50 mt-4 transition-colors"
+                  >
+                    {isBanning ? 'Banning...' : '🚫 Ban User'}
+                  </button>
+
+                  {message && <p className="text-xs text-center font-sans text-indigo-600 mt-2">{message}</p>}
                 </div>
 
                 <div className="border-t border-slate-100 pt-3">
