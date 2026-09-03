@@ -72,12 +72,12 @@
 
     <!-- Register service worker so the app can be installed and cached -->
     <script>
-      if ("serviceWorker" in navigator && window.isSecureContext) {
+      if ("serviceWorker" in navigator && window === window.top) {
         window.addEventListener("load", () => {
           navigator.serviceWorker
             .register("/sw.js")
             .then(() => console.log("NORODATA SW registered"))
-            .catch((err) => console.error("SW registration failed:", err));
+            .catch((err) => console.warn("SW registration skipped in iframe or insecure context"));
         });
       }
     </script>
