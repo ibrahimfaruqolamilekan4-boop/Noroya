@@ -72,7 +72,7 @@
 
     <!-- Register service worker so the app can be installed and cached -->
     <script>
-      if ("serviceWorker" in navigator) {
+      if ("serviceWorker" in navigator && window.isSecureContext) {
         window.addEventListener("load", () => {
           navigator.serviceWorker
             .register("/sw.js")
