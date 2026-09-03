@@ -855,6 +855,9 @@ async function startServer() {
       amount !== undefined ? amount : 
       (retail_price !== undefined ? retail_price : req.body.amount)
     );
+    if (isNaN(finalAmount) || finalAmount <= 0) {
+      return res.status(400).json({ error: "Invalid amount. Amount must be greater than zero." });
+    }
 
     // Dynamic extraction of Plan ID
     const finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
@@ -1874,6 +1877,7 @@ if (Object.keys(updateData).length <= 1) {
 
       if (isCustomAmountAirtime || isCustomAmountElectricity) {
         const inputAmount = Number(amount);
+        if (isNaN(inputAmount) || inputAmount <= 0) return res.status(400).json({ error: "Invalid amount. Must be greater than zero." });
         if (!inputAmount || isNaN(inputAmount) || inputAmount <= 0) {
           return res.status(400).json({ error: "Invalid purchase amount specified." });
         }
@@ -2122,6 +2126,7 @@ if (Object.keys(updateData).length <= 1) {
       const { network, phone_number, phone, amount } = req.body;
       const finalPhone  = phone_number || phone;
       const parsedAmount = Number(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ success: false, message: "Invalid amount. Must be greater than zero." });
 
       if (!network || !finalPhone || !parsedAmount) {
         return res.status(400).json({ error: "Missing required fields: network, phone_number, amount." });
@@ -2757,6 +2762,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     const finalPlan = planId || plan;
     const finalPhone = phone || phoneNumber;
     const finalAmount = Number(amount !== undefined ? amount : req.body.amount);
+    if (isNaN(finalAmount) || finalAmount <= 0) return res.status(400).json({ error: "Invalid amount. Must be greater than zero." });
 
     if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
       return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
