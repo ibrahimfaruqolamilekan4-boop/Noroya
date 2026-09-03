@@ -851,7 +851,7 @@ async function startServer() {
     
     const finalNetwork = networkId || network;
     const finalPhone = phone || phoneNumber || phone_number;
-    const finalAmount = Number(
+    let finalAmount = Number(
       amount !== undefined ? amount : 
       (retail_price !== undefined ? retail_price : req.body.amount)
     );
@@ -901,25 +901,24 @@ async function startServer() {
       }
 
       const currentBalance = Number(profile.wallet_balance || 0);
-      if (currentBalance < finalAmount) {
-        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
-      }
 
       // 2. Resolve original Bigisub plan code and network code mappings dynamically
       let resolvedPlanCode = finalPlan;
+      let dbPlan: any = null;
       if (finalType === "data" && finalPlan) {
         try {
-          const { data: dbPlan, error: dbPlanErr } = await supabase
+          const result = await supabase
             .from('data_plans')
             .select('*')
             .or(`id.eq.${finalPlan},api_plan_id.eq.${finalPlan}`)
             .maybeSingle();
 
+          dbPlan = result.data;
           if (dbPlan) {
             console.log(`[Supabase Resolve Plan SUCCESS] Matched data plan:`, dbPlan);
             resolvedPlanCode = dbPlan.api_plan_id || dbPlan.id;
-          } else if (dbPlanErr) {
-            console.warn("[handleVtuPurchase Resolve Plan Warning]:", dbPlanErr.message);
+          } else if (result.error) {
+            console.warn("[handleVtuPurchase Resolve Plan Warning]:", result.error.message);
           }
         } catch (resolvePlanExc: any) {
           console.warn("[handleVtuPurchase Resolve Plan Exception]:", resolvePlanExc.message);
@@ -946,11 +945,48 @@ async function startServer() {
       try {
         const { data: pc } = await supabase
           .from('services_config')
-          .select('provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id, bigisub_identifier_id, bigisub_network_id')
+          .select('*')
           .or(`mozosubs_plan_id.eq.${resolvedPlanCode},mozosubz_plan_id.eq.${resolvedPlanCode},bigisub_identifier_id.eq.${resolvedPlanCode}`)
           .maybeSingle();
         planConfig = pc;
       } catch (_) {}
+
+      // [CRITICAL SECURITY FIX] - SERVER-SIDE PRICE ENFORCEMENT
+      if (finalType !== 'airtime') {
+         let serverPrice = 0;
+         const role = profile.role || 'user';
+         if (planConfig) {
+             if (role === 'agent' && planConfig.agent_price) serverPrice = planConfig.agent_price;
+             else if (role === 'reseller' && planConfig.reseller_price) serverPrice = planConfig.reseller_price;
+             else if (planConfig.selling_price) serverPrice = planConfig.selling_price;
+             else if (planConfig.retail_price) serverPrice = planConfig.retail_price;
+         }
+         // Fallback to dbPlan if services_config didn't match or didn't have price
+         if (serverPrice === 0 && typeof dbPlan !== 'undefined' && dbPlan) {
+             if (role === 'agent' && dbPlan.agent_price) serverPrice = dbPlan.agent_price;
+             else if (role === 'reseller' && dbPlan.reseller_price) serverPrice = dbPlan.reseller_price;
+             else if (dbPlan.selling_price) serverPrice = dbPlan.selling_price;
+             else if (dbPlan.retail_price) serverPrice = dbPlan.retail_price;
+         }
+
+         if (serverPrice > 0) {
+             console.log(`[SECURITY] Overriding client amount (${finalAmount}) with DB price (${serverPrice})`);
+             finalAmount = Number(serverPrice);
+         } else if (finalType === 'data') {
+             // If we couldn't find a price for a data plan, deny it.
+             return res.status(400).json({ error: "Invalid data plan or missing pricing configuration." });
+         }
+      }
+
+      // Final sanity check before deduction
+      if (isNaN(finalAmount) || finalAmount <= 0) {
+         return res.status(400).json({ error: "Invalid transaction amount detected." });
+      }
+
+      // Enforce balance check with updated finalAmount
+      if (currentBalance < finalAmount) {
+         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+      }
 
       const chosenProvider = planConfig?.provider || 'mozosubz';
       const provider = getProvider(chosenProvider);
@@ -1144,7 +1180,7 @@ async function startServer() {
       // 1. Fetch user profile from Supabase securely using their UUID
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('id, wallet_balance, balance')
+        .select('id, wallet_balance, balance, role')
         .eq('id', userUUID)
         .maybeSingle();
 
