@@ -4003,74 +4003,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     });
   });
 
-  // Daily Bonus Lucky Wheels Reward Endpoint
-  app.post("/api/vtu/daily-bonus", purchaseRateLimit, async (req, res) => {
-    const { userId, wonAmount } = req.body;
-    if (!userId || !wonAmount || wonAmount <= 0) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    // SECURITY: require a verified session matching userId -- previously anyone could credit any
-    // wallet with any "wonAmount" with zero auth and zero server-side proof a spin ever happened.
-    const verifiedCallerId = await verifyCallerUserId(req);
-    if (!verifiedCallerId || verifiedCallerId !== userId) {
-      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
-    }
-
-    // SECURITY: never trust the client's claimed prize amount uncapped -- clamp to the maximum
-    // a legitimate daily spin could ever award, so a manipulated client can't mint arbitrary funds.
-    const MAX_DAILY_BONUS = 500;
-    if (Number(wonAmount) > MAX_DAILY_BONUS) {
-      return res.status(400).json({ error: `Invalid bonus amount. Maximum daily bonus is ₦${MAX_DAILY_BONUS}.` });
-    }
-
-    try {
-      const verifiedUserId = await verifyCallerUserId(req);
-      if (!verifiedUserId || verifiedUserId !== userId) {
-        return res.status(401).json({ error: "Unauthorized." });
-      }
-      const pgUuid = ensureUUID(userId);
-
-      // SECURITY (audit H1): enforce one claim per calendar day. The claim is an
-      // atomic conditional UPDATE -- only the first request of the day matches.
-      const today = new Date().toISOString().slice(0, 10);
-      const { data: claimedRow, error: claimErr } = await supabase
-        .from('profiles')
-        .update({ last_bonus_date: today })
-        .eq('id', pgUuid)
-        .or(`last_bonus_date.is.null,last_bonus_date.lt.${today}`)
-        .select('id')
-        .maybeSingle();
-      if (claimErr) {
-        console.error("[Daily Bonus] claim update failed:", claimErr.message);
-        return res.status(500).json({ error: "Could not record your daily bonus. Please try again." });
-      }
-      if (!claimedRow) {
-        return res.status(429).json({ error: "Daily bonus already claimed today. Come back tomorrow!" });
-      }
-
-      // Determine bonus amount (random wheel spin, max ₦500)
-      const bonusOptions = [10, 20, 50, 100, 200, 500];
-      const wonAmount = bonusOptions[Math.floor(Math.random() * bonusOptions.length)];
-
-      const { data: updated, error: rpcErr } = await supabase.rpc('increment_balance', {
-        user_uuid: pgUuid, amount: wonAmount
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-
-      await supabase.from('transactions').insert({
-        user_id: pgUuid, type: 'bonus',
-        amount: wonAmount, status: 'completed',
-        description: `Daily bonus wheel reward of ₦${wonAmount}`,
-        created_at: new Date().toISOString()
-      });
-
-      res.json({ success: true, wonAmount, message: `You won ₦${wonAmount} from today's bonus wheel! 🎉` });
-    } catch (err: any) {
-      console.error("[Daily Bonus Api Exception]:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // ── Daily Bonus Lucky Wheel: REMOVED ──────────────────────────────────────
+  // Removed at owner request. A wallet-crediting "spin the wheel" endpoint is
+  // inherently a money-minting surface (it previously could be fared without a
+  // per-day cap, and even rate-limited it remains an unbacked credit path with
+  // no real payment behind it). Any future reward should be granted server-side
+  // against a real, verifiable event -- never via an HTTP endpoint that credits
+  // increment_balance directly.
 
   // AI Chat Support Endpoint
   app.post("/api/chat", rateLimit(20, 60_000), async (req, res) => {
