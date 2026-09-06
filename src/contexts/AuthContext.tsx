@@ -167,7 +167,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
 
         setUserProfile(defaultProfile);
-        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(defaultProfile));
+        // SECURITY: never persist the transaction PIN in localStorage (audit M5).
+        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...defaultProfile, transactionPin: undefined }));
         setLoading(false);
 
         // Define a function to reload user profile directly from Supabase to sync balances
@@ -191,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   phoneNumber: data.phone_number || base.phoneNumber,
                   transactionPin: data.transaction_pin || base.transactionPin,
                 };
-                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(updatedProfile));
+                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...updatedProfile, transactionPin: undefined }));
                 return updatedProfile;
               });
             }
@@ -226,7 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     phoneNumber: updated.phone_number || base.phoneNumber,
                     transactionPin: updated.transaction_pin || base.transactionPin,
                   };
-                  localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(newProfile));
+                  localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...newProfile, transactionPin: undefined }));
                   return newProfile;
                 });
               }

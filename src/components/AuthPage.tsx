@@ -208,8 +208,8 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
           toast.success('🎉 Welcome back! Your wallet is ready.', { icon: '👋' });
         }
       } else if (mode === 'signup') {
-        if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters long!');
+        if (password.length < 8) {
+          throw new Error('Password must be at least 8 characters long!');
         }
         if (password !== confirmPassword) {
           throw new Error('Confirm password and Password fields must match!');

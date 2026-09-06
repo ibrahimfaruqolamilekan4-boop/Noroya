@@ -57,7 +57,10 @@ service cloud.firestore {
       return data.keys().hasAll(['userId', 'type', 'amount', 'status', 'description', 'reference', 'createdAt']) &&
              data.keys().size() >= 7 &&
              data.userId == request.auth.uid &&
-             data.type in ['data', 'airtime', 'funding', 'transfer', 'bill'] &&
+             // SECURITY: 'funding' transactions are wallet credits and may only be
+             // written by the backend (Admin SDK bypasses these rules). Allowing
+             // clients to create them let anyone fabricate deposit receipts.
+             data.type in ['data', 'airtime', 'transfer', 'bill'] &&
              data.amount is number &&
              data.status in ['pending', 'completed', 'failed'] &&
              data.description is string && data.description.size() <= 512 &&
