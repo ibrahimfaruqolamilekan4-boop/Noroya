@@ -127,18 +127,6 @@ export async function purchaseAirtime(
   network: string | number
 ) {
   if (!userId) throw new Error("User not authenticated");
-
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('wallet_balance')
-    .eq('id', userId)
-    .single();
-
-  if (profileError || !profile) {
-    console.error("Profile fetch error:", profileError);
-    throw new Error("User profile not found in Supabase database. Please contact support.");
-  }
-
   if (!phone || !amount || !network) {
     throw new Error("Missing required fields");
   }
@@ -149,97 +137,24 @@ export async function purchaseAirtime(
     throw new Error("Invalid phone number");
   }
 
-  // 1. Check & Deduct atomically using the database RPC function
-  // This prevents race conditions and ensures safe balance validation.
-  const { data: success, error: deductError } = await supabase.rpc('deduct_balance', { 
-    user_uuid: userId, 
-    amount: Number(amount) 
+  // SECURITY (audit C1): the browser never calls wallet RPCs directly anymore.
+  // The server verifies the session, applies percentage pricing, locks funds
+  // atomically and refunds automatically when the provider fails.
+  const res = await fetch('/api/buy-airtime', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ network, phone, amount: Number(amount) })
   });
-
-  if (deductError || !success) {
-    throw new Error("Insufficient balance or profile not found.");
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Purchase failed");
   }
-
-  try {
-    // 2. Call Mozosubz API proxy or direct to execute direct telecom dispatching
-    const isServer = typeof process !== "undefined" && process?.env;
-    let result: any;
-
-    if (isServer && process.env.MOZOSUBZ_API_KEY) {
-      // Direct call if running on server-side
-      const mozoBaseUrl = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
-      const res = await fetch(`${mozoBaseUrl}/airtime/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${process.env.MOZOSUBZ_API_KEY}`
-        },
-        body: JSON.stringify({
-          network,
-          amount: Number(amount),
-          mobile_number: phone,
-          Ported_number: true,
-          airtime_type: "VTU"
-        })
-      });
-      const data = await res.json();
-      result = {
-        success: data.status === 'success' || data.success === true || data.Status === 'successful',
-        reference: data.id || data.reference || `TX-MOZO-${Date.now()}`,
-        message: data.message || data.error || "Purchase failed"
-      };
-    } else {
-      // Proxy call if running on client-side
-      const res = await fetch('/api/vendor/recharge', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userUUID: userId,
-          type: 'airtime',
-          networkId: network,
-          phoneNumber: phone,
-          amount: Number(amount),
-          costAmount: Number(amount)
-        })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || "Purchase failed");
-      }
-      result = {
-        success: true,
-        reference: data.reference || data.id || `TX-MOZO-${Date.now()}`
-      };
-    }
-
-    if (!result.success) {
-      throw new Error(result.message || "Airtime purchase failed");
-    }
-
-    // 3. Log success transaction
-    await supabase.from('transactions').insert({
-      user_id: userId,
-      type: 'airtime',
-      amount: Number(amount),
-      phone,
-      network: String(network),
-      status: 'success',
-      reference: result.reference || `TX-${Date.now()}`
-    });
-
-    return result;
-  } catch (error: any) {
-    // 4. Refund on failure atomically
-    await supabase.rpc('increment_balance', { 
-      user_uuid: userId, 
-      amount: Number(amount) 
-    });
-    throw new Error(error.message || "Purchase failed and funds refunded.");
-  }
+  return {
+    success: true,
+    reference: data.reference,
+    chargeAmount: data.chargeAmount,
+    newBalance: data.newBalance
+  };
 }
 
 /**
@@ -263,94 +178,28 @@ export async function purchaseDataBundle(
     throw new Error("Invalid phone number");
   }
 
-  // 1. Check & Deduct atomically using the database RPC function
-  const { data: deductSuccess, error: deductError } = await supabase.rpc('deduct_balance', { 
-    user_uuid: userId, 
-    amount: Number(amount) 
-  });
-
-  if (deductError || !deductSuccess) {
-    throw new Error("Insufficient wallet balance");
-  }
-
-  try {
-    // 2. Call Mozosubz API or Proxy
-    const isServer = typeof process !== "undefined" && process?.env;
-    let result: any;
-
-    if (isServer && process.env.MOZOSUBZ_API_KEY) {
-      // Direct call if running on server-side
-      const mozoBaseUrl = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
-      const res = await fetch(`${mozoBaseUrl}/data/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${process.env.MOZOSUBZ_API_KEY}`
-        },
-        body: JSON.stringify({
-          network,
-          mobile_number: phone,
-          plan: planCode,
-          Ported_number: true
-        })
-      });
-      const data = await res.json();
-      result = {
-        success: data.status === 'success' || data.success === true || data.Status === 'successful',
-        reference: data.id || data.reference || `DATA-MOZO-${Date.now()}`,
-        message: data.message || data.error || "Data bundle purchase failed"
-      };
-    } else {
-      // Proxy call if running on client-side
-      const res = await fetch('/api/vendor/recharge', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userUUID: userId,
-          type: 'data',
-          networkId: network,
-          planId: planCode,
-          phoneNumber: phone,
-          amount: Number(amount),
-          costAmount: Number(amount)
-        })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || "Data bundle purchase failed");
-      }
-      result = {
-        success: true,
-        reference: data.reference || data.id || `DATA-MOZO-${Date.now()}`
-      };
-    }
-
-    if (!result.success) {
-      // Auto refund
-      await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
-      throw new Error(result.message || "Data bundle purchase failed");
-    }
-
-    // 3. Log transaction
-    await supabase.from('transactions').insert({
-      user_id: userId,
-      type: 'data_bundle',
-      amount: Number(amount),
+  // SECURITY (audit C1/C5): route through the server endpoint -- it resolves the
+  // plan's server-side price (the client amount is never trusted), locks funds
+  // atomically and refunds on failure. No direct wallet RPCs from the browser.
+  const res = await fetch('/api/v1/data/purchase', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      planId: planCode,
       phone,
-      network: String(network),
-      plan_code: String(planCode),
-      status: 'success',
-      reference: result.reference || `DATA-${Date.now()}`
-    });
-
-    return result;
-  } catch (error: any) {
-    // Refund on any error
-    await supabase.rpc('increment_balance', { user_uuid: userId, amount: Number(amount) });
-    throw error;
+      amount: Number(amount),
+      network,
+      requestType: 'data'
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Data bundle purchase failed");
   }
+  return {
+    success: true,
+    reference: data.transaction?.reference
+  };
 }
 
 /**

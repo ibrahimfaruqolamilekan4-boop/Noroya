@@ -75,7 +75,7 @@
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker
-            .register("/sw.js")
+            .register("/service-worker.js")
             .then(() => console.log("NORODATA SW registered"))
             .catch((err) => console.error("SW registration failed:", err));
         });

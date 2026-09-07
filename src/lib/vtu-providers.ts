@@ -47,6 +47,16 @@ export function initProviders(supabaseClient: any) {
 async function resolveKeyFromEnvOrDb(envVar: string, dbIdentifier: string): Promise<string> {
   if (process.env[envVar]) return process.env[envVar]!;
   if (_supabase) {
+    // SECURITY: secrets live in the service-role-only provider_secrets table
+    // (supabase_security_hardening.sql); services_config is legacy fallback.
+    try {
+      const { data } = await _supabase
+        .from('provider_secrets')
+        .select('secret')
+        .eq('identifier', dbIdentifier)
+        .maybeSingle();
+      if (data?.secret) return data.secret;
+    } catch (_) { /* table may not exist pre-migration */ }
     try {
       const { data } = await _supabase
         .from('services_config')

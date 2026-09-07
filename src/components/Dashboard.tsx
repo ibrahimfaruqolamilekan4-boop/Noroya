@@ -709,6 +709,7 @@ function DashboardOverview({
   const [transferAmount, setTransferAmount] = React.useState('');
   const [transferNote, setTransferNote] = React.useState('');
   const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
+  const [transferPin, setTransferPin] = React.useState('');
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
 
@@ -777,18 +778,19 @@ function DashboardOverview({
   const handleConfirmTransfer = async () => {
     const amt = Number(transferAmount);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    if (!/^\d{4}$/.test(transferPin)) { toast.error('Enter your 4-digit transaction PIN'); return; }
     setTransferLoading(true);
     const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     try {
       const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote
+        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote, p_pin: transferPin
       });
       if (error) throw error;
       if (data.status === 'success') {
         toast.success(`₦${amt.toLocaleString()} sent!`);
         setShowTransferModal(false);
         setTransferStep('input');
-        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null);
+        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null); setTransferPin('');
         refreshBalance();
       } else if (data.status === 'insufficient_funds') {
         toast.error(`Insufficient balance.`);
@@ -1339,11 +1341,24 @@ function DashboardOverview({
                       <span className="text-xl font-black" style={{ color: '#3B7A3B' }}>₦{Number(transferAmount).toLocaleString()}</span>
                     </div>
                   </div>
+                  <div>
+                    <label className="text-xs text-gray-400 font-bold uppercase">Transaction PIN</label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={transferPin}
+                      onChange={(e) => setTransferPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••"
+                      className="mt-1.5 w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2"
+                      style={{ letterSpacing: '0.5rem' }}
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading || !/^\d{4}$/.test(transferPin)} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
                       {transferLoading ? 'Sending…' : 'Confirm'}
                     </button>
                   </div>
@@ -1681,7 +1696,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
 // ─────────────────────────────────────────────────────────────────
 function SettingsSection({ user }: { user: UserProfile }) {
   const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
-  const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
+  const [transactionPin, setTransactionPin] = React.useState('');
   const [isUpdating, setIsUpdating] = React.useState(false);
 
   const handleUpdateSecurity = async (e: React.FormEvent) => {
@@ -1696,9 +1711,17 @@ function SettingsSection({ user }: { user: UserProfile }) {
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ phone_number: phoneNumber, transaction_pin: transactionPin })
+        .update({ phone_number: phoneNumber })
         .eq('id', (user as any).uid || (user as any).id);
       if (error) throw error;
+      // SECURITY: PIN is hashed server-side (bcrypt) via this RPC -- the client
+      // never writes the PIN column directly.
+      if (transactionPin) {
+        const { data: pinRes, error: pinErr } = await supabase.rpc('set_transaction_pin', { p_pin: transactionPin });
+        if (pinErr) throw pinErr;
+        if (pinRes?.status !== 'success') throw new Error(pinRes?.message || 'PIN update failed');
+        setTransactionPin('');
+      }
       toast.success('Profile updated! 🔐');
     } catch (error: any) {
       toast.error('Failed to update: ' + error.message);

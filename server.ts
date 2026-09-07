@@ -8,6 +8,11 @@ import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js
 import { supabase } from "./src/lib/supabase.js";
 import axios from "axios";
 
+// SECURITY: sanitize client-supplied values before interpolating them into
+// PostgREST `.or()` filter strings (they support comma/paren operators).
+const pgSafeFilter = (value: unknown): string =>
+  String(value ?? "").replace(/[(),"'\\]/g, "").trim();
+
 const ensureUUID = (strId: string): string => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (uuidRegex.test(strId)) {
@@ -34,22 +39,35 @@ const ensureUUID = (strId: string): string => {
   return `${part1}-${part2}-${part3}-${part4}-${part5}`;
 };
 
-const resolveBigisubApiKey = async (): Promise<string> => {
+// SECURITY (audit C7): provider secrets are resolved from env first, then the
+// service-role-only provider_secrets table (see supabase_security_hardening.sql).
+// The services_config row fallback exists only for pre-migration deployments.
+const resolveProviderSecret = async (identifier: string, envKeys: string[]): Promise<string> => {
+  for (const envKey of envKeys) {
+    const val = (process.env[envKey] || "").trim();
+    if (val) return val;
+  }
   try {
-    const { data, error } = await supabase
+    const { data } = await supabase
+      .from('provider_secrets')
+      .select('secret')
+      .eq('identifier', identifier)
+      .maybeSingle();
+    if (data?.secret) return data.secret;
+  } catch (_) { /* provider_secrets may not exist until the hardening migration runs */ }
+  try {
+    const { data: legacy } = await supabase
       .from('services_config')
       .select('item_name')
-      .eq('bigisub_identifier_id', 'bigisub_api_key')
+      .eq('bigisub_identifier_id', identifier)
       .maybeSingle();
-    
-    if (!error && data?.item_name) {
-      return data.item_name;
-    }
-  } catch (err) {
-    console.warn("[resolveBigisubApiKey] Error querying Supabase, using env fallback:", err);
-  }
-  return process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
+    if (legacy?.item_name) return legacy.item_name;
+  } catch (_) {}
+  return "";
 };
+
+const resolveBigisubApiKey = async (): Promise<string> =>
+  resolveProviderSecret('bigisub_api_key', ['BIGISUB_API_KEY', 'VTU_API_KEY']);
 
 // ─── VTU Provider Plugin System ─────────────────────────────────────────────
 // Providers live in src/lib/vtu-providers.ts
@@ -90,22 +108,8 @@ const logVtuFailure = async (opts: {
   }
 };
 
-const resolveMozosubzApiKey = async (): Promise<string> => {
-  // Priority 1: MOZOSUBZ_API_KEY env var (the canonical key — set this in your deployment secrets)
-  if (process.env.MOZOSUBZ_API_KEY) return process.env.MOZOSUBZ_API_KEY;
-  // Priority 2: Supabase services_config table (runtime override)
-  try {
-    const { data, error } = await supabase
-      .from('services_config')
-      .select('item_name')
-      .eq('bigisub_identifier_id', 'mozosubz_api_key')
-      .maybeSingle();
-    if (!error && data?.item_name) return data.item_name;
-  } catch (err) {
-    console.warn("[resolveMozosubzApiKey] Supabase query failed:", err);
-  }
-  return "";
-};
+const resolveMozosubzApiKey = async (): Promise<string> =>
+  resolveProviderSecret('mozosubz_api_key', ['MOZOSUBS_CONNECT_KEY', 'MOZOSUBZ_CONNECT_KEY', 'MOZOSUBZ_API_KEY']);
 
 dotenv.config();
 
@@ -153,8 +157,10 @@ const applyResellerPricing = (basePrice: number, profile: any, serviceType: stri
 //   - Create a record with: bigisub_identifier_id = "mozosubz_api_key" and set the "item_name" as your key value.
 //   - Create a record with: bigisub_identifier_id = "bigisub_api_key" and set the "item_name" as your key value.
 // =========================================================================
-console.log("🔌 [VTU Config] Exposing keys. Mozosubz API Key source detected:", 
-  process.env.MOZOSUBZ_API_KEY ? "Loaded from env (starts with: " + process.env.MOZOSUBZ_API_KEY.slice(0, 5) + "...)" : "Not set (using fallback/Supabase/simulation)");
+// SECURITY (C7 fix): provider API keys now live in the service-role-only
+// provider_secrets table (see supabase_security_hardening.sql). The legacy
+// services_config rows are only used as a fallback by the resolvers below.
+console.log("🔌 [VTU Config] Mozosubz API key source:", process.env.MOZOSUBZ_API_KEY ? "env" : "fallback/provider_secrets table");
 
 
 import fs from 'fs';
@@ -196,9 +202,9 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         username: username,
         phone_number: authUser.phone || "",
         referral_code: referralCode,
-        transaction_pin: "1234",
-        wallet_balance: 10000,
-        balance: 10000,
+        // SECURITY: never seed free money (was 10000).
+        wallet_balance: 0,
+        balance: 0,
         email: authUser.email || ""
       };
 
@@ -227,7 +233,6 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       username: `user_${Date.now()}`,
       phone_number: "",
       referral_code: referralCode,
-      transaction_pin: "1234",
       wallet_balance: 0,
       balance: 0,
       email: ""
@@ -337,6 +342,57 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // ── Security headers + rate limiting (audit H7) ────────────────────────────
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+  });
+
+  // Dependency-free fixed-window per-IP rate limiter. In-memory buckets are
+  // per-instance (fine for the single Cloud Run container; Vercel functions
+  // get per-instance limiting, which still blunts abuse).
+  const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+  const rateLimit = (max: number, windowMs: number) => (req: any, res: any, next: any) => {
+    const ip = req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() || req.socket?.remoteAddress || "unknown";
+    const key = `${ip}:${max}`;
+    const now = Date.now();
+    const bucket = rateBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    bucket.count += 1;
+    if (bucket.count > max) {
+      return res.status(429).json({ error: "Too many requests. Please slow down." });
+    }
+    if (rateBuckets.size > 5000) rateBuckets.clear(); // bound memory
+    return next();
+  };
+
+  const JSON_BODY_LIMIT = "128kb";
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  // Global API throttle + a stricter bucket for money-touching endpoints.
+  app.use("/api", rateLimit(300, 60_000));
+  const purchaseRateLimit = rateLimit(30, 60_000);
+
+  // SECURITY (audit C7): public plan listings must never expose provider
+  // credential rows (keys used to live in services_config rows like
+  // 'mozosubz_api_key') or wholesale cost prices.
+  const isProviderSecretRow = (row: any) =>
+    /(_api_key|_connect_key|_webhook_secret)$/i.test(String(row?.bigisub_identifier_id || "")) ||
+    /^(sk|pk)_|^connect_/i.test(String(row?.item_name || ""));
+  const sanitizePublicPlans = (rows: any[]) =>
+    (rows || [])
+      .filter((r: any) => !isProviderSecretRow(r))
+      .map((r: any) => {
+        const clone: any = { ...r };
+        delete clone.cost_price;
+        return clone;
+      });
+
   // ─── Legacy local-db helpers (compile-compat stubs; Supabase is source of truth) ─
   function safeJsonStringify(obj: any, space?: string | number): string {
     const seen = new WeakSet();
@@ -353,7 +409,7 @@ async function startServer() {
   function saveLocalDb(_data: LocalStore): void { /* no-op — Supabase is source of truth */ }
   // ───────────────────────────────────────────────────────────────────────────────────
 
-  app.use(express.json());
+  // (express.json is installed above with a body-size limit.)
 
   // Dynamic runtime injection of Supabase properties from the Cloud Run host container
   app.get("/config/supabase.js", (req, res) => {
@@ -366,19 +422,27 @@ async function startServer() {
     `);
   });
 // JWT configuration and utilities
-  const JWT_SECRET = process.env.JWT_SECRET || "noroya-vtu-jwt-auth-token-super-key!";
+  // SECURITY: no hardcoded fallback. The previous default secret shipped in
+  // this public repo and allowed anyone to forge session tokens for any user.
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET && process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET must be set in production -- refusing to start with an unknown signing key.");
+  }
+  const JWT_SIGNING_KEY = JWT_SECRET || crypto.randomBytes(32).toString("hex");
+  const JWT_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
   function signJwt(payload: any): string {
     const header = { alg: "HS256", typ: "JWT" };
+    const payloadWithExp = { ...payload, exp: Math.floor(Date.now() / 1000) + JWT_TTL_SECONDS };
     const base64Header = Buffer.from(JSON.stringify(header)).toString("base64url");
-    const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const base64Payload = Buffer.from(JSON.stringify(payloadWithExp)).toString("base64url");
     
-    const hmac = crypto.createHmac("sha256", JWT_SECRET);
-    hmac.update(`${base64Header}.${base64Payload}`);
-    const signature = hmac.digest("base64url");
-    
-    return `${base64Header}.${base64Payload}.${signature}`;
-  }
+      const hmac = crypto.createHmac("sha256", JWT_SIGNING_KEY);
+      hmac.update(`${base64Header}.${base64Payload}`);
+      const signature = hmac.digest("base64url");
+      
+      return `${base64Header}.${base64Payload}.${signature}`;
+    }
 
   function verifyJwt(token: string): any {
     try {
@@ -386,13 +450,19 @@ async function startServer() {
       if (parts.length !== 3) return null;
       
       const [header, payload, signature] = parts;
-      const hmac = crypto.createHmac("sha256", JWT_SECRET);
+      const hmac = crypto.createHmac("sha256", JWT_SIGNING_KEY);
       hmac.update(`${header}.${payload}`);
       const expectedSignature = hmac.digest("base64url");
       
-      if (signature !== expectedSignature) return null;
-      
-      return JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+      // Constant-time comparison so signature checks can't be timing-attacked.
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expectedSignature);
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+
+      const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+      // SECURITY: reject expired tokens (expiry was previously never checked).
+      if (typeof decoded.exp === "number" && decoded.exp * 1000 < Date.now()) return null;
+      return decoded;
     } catch (err) {
       return null;
     }
@@ -526,8 +596,7 @@ async function startServer() {
             username: newUsername,
             phone_number: "",
             referral_code: referralCode,
-            transaction_pin: "1234",
-            wallet_balance: 0,
+                wallet_balance: 0,
             balance: 0,
             email: userEmail || ""
           };
@@ -543,8 +612,7 @@ async function startServer() {
               username: newUsername,
               phone_number: "",
               referral_code: referralCode,
-              transaction_pin: "1234",
-              wallet_balance: 0
+                    wallet_balance: 0
             };
             const { error: insertErr2 } = await supabase.from('profiles').insert(payload2);
             insertErr = insertErr2;
@@ -768,22 +836,20 @@ async function startServer() {
       }
     }
 
-    // Auto-detect Paystack key if not directly found in standard list
+    // SECURITY: only ever return PUBLIC keys (pk_*). The previous autodetect
+    // loop matched sk_live_/sk_test_ too and would have handed a Paystack
+    // SECRET key to any anonymous caller. No hardcoded fallback key either.
     if (!paystackKey) {
       for (const [key, value] of Object.entries(process.env)) {
         if (value && typeof value === "string") {
           const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
-          if (trimmed.startsWith("pk_live_") || trimmed.startsWith("pk_test_") || trimmed.startsWith("sk_live_") || trimmed.startsWith("sk_test_")) {
+          if (trimmed.startsWith("pk_live_") || trimmed.startsWith("pk_test_")) {
             paystackKey = trimmed;
-            console.log(`[Payment Config] Autodetected Paystack key from env var: ${key}`);
+            console.log(`[Payment Config] Autodetected Paystack public key from env var: ${key}`);
             break;
           }
         }
       }
-    }
-
-    if (!paystackKey) {
-      paystackKey = "pk_live_f893e9902f8fa7abc28your_paystack_live_wholesale_key";
     }
 
     const flutterwaveKeys = [
@@ -801,29 +867,24 @@ async function startServer() {
       }
     }
 
-    // Auto-detect Flutterwave key if not directly found in standard list
+    // SECURITY: only public Flutterwave keys are ever exposed (never FLWSECK).
     if (!flutterwaveKey) {
       for (const [key, value] of Object.entries(process.env)) {
         if (value && typeof value === "string") {
           const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
-          if (trimmed.startsWith("FLWPUBK") || trimmed.startsWith("FLWSECK")) {
+          if (trimmed.startsWith("FLWPUBK")) {
             flutterwaveKey = trimmed;
-            console.log(`[Payment Config] Autodetected Flutterwave key from env var: ${key}`);
+            console.log(`[Payment Config] Autodetected Flutterwave public key from env var: ${key}`);
             break;
           }
         }
       }
     }
 
+    // SECURITY: no debug block -- key prefixes/lengths are an info leak.
     return res.json({
       publicKey: paystackKey,
       flutterwavePublicKey: flutterwaveKey,
-      debug: {
-        paystackKeyPrefix: paystackKey ? paystackKey.substring(0, 12) : "none",
-        paystackKeyLength: paystackKey ? paystackKey.length : 0,
-        flutterwaveKeyPrefix: flutterwaveKey ? flutterwaveKey.substring(0, 12) : "none",
-        flutterwaveKeyLength: flutterwaveKey ? flutterwaveKey.length : 0,
-      }
     });
   });
 
@@ -910,7 +971,7 @@ async function startServer() {
           const result = await supabase
             .from('data_plans')
             .select('*')
-            .or(`id.eq.${finalPlan},api_plan_id.eq.${finalPlan}`)
+            .or(`id.eq.${pgSafeFilter(finalPlan)},api_plan_id.eq.${pgSafeFilter(finalPlan)}`)
             .maybeSingle();
 
           dbPlan = result.data;
@@ -946,7 +1007,7 @@ async function startServer() {
         const { data: pc } = await supabase
           .from('services_config')
           .select('*')
-          .or(`mozosubs_plan_id.eq.${resolvedPlanCode},mozosubz_plan_id.eq.${resolvedPlanCode},bigisub_identifier_id.eq.${resolvedPlanCode}`)
+          .or(`mozosubs_plan_id.eq.${pgSafeFilter(resolvedPlanCode)},mozosubz_plan_id.eq.${pgSafeFilter(resolvedPlanCode)},bigisub_identifier_id.eq.${pgSafeFilter(resolvedPlanCode)}`)
           .maybeSingle();
         planConfig = pc;
       } catch (_) {}
@@ -1154,16 +1215,16 @@ async function startServer() {
   app.use("/api/data", dataRouter);
 
   // Live Wallet Purchases & Checkout Fulfillments (Unified Bigisub purchase flow)
-  app.post("/api/v1/data/purchase", handleVtuPurchase);
+  app.post("/api/v1/data/purchase", purchaseRateLimit, handleVtuPurchase);
 
   // POST /buy-data and POST /api/vtu/buy-data / POST /api/buy-data (Unified Bigisub purchase flow)
-  app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], handleVtuPurchase);
+  app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], purchaseRateLimit, handleVtuPurchase);
 
   /**
    * 🚀 ENDPOINT: BUY DATA (VENDOR API - DIRECT UUID LINKAGE)
    * Securely handles user balances and dispatches data purchase requests to Bigisub
    */
-  app.post('/api/vendor/buy-data', async (req, res) => {
+  app.post('/api/vendor/buy-data', purchaseRateLimit, async (req, res) => {
     const { email, networkId, planId, phoneNumber, costAmount } = req.body;
 
     try {
@@ -1189,7 +1250,33 @@ async function startServer() {
       }
 
       const currentBalance = parseFloat(profile.wallet_balance !== undefined ? profile.wallet_balance : (profile.balance ?? 0));
-      const chargeAmount = parseFloat(costAmount || 0);
+
+      // SECURITY (audit C5): never trust the client-supplied costAmount. Resolve the
+      // plan's server-side price from services_config (agent/reseller-aware) or reject.
+      let serverPrice = 0;
+      try {
+        const safePlanId = pgSafeFilter(String(planId || ''));
+        const { data: planCfg } = await supabase
+          .from('services_config')
+          .select('selling_price, retail_price, cost_price, reseller_price, agent_price')
+          .or(`bigisub_plan_id.eq.${safePlanId},mozosubz_plan_id.eq.${safePlanId},bigisub_identifier_id.eq.${safePlanId}`)
+          .maybeSingle();
+        const role = (profile as any).role || 'user';
+        if (planCfg) {
+          if (role === 'agent' && planCfg.agent_price) serverPrice = Number(planCfg.agent_price);
+          else if (role === 'reseller' && planCfg.reseller_price) serverPrice = Number(planCfg.reseller_price);
+          else if (planCfg.selling_price) serverPrice = Number(planCfg.selling_price);
+          else if (planCfg.retail_price) serverPrice = Number(planCfg.retail_price);
+        }
+      } catch (priceLookupErr) {
+        console.warn("[Vendor Buy-Data] plan price lookup warning:", priceLookupErr);
+      }
+      // SECURITY: fail closed when the plan cannot be priced server-side.
+      // Never fall back to client-controlled costAmount.
+      const chargeAmount = serverPrice;
+      if (isNaN(chargeAmount) || chargeAmount <= 0) {
+        return res.status(400).json({ success: false, message: "Invalid data plan or missing pricing configuration." });
+      }
 
       if (currentBalance < chargeAmount) {
         return res.status(400).json({ success: false, message: "Insufficient wallet funds." });
@@ -1209,12 +1296,26 @@ async function startServer() {
       let bigisubResponseData: any = null;
       let apiSuccess = false;
 
-      // 3. Check for simulation mode or execute live request
       // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
       if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
         return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
       }
 
+      // SECURITY (audit C5): lock funds BEFORE dispatching to the provider. The old
+      // order purchased first and deducted after, so a failed debit gave away free data.
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: userUUID,
+        amount: chargeAmount,
+      });
+      if (lockErr) {
+        console.error("[Vendor Buy-Data] deduct_balance RPC error:", lockErr.message);
+        return res.status(500).json({ success: false, message: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        return res.status(400).json({ success: false, message: "Insufficient wallet funds." });
+      }
+
+      try {
         const bigisubPayload = {
           network: parseInt(verifiedNetworkId),
           plan: parseInt(planId),
@@ -1234,23 +1335,30 @@ async function startServer() {
         if (bigisubResponseData.status === 'success' || bigisubResponseData.Status === 'successful' || bigisubResponseData.success === true) {
           apiSuccess = true;
         }
-      
+      } catch (provErr: any) {
+        bigisubResponseData = provErr.response?.data || null;
+        console.error("[Vendor Buy-Data] provider dispatch exception:", provErr.message);
+      }
 
-      // 4. If successful, settle accounts via the guarded RPC (never a raw UPDATE — a raw
-      // UPDATE here silently gets its 'balance' column reverted by the guard_balance trigger,
-      // since only deduct_balance()/increment_balance() are allowed to bypass that guard).
-      if (apiSuccess) {
-        const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
+      if (!apiSuccess) {
+        // Provider rejected or failed -- refund the locked funds automatically.
+        const { error: refundErr } = await supabase.rpc('increment_balance', {
           user_uuid: userUUID,
           amount: chargeAmount,
         });
-        if (deductErr || !deductOk) {
-          console.error("[Vendor Buy-Data] deduct_balance failed after successful gateway purchase:", deductErr?.message);
-          return res.status(500).json({
-            success: false,
-            message: "Purchase succeeded at provider but wallet debit failed. Contact support.",
-          });
+        const refunded = !refundErr;
+        if (refundErr) {
+          console.error("[Vendor Buy-Data] auto-refund FAILED -- manual intervention needed:", refundErr.message, { userUUID, chargeAmount });
         }
+        return res.status(400).json({
+          success: false,
+          message: (bigisubResponseData?.error || bigisubResponseData?.message || 'Provider execution failure') +
+            (refunded ? " Your wallet has been refunded." : " Refund failed -- contact support."),
+          refunded,
+        });
+      }
+
+      // Success: funds were locked before dispatch, so only record the transaction here.
         const { data: freshProfile } = await supabase
           .from('profiles').select('wallet_balance').eq('id', userUUID).maybeSingle();
         const remainingFunds = freshProfile?.wallet_balance ?? (currentBalance - chargeAmount);
@@ -1272,10 +1380,6 @@ async function startServer() {
         }
 
         return res.json({ success: true, newBalance: remainingFunds });
-      } else {
-        throw new Error(bigisubResponseData?.error || bigisubResponseData?.message || 'Provider execution failure');
-      }
-
     } catch (error: any) {
       console.error("Critical API Error Handler:", error.response?.data || error.message);
       return res.status(500).json({ 
@@ -1289,7 +1393,7 @@ async function startServer() {
    * 🚀 ENDPOINT: BUY DATA & AIRTIME (VENDOR API)
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
-  app.post('/api/vendor/recharge', async (req, res) => {
+  app.post('/api/vendor/recharge', purchaseRateLimit, async (req, res) => {
     const { email, type, networkId, planId, phoneNumber, amount, costAmount } = req.body;
 
     try {
@@ -1327,7 +1431,6 @@ async function startServer() {
           email: email || '',
           phone_number: phoneNumber || '',
           referral_code: referralCode,
-          transaction_pin: '1234',
           wallet_balance: 0,
           balance: 0
         };
@@ -1356,9 +1459,37 @@ async function startServer() {
 
       // Step B: Choose right balance column dynamically
       const currentBalance = profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : Number(profile.balance || 0);
-      const deductAmount = parseFloat(amount || costAmount || 0);
 
-      if (currentBalance < deductAmount) {
+      // SECURITY (audit C5): for data purchases the charge is the server-side plan
+      // price, never the client-supplied amount. Airtime is amount-based, so the
+      // client-chosen face value is legitimate there.
+      let deductAmount = parseFloat(amount || costAmount || 0);
+      if (type !== 'airtime') {
+        let serverPrice = 0;
+        try {
+          const safePlanId = pgSafeFilter(String(planId || ''));
+          const { data: planCfg } = await supabase
+            .from('services_config')
+            .select('selling_price, retail_price, cost_price, reseller_price, agent_price')
+            .or(`bigisub_plan_id.eq.${safePlanId},mozosubz_plan_id.eq.${safePlanId},bigisub_identifier_id.eq.${safePlanId}`)
+            .maybeSingle();
+          const role = profile.role || 'user';
+          if (planCfg) {
+            if (role === 'agent' && planCfg.agent_price) serverPrice = Number(planCfg.agent_price);
+            else if (role === 'reseller' && planCfg.reseller_price) serverPrice = Number(planCfg.reseller_price);
+            else if (planCfg.selling_price) serverPrice = Number(planCfg.selling_price);
+            else if (planCfg.retail_price) serverPrice = Number(planCfg.retail_price);
+          }
+        } catch (priceLookupErr) {
+          console.warn("[Vendor Recharge] plan price lookup warning:", priceLookupErr);
+        }
+        if (!(serverPrice > 0)) {
+          return res.status(400).json({ success: false, message: "Invalid data plan or missing pricing configuration." });
+        }
+        deductAmount = serverPrice;
+      }
+
+      if (isNaN(deductAmount) || deductAmount <= 0 || currentBalance < deductAmount) {
         return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
       }
 
@@ -1385,6 +1516,20 @@ async function startServer() {
         return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
       }
 
+      // SECURITY (audit C5): lock funds BEFORE dispatching to the provider;
+      // refund automatically if the provider rejects or the call fails.
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: profile.id,
+        amount: deductAmount,
+      });
+      if (lockErr) {
+        console.error("[Vendor Recharge] deduct_balance RPC error:", lockErr.message);
+        return res.status(500).json({ success: false, message: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
+      }
+
       const mozoPayload: any = {
           network: mozoNetworkId,
           mobile_number: phoneNumber,
@@ -1397,13 +1542,14 @@ async function startServer() {
           mozoPayload.amount = parseFloat(amount || costAmount);
         } else {
           // For data plans, ensure planId is the numerical ID provided by Mozosubz's plan codes
-          mozoPayload.plan = parseInt(planId); 
+          mozoPayload.plan = parseInt(planId);
         }
 
         const mozoBaseUrl = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api";
         const endpoint = type === 'airtime' ? 'airtime' : 'data';
         const mozoUrl = `${mozoBaseUrl}/${endpoint}/`;
 
+      try {
         const response = await axios.post(mozoUrl, mozoPayload, {
           headers: {
             'Authorization': `Token ${MOZOSUBZ_API_KEY}`,
@@ -1416,20 +1562,29 @@ async function startServer() {
         if (mozoResponseData.status === 'success' || mozoResponseData.Status === 'successful' || mozoResponseData.success === true || mozoResponseData.status === 'successful') {
           apiSuccess = true;
         }
-      
+      } catch (provErr: any) {
+        mozoResponseData = provErr.response?.data || null;
+        console.error("[Vendor Recharge] provider dispatch exception:", provErr.message);
+      }
 
-      // Step D: If Mozosubz passes, deduct wallet funds via the guarded RPC (never a raw
-      // UPDATE — the guard_balance trigger silently reverts 'balance' on any raw UPDATE
-      // that doesn't go through deduct_balance()/increment_balance()).
-      if (apiSuccess) {
-        const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
+      if (!apiSuccess) {
+        const { error: refundErr } = await supabase.rpc('increment_balance', {
           user_uuid: profile.id,
           amount: deductAmount,
         });
-        if (deductErr || !deductOk) {
-          console.error("[Vendor Recharge] deduct_balance failed after successful gateway purchase:", deductErr?.message);
-          return res.status(500).json({ success: false, message: "Purchase succeeded at provider but wallet debit failed. Contact support." });
+        const refunded = !refundErr;
+        if (refundErr) {
+          console.error("[Vendor Recharge] auto-refund FAILED -- manual intervention needed:", refundErr.message, { userId: profile.id, deductAmount });
         }
+        return res.status(400).json({
+          success: false,
+          message: (mozoResponseData?.error || mozoResponseData?.message || 'Provider rejected request') +
+            (refunded ? " Your wallet has been refunded." : " Refund failed -- contact support."),
+          refunded,
+        });
+      }
+
+      // Success: funds were locked before dispatch, so only log the transaction here.
         const { data: freshProfile } = await supabase
           .from('profiles').select('wallet_balance').eq('id', profile.id).maybeSingle();
         const newBalance = freshProfile?.wallet_balance ?? (currentBalance - deductAmount);
@@ -1453,10 +1608,6 @@ async function startServer() {
         }
 
         return res.json({ success: true, balance: newBalance, message: "Transaction completed successfully!" });
-      } else {
-        throw new Error(mozoResponseData?.error || mozoResponseData?.message || 'Provider rejected request');
-      }
-
     } catch (error: any) {
       console.error("Transaction processing error:", error?.response?.data || error?.message || error);
       const apiErr = error?.response?.data?.error || error?.response?.data?.message || error?.message || "Transaction rejected by operator network center or local limits.";
@@ -1643,7 +1794,7 @@ async function startServer() {
         return res.status(500).json({ error: `Database error: ${queryErr.message}` });
       }
 
-      return res.json(services || []);
+      return res.json(sanitizePublicPlans(services || []));
     } catch (err: any) {
       console.error("[GET /api/services/all Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
@@ -1666,7 +1817,7 @@ async function startServer() {
         return res.status(500).json({ error: `Database error: ${queryErr.message}` });
       }
 
-      const items = services || [];
+      const items = (services || []).filter((r: any) => !isProviderSecretRow(r));
 
       // Format and map items to support both raw database fields and mapped frontend attributes cleanly
       const formattedPlans = items.map(item => {
@@ -1725,6 +1876,9 @@ async function startServer() {
           planType: planCategory
         };
       });
+
+      // SECURITY: wholesale cost_price is never exposed on public endpoints.
+      formattedPlans.forEach((p: any) => { delete p.cost_price; });
 
       // Group outputs logically categorized cleanly by network
       const categorized: Record<string, any[]> = {};
@@ -1798,7 +1952,7 @@ async function startServer() {
       // Group outputs logically if requested
       if (group === 'true') {
         const grouped: Record<string, any[]> = {};
-        for (const item of (services || [])) {
+        for (const item of sanitizePublicPlans(services || [])) {
           const key = String(item.provider_or_network).toUpperCase().trim();
           if (!grouped[key]) {
             grouped[key] = [];
@@ -1808,7 +1962,7 @@ async function startServer() {
         return res.json(grouped);
       }
 
-      return res.json(services || []);
+      return res.json(sanitizePublicPlans(services || []));
     } catch (err: any) {
       console.error("[GET /api/services/:type Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
@@ -1870,7 +2024,7 @@ if (Object.keys(updateData).length <= 1) {
   });
 
   // 4. Secure POST API Route: Process user utility purchases using Bigisub API
-  app.post("/api/purchase/utility", async (req, res) => {
+  app.post("/api/purchase/utility", purchaseRateLimit, async (req, res) => {
     try {
       const {
         service_id,
@@ -2157,7 +2311,7 @@ if (Object.keys(updateData).length <= 1) {
   });
 
   // POST route specifically for handling Airtime VTU Purchases via Bigisub
-  app.post("/api/buy-airtime", async (req, res) => {
+  app.post("/api/buy-airtime", purchaseRateLimit, async (req, res) => {
     try {
       const { network, phone_number, phone, amount } = req.body;
       const finalPhone  = phone_number || phone;
@@ -2777,7 +2931,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   // Outdated Monnify Webhook and Admin endpoints completely deleted
 
   // Real VTU Purchase Route with Database Sync & Agent-Scale Cashback (Bigisub Migration)
-  app.post("/api/vtu/purchase", async (req, res) => {
+  app.post("/api/vtu/purchase", purchaseRateLimit, async (req, res) => {
     const { 
       userId, 
       networkId, 
@@ -2792,15 +2946,14 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       plan 
     } = req.body;
     
-    const finalUserId = userId;
     const finalType = requestType || type || "data";
     const finalNetwork = networkId || network;
     const finalPlan = planId || plan;
     const finalPhone = phone || phoneNumber;
-    const finalAmount = Number(amount !== undefined ? amount : req.body.amount);
+    let finalAmount = Number(amount !== undefined ? amount : req.body.amount);
     if (isNaN(finalAmount) || finalAmount <= 0) return res.status(400).json({ error: "Invalid amount. Must be greater than zero." });
 
-    if (!finalUserId || !finalPhone || !finalAmount || !finalNetwork) {
+    if (!finalPhone || !finalAmount || !finalNetwork) {
       return res.status(400).json({ error: "Missing required checkout parameters: userId, network, phone, and amount are required." });
     }
 
@@ -2811,12 +2964,23 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
 
     try {
-      const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
+      // SECURITY (audit C4): this endpoint previously trusted `userId` from the request
+      // body, letting anyone debit ANY wallet at ANY price. Identity must come from a
+      // verified session token only; a body-supplied userId that mismatches it is rejected.
+      let finalUserId: string;
+      let pgUuid: string;
+      let profile: any;
+      try {
+        const auth = await getAuthenticatedUserBalance(req);
+        finalUserId = auth.userId;
+        pgUuid = auth.pgUuid;
+        profile = auth.profile;
+      } catch (authErr: any) {
+        return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
+      }
       if (!pgUuid) {
         return res.status(400).json({ error: "Invalid user ID format." });
       }
-
-      const profile = await getOrCreateProfile(pgUuid, finalUserId);
       if (!profile) {
         return res.status(404).json({ error: "User profile not found in Supabase database." });
       }
@@ -2831,10 +2995,11 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       let planConfig: any = null;
       if (finalType === 'data' && finalPlan) {
         try {
+          const safePlan = pgSafeFilter(finalPlan);
           const { data: pc } = await supabase
             .from('services_config')
-            .select('provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name')
-            .or(`mozosubz_plan_id.eq.${finalPlan},bigisub_identifier_id.eq.${finalPlan},bigisub_plan_id.eq.${finalPlan},item_name.eq.${finalPlan},plan_name.eq.${finalPlan},name.eq.${finalPlan}`)
+            .select('provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name, selling_price, retail_price, cost_price, reseller_price, agent_price')
+            .or(`mozosubz_plan_id.eq.${safePlan},bigisub_identifier_id.eq.${safePlan},bigisub_plan_id.eq.${safePlan},item_name.eq.${safePlan},plan_name.eq.${safePlan},name.eq.${safePlan}`)
             .maybeSingle();
           planConfig = pc;
         } catch (_) { /* fall through with no config -- provider call will still attempt a best-effort guess */ }
@@ -2851,6 +3016,24 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       }
 
       const resolvedPlanCode = planConfig?.mozosubz_plan_id || planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || finalPlan;
+
+      // SECURITY (audit C4): server-side price enforcement for data -- the client's
+      // claimed amount is never trusted. Mirrors handleVtuPurchase.
+      if (finalType === 'data') {
+        let serverPrice = 0;
+        const role = profile?.role || 'user';
+        if (planConfig) {
+          if (role === 'agent' && planConfig.agent_price) serverPrice = Number(planConfig.agent_price);
+          else if (role === 'reseller' && planConfig.reseller_price) serverPrice = Number(planConfig.reseller_price);
+          else if (planConfig.selling_price) serverPrice = Number(planConfig.selling_price);
+          else if (planConfig.retail_price) serverPrice = Number(planConfig.retail_price);
+        }
+        if (serverPrice > 0) {
+          finalAmount = serverPrice;
+        } else {
+          return res.status(400).json({ error: "Invalid data plan or missing pricing configuration." });
+        }
+      }
 
       // LOCK FUNDS FIRST via the atomic deduct_balance() RPC (race-safe) before calling the provider.
       const localRef = `TRX-VTUP-${Date.now()}`;
@@ -3355,7 +3538,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   });
 
   // POST '/api/buy-utility' -> Validates service exists in services_config, computes selling price, deducts from Supabase profiles, and drops payload directly to Bigisub
-  app.post("/api/buy-utility", async (req, res) => {
+  app.post("/api/buy-utility", purchaseRateLimit, async (req, res) => {
     const { userId, email, type, provider, amount, number, plan, meter_type } = req.body;
 
     // Validate inputs
@@ -3449,8 +3632,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
       // Mozosubz utility flow: atomic debit before provider call, automatic refund on rejection.
       if (reqType === 'cable' || reqType === 'electricity') {
-        const { data: keyRow } = await supabase.from('services_config').select('item_name').eq('bigisub_identifier_id', 'mozosubz_api_key').maybeSingle();
-        const mozKey = process.env.MOZOSUBS_CONNECT_KEY || process.env.MOZOSUBZ_CONNECT_KEY || process.env.MOZOSUBZ_API_KEY || keyRow?.item_name || '';
+        const mozKey = await resolveMozosubzApiKey();
         if (!mozKey) return res.status(503).json({ error: 'Mozosubz provider is not configured.' });
         const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
         if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
@@ -3818,73 +4000,35 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     });
   });
 
-  // Daily Bonus Lucky Wheels Reward Endpoint
-  app.post("/api/vtu/daily-bonus", async (req, res) => {
-    const { userId, wonAmount } = req.body;
-    if (!userId || !wonAmount || wonAmount <= 0) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    // SECURITY: require a verified session matching userId -- previously anyone could credit any
-    // wallet with any "wonAmount" with zero auth and zero server-side proof a spin ever happened.
-    const verifiedCallerId = await verifyCallerUserId(req);
-    if (!verifiedCallerId || verifiedCallerId !== userId) {
-      return res.status(401).json({ error: "Unauthorized: session does not match the target account." });
-    }
-
-    // SECURITY: never trust the client's claimed prize amount uncapped -- clamp to the maximum
-    // a legitimate daily spin could ever award, so a manipulated client can't mint arbitrary funds.
-    const MAX_DAILY_BONUS = 500;
-    if (Number(wonAmount) > MAX_DAILY_BONUS) {
-      return res.status(400).json({ error: `Invalid bonus amount. Maximum daily bonus is ₦${MAX_DAILY_BONUS}.` });
-    }
-
-    try {
-      const verifiedUserId = await verifyCallerUserId(req);
-      if (!verifiedUserId || verifiedUserId !== userId) {
-        return res.status(401).json({ error: "Unauthorized." });
-      }
-      const pgUuid = ensureUUID(userId);
-
-      // Determine bonus amount (random wheel spin, max ₦500)
-      const bonusOptions = [10, 20, 50, 100, 200, 500];
-      const wonAmount = bonusOptions[Math.floor(Math.random() * bonusOptions.length)];
-
-      const { data: updated, error: rpcErr } = await supabase.rpc('increment_balance', {
-        user_uuid: pgUuid, amount: wonAmount
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-
-      await supabase.from('transactions').insert({
-        user_id: pgUuid, type: 'bonus',
-        amount: wonAmount, status: 'completed',
-        description: `Daily bonus wheel reward of ₦${wonAmount}`,
-        created_at: new Date().toISOString()
-      });
-
-      res.json({ success: true, wonAmount, message: `You won ₦${wonAmount} from today's bonus wheel! 🎉` });
-    } catch (err: any) {
-      console.error("[Daily Bonus Api Exception]:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // ── Daily Bonus Lucky Wheel: REMOVED ──────────────────────────────────────
+  // Removed at owner request. A wallet-crediting "spin the wheel" endpoint is
+  // inherently a money-minting surface (it previously could be fared without a
+  // per-day cap, and even rate-limited it remains an unbacked credit path with
+  // no real payment behind it). Any future reward should be granted server-side
+  // against a real, verifiable event -- never via an HTTP endpoint that credits
+  // increment_balance directly.
 
   // AI Chat Support Endpoint
-  app.post("/api/chat", async (req, res) => {
-    const { message, userId } = req.body;
-    
+  app.post("/api/chat", rateLimit(20, 60_000), async (req, res) => {
+    const { message } = req.body;
+
     try {
       let context = "You are Noroya, the friendly AI assistant for Noroya Data, a VTU platform in Nigeria.";
-      
-      if (userId) {
-        const { data: userDoc } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
-        // FIX: Supabase results don't have a `.exists` property (that's a Firestore
-        // pattern). `userDoc` is either the row object or null — check truthiness
-        // directly, or this throws "Cannot read properties of null" whenever no
-        // matching profile is found.
+
+      // SECURITY (audit M4): identity comes ONLY from a verified session -- the old code
+      // accepted any body-supplied userId and leaked that user's name + wallet balance
+      // into the AI prompt (extractable via prompt injection).
+      const verifiedUserId = await verifyCallerUserId(req);
+      if (verifiedUserId) {
+        const { data: userDoc } = await supabase
+          .from('profiles')
+          .select('name, username, wallet_balance, balance')
+          .eq('id', ensureUUID(verifiedUserId))
+          .maybeSingle();
         if (userDoc) {
-          const userData = userDoc;
-          context += ` The user's name is ${userData?.fullName} and their current wallet balance is ₦${userData?.balance}.`;
+          const displayName = userDoc.name || userDoc.username || 'the user';
+          const balance = Number(userDoc.wallet_balance ?? userDoc.balance ?? 0);
+          context += ` The user's name is ${displayName} and their current wallet balance is ₦${balance}.`;
         }
       }
 
@@ -4156,40 +4300,23 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           return;
         }
 
-        // Credit via the guarded RPC only (never a raw UPDATE fallback — that fallback was
-        // another source of balance-column drift and has been removed entirely).
-        const { error: rpcErr } = await supabase.rpc('increment_balance', {
-          user_uuid: profile.id,
-          amount: amount
+        // SECURITY (audit H5/H6): credit via the insert-first idempotent RPC so a
+        // duplicate or replayed webhook delivery can never double-credit a wallet.
+        const { data: creditResult, error: rpcErr } = await supabase.rpc('process_webhook_credit_by_user', {
+          p_reference: String(txId),
+          p_user_uuid: profile.id,
+          p_amount: amount,
+          p_gateway: 'flutterwave',
         });
         if (rpcErr) {
-          console.error(`[Flutterwave Webhook Background] increment_balance RPC FAILED -- manual intervention needed:`, rpcErr.message, { profileId: profile.id, amount });
+          console.error(`[Flutterwave Webhook Background] credit RPC FAILED -- manual intervention needed:`, rpcErr.message, { profileId: profile.id, amount, txId });
           return;
         }
-        console.log(`[Flutterwave Webhook Background] Balance incremented via RPC for user ID: ${profile.id}`);
-
-        // 5. LOG TRANSACTION: Insert audit log into 'transactions' history table
-        const { error: insertErr } = await supabase
-          .from("transactions")
-          .insert({
-            user_email: customerEmail,
-            amount: amount,
-            type: "deposit",
-            status: "success",
-            reference: String(txId),
-            // Compatibility fields to make sure the app's history dashboard also displays it
-            user_id: profile.id,
-            platform: "flutterwave",
-            payment_method: "flutterwave",
-            description: `Flutterwave deposit of NGN ${amount}`,
-            created_at: new Date().toISOString(),
-          });
-
-        if (insertErr) {
-          console.warn("[Flutterwave Webhook Background] Error inserting transactions audit log:", insertErr.message);
-        } else {
-          console.log(`[Flutterwave Webhook Background] Audit log created successfully for reference: ${txId}`);
+        if (creditResult?.status === 'already_processed') {
+          console.log(`[Flutterwave Webhook Background] Reference ${txId} already credited. Skipping.`);
+          return;
         }
+        console.log(`[Flutterwave Webhook Background] Wallet credited via idempotent RPC for user ID: ${profile.id} (ref ${txId})`);
 
       } catch (bgExc: any) {
         console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
@@ -4243,34 +4370,23 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
           console.log(`[Mozosubz Webhook] Processing success event. User: ${user_id}, Amount: ${numericAmount}, Ref: ${reference}`);
 
-          // Credit via the guarded RPC only (never a raw UPDATE fallback — that fallback was
-          // another source of balance-column drift and has been removed entirely).
-          const { error: rpcErr } = await supabase.rpc('increment_balance', {
-            user_uuid: pgUuid,
-            amount: numericAmount
+          // SECURITY (audit H6): idempotent, insert-first credit keyed on the provider
+          // reference (or a hash of the payload when the provider omits one), so replaying
+          // the same signed webhook can no longer credit the wallet repeatedly.
+          const idempotencyRef = reference
+            || ('mozo-' + crypto.createHash('sha256').update(safeJsonStringify(data || {})).digest('hex').slice(0, 40));
+          const { data: creditResult, error: rpcErr } = await supabase.rpc('process_webhook_credit_by_user', {
+            p_reference: idempotencyRef,
+            p_user_uuid: pgUuid,
+            p_amount: numericAmount,
+            p_gateway: 'mozosubz',
           });
           if (rpcErr) {
-            console.error(`[Mozosubz Webhook] increment_balance RPC FAILED -- manual intervention needed:`, rpcErr.message, { pgUuid, numericAmount });
+            console.error(`[Mozosubz Webhook] credit RPC FAILED -- manual intervention needed:`, rpcErr.message, { pgUuid, numericAmount, idempotencyRef });
+          } else if (creditResult?.status === 'already_processed') {
+            console.log(`[Mozosubz Webhook] Reference ${idempotencyRef} already credited. Skipping.`);
           } else {
-            console.log(`[Mozosubz Webhook] Balance incremented via RPC for user ID: ${pgUuid}`);
-          }
-
-          // Insert into Supabase transactions table
-          const txId = `mozo_webhook_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
-          try {
-            await supabase.from('transactions').insert({
-              user_id: pgUuid,
-              type: type || 'funding',
-              amount: numericAmount,
-              reference: reference || `MOZO-REF-${Date.now()}`,
-              status: 'success',
-              platform: 'mozosubz',
-              description: `Mozosubz wallet funding of ₦${numericAmount}`,
-              created_at: new Date().toISOString(),
-            });
-            console.log(`[Mozosubz Webhook] Transaction logged successfully: ${reference}`);
-          } catch (txErr: any) {
-            console.warn("[Mozosubz Webhook] Failed to log transaction in database:", txErr.message || txErr);
+            console.log(`[Mozosubz Webhook] Balance credited via idempotent RPC for user ID: ${pgUuid} (ref ${idempotencyRef})`);
           }
         } else {
           console.warn("[Mozosubz Webhook] Missing user_id in data payload.");
@@ -4355,7 +4471,8 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         .range(offset, offset + limit - 1);
 
       if (search) {
-        query = query.or(`email.ilike.%${search}%,full_name.ilike.%${search}%,phone_number.ilike.%${search}%`);
+        const safeSearch = pgSafeFilter(search);
+        query = query.or(`email.ilike.%${safeSearch}%,full_name.ilike.%${safeSearch}%,phone_number.ilike.%${safeSearch}%`);
       }
 
       const { data, error, count } = await query;
@@ -4530,7 +4647,8 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       if (from) query = query.gte('created_at', from);
       if (to) query = query.lte('created_at', to);
       if (search) {
-        query = query.or(`user_email.ilike.%${search}%,reference.ilike.%${search}%,phone.ilike.%${search}%,recipient.ilike.%${search}%`);
+        const safeSearch = pgSafeFilter(search);
+        query = query.or(`user_email.ilike.%${safeSearch}%,reference.ilike.%${safeSearch}%,phone.ilike.%${safeSearch}%,recipient.ilike.%${safeSearch}%`);
       }
 
       const { data, error, count } = await query;
