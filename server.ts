@@ -202,7 +202,6 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
         username: username,
         phone_number: authUser.phone || "",
         referral_code: referralCode,
-        transaction_pin: "0000",
         // SECURITY: never seed free money (was 10000).
         wallet_balance: 0,
         balance: 0,
@@ -234,7 +233,6 @@ const getOrCreateProfile = async (pgUuid: string, finalUserId: string): Promise<
       username: `user_${Date.now()}`,
       phone_number: "",
       referral_code: referralCode,
-      transaction_pin: "0000",
       wallet_balance: 0,
       balance: 0,
       email: ""
@@ -598,8 +596,7 @@ async function startServer() {
             username: newUsername,
             phone_number: "",
             referral_code: referralCode,
-            transaction_pin: "0000",
-            wallet_balance: 0,
+                wallet_balance: 0,
             balance: 0,
             email: userEmail || ""
           };
@@ -615,8 +612,7 @@ async function startServer() {
               username: newUsername,
               phone_number: "",
               referral_code: referralCode,
-              transaction_pin: "0000",
-              wallet_balance: 0
+                    wallet_balance: 0
             };
             const { error: insertErr2 } = await supabase.from('profiles').insert(payload2);
             insertErr = insertErr2;
@@ -1435,7 +1431,6 @@ async function startServer() {
           email: email || '',
           phone_number: phoneNumber || '',
           referral_code: referralCode,
-          transaction_pin: '0000',
           wallet_balance: 0,
           balance: 0
         };

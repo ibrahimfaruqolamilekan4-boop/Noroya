@@ -163,12 +163,18 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
         phone_number: userPhone || '',
         role: isAdminEmail ? 'admin' : 'user',
         referral_code: referralCode,
-        transaction_pin: transactionPin || '0000',
         wallet_balance: existingBalance,
         balance: existingBalance,
         available_balance: existingBalance,
         referred_by: referredByUid || null,
       }, { onConflict: 'id' });
+
+      // SECURITY: the PIN is hashed server-side (bcrypt) via this RPC -- the
+      // client never writes the transaction_pin column directly.
+      if (transactionPin) {
+        const { error: pinErr } = await supabase.rpc('set_transaction_pin', { p_pin: transactionPin });
+        if (pinErr) console.warn('set_transaction_pin error:', pinErr.message);
+      }
     } catch (sbErr: any) {
       console.warn('initializeUserProfile error:', sbErr.message);
     }

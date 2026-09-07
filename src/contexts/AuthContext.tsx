@@ -162,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: ((sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : (sbProfile?.role || sbProfile?.user_role || 'user')),
           referralCode: sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phone_number || '',
-          transactionPin: sbProfile?.transaction_pin || '',
+          transactionPin: '', // PIN is stored as a server-side bcrypt hash; never expose it client-side
           createdAt: sbProfile?.createdAt || sbProfile?.created_at || new Date().toISOString()
         };
 
@@ -190,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   balance: latestBalance,
                   wallet_balance: latestBalance,
                   phoneNumber: data.phone_number || base.phoneNumber,
-                  transactionPin: data.transaction_pin || base.transactionPin,
+                  transactionPin: base.transactionPin, // hash never leaves the server
                 };
                 localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...updatedProfile, transactionPin: undefined }));
                 return updatedProfile;
@@ -225,7 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     balance: latestBalance,
                     wallet_balance: latestBalance,
                     phoneNumber: updated.phone_number || base.phoneNumber,
-                    transactionPin: updated.transaction_pin || base.transactionPin,
+                    transactionPin: base.transactionPin, // hash never leaves the server
                   };
                   localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...newProfile, transactionPin: undefined }));
                   return newProfile;

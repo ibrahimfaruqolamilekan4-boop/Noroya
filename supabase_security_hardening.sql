@@ -292,3 +292,157 @@ WHERE bigisub_identifier_id IN ('mozosubz_api_key', 'bigisub_api_key', 'mozosubz
 --     supabase.rpc('increment_balance', {user_uuid:'<uuid>', amount:1})
 --     -> must now fail with a permission/function-privilege error.
 -- ============================================================================
+
+-- ============================================================================
+-- SECTION 8 (added after live-DB audit): TRANSACTION PIN + TRANSFER FUNDS
+-- ============================================================================
+
+-- 8.1 bcrypt hashing for the transaction PIN. The transaction_pin column now
+--     stores a bcrypt hash, never plaintext. Existing plaintext PINs are
+--     migrated in place so users keep working with the same 4-digit PIN.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+UPDATE profiles
+   SET transaction_pin = crypt(transaction_pin, gen_salt('bf'))
+ WHERE transaction_pin IS NOT NULL AND transaction_pin <> ''
+   AND transaction_pin NOT LIKE '$2%';
+
+ALTER TABLE public.profiles ALTER COLUMN transaction_pin SET DEFAULT NULL;
+
+-- 8.2 set_transaction_pin RPC: authenticated users set their OWN PIN; the
+--     hash is computed server-side. The client never writes the column.
+CREATE OR REPLACE FUNCTION public.set_transaction_pin(p_pin text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'public', 'extensions'
+AS $function$
+DECLARE
+  v_uid uuid := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN
+    RETURN jsonb_build_object('status','error','message','Not authenticated');
+  END IF;
+  IF p_pin IS NULL OR p_pin !~ '^[0-9]{4}$' THEN
+    RETURN jsonb_build_object('status','error','message','PIN must be exactly 4 digits');
+  END IF;
+  PERFORM set_config('app.bypass_balance_guard','true',true);
+  UPDATE profiles SET transaction_pin = crypt(p_pin, gen_salt('bf')), updated_at = now()
+   WHERE id = v_uid;
+  RETURN jsonb_build_object('status','success');
+END;
+$function$;
+REVOKE EXECUTE ON FUNCTION set_transaction_pin(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION set_transaction_pin(text) TO authenticated;
+
+-- 8.3 Harden the balance/PIN guard trigger: block client-side writes to ALL
+--     balance columns AND transaction_pin. Backend (service_role / SECURITY
+--     DEFINER / superuser) and set_transaction_pin (bypass GUC) pass through.
+CREATE OR REPLACE FUNCTION public.prevent_direct_balance_update()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public', 'extensions'
+AS $function$
+BEGIN
+  IF COALESCE(current_setting('app.bypass_balance_guard', true), '') = 'true'
+     OR COALESCE(current_setting('role', true), '') IN ('postgres', 'service_role')
+     OR COALESCE(session_user::text, '') IN ('supabase_admin', 'postgres')
+     OR COALESCE(current_setting('is_superuser', true), '') = 'on' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.transaction_pin IS DISTINCT FROM OLD.transaction_pin THEN
+    RAISE EXCEPTION 'Transaction PIN can only be changed via set_transaction_pin.';
+  END IF;
+
+  IF NEW.wallet_balance    IS DISTINCT FROM OLD.wallet_balance    THEN NEW.wallet_balance    := OLD.wallet_balance;    END IF;
+  IF NEW.balance           IS DISTINCT FROM OLD.balance           THEN NEW.balance           := OLD.balance;           END IF;
+  IF NEW.available_balance IS DISTINCT FROM OLD.available_balance THEN NEW.available_balance := OLD.available_balance; END IF;
+  RETURN NEW;
+END;
+$function$;
+
+-- 8.4 transfer_funds: drop the ambiguous referral-code overload (the app uses
+--     the uuid form) and require the sender's transaction PIN, bcrypt-checked
+--     server-side inside the same row lock.
+DROP FUNCTION IF EXISTS public.transfer_funds(text, numeric, text);
+DROP FUNCTION IF EXISTS public.transfer_funds(uuid, numeric, text, text);
+
+CREATE OR REPLACE FUNCTION public.transfer_funds(
+    recipient_uid uuid, p_amount numeric, p_reference text,
+    p_note text DEFAULT ''::text, p_pin text DEFAULT NULL::text)
+ RETURNS json
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'public', 'extensions'
+AS $function$
+DECLARE
+  v_sender_id uuid := auth.uid();
+  v_sender_balance numeric;
+  v_pin_hash text;
+  v_recipient_exists boolean;
+BEGIN
+  IF v_sender_id IS NULL THEN
+    RETURN json_build_object('status','error','message','Not authenticated');
+  END IF;
+  IF recipient_uid IS NULL OR recipient_uid = v_sender_id OR p_amount IS NULL OR p_amount <= 0 THEN
+    RETURN json_build_object('status','error','message','Invalid recipient or amount');
+  END IF;
+  IF NULLIF(trim(p_reference), '') IS NULL THEN
+    RETURN json_build_object('status','error','message','Reference is required');
+  END IF;
+  IF EXISTS (SELECT 1 FROM transactions WHERE reference = p_reference) THEN
+    RETURN json_build_object('status','error','message','Duplicate transaction');
+  END IF;
+
+  SELECT wallet_balance, transaction_pin INTO v_sender_balance, v_pin_hash
+  FROM profiles WHERE id = v_sender_id FOR UPDATE;
+
+  -- SECURITY: transfers require the sender's 4-digit transaction PIN.
+  IF v_pin_hash IS NULL OR v_pin_hash = '' THEN
+    RETURN json_build_object('status','error','message','Set a transaction PIN in Settings before making transfers.');
+  END IF;
+  IF p_pin IS NULL OR p_pin !~ '^[0-9]{4}$' THEN
+    RETURN json_build_object('status','error','message','Transaction PIN required (4 digits).');
+  END IF;
+  IF crypt(p_pin, v_pin_hash) <> v_pin_hash THEN
+    RETURN json_build_object('status','error','message','Invalid transaction PIN.');
+  END IF;
+
+  SELECT EXISTS (SELECT 1 FROM profiles WHERE id = recipient_uid) INTO v_recipient_exists;
+  IF NOT v_recipient_exists THEN
+    RETURN json_build_object('status','error','message','Recipient not found');
+  END IF;
+  IF v_sender_balance IS NULL OR v_sender_balance < p_amount THEN
+    RETURN json_build_object('status','insufficient_funds','balance',COALESCE(v_sender_balance,0),'required',p_amount);
+  END IF;
+
+  PERFORM 1 FROM profiles WHERE id = recipient_uid FOR UPDATE;
+  UPDATE profiles SET wallet_balance = wallet_balance - p_amount,
+    balance = balance - p_amount,
+    available_balance = GREATEST(available_balance - p_amount, 0), updated_at = now()
+  WHERE id = v_sender_id;
+  UPDATE profiles SET wallet_balance = wallet_balance + p_amount,
+    balance = balance + p_amount,
+    available_balance = available_balance + p_amount, updated_at = now()
+  WHERE id = recipient_uid;
+
+  INSERT INTO transactions(user_id, type, amount, status, reference, description, created_at)
+  VALUES(v_sender_id, 'transfer_out', p_amount, 'success', p_reference,
+    COALESCE(NULLIF(p_note,''),'Wallet transfer sent'), now());
+  INSERT INTO transactions(user_id, type, amount, status, reference, description, created_at)
+  VALUES(recipient_uid, 'transfer_in', p_amount, 'success', p_reference,
+    COALESCE(NULLIF(p_note,''),'Wallet transfer received'), now());
+
+  RETURN json_build_object('status','success','amount',p_amount);
+END;
+$function$;
+REVOKE EXECUTE ON FUNCTION transfer_funds(uuid, numeric, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION transfer_funds(uuid, numeric, text, text, text) TO authenticated, service_role;
+
+-- 8.5 Verify:
+--   SELECT count(*) FROM profiles WHERE transaction_pin NOT LIKE '$2%'
+--     AND transaction_pin IS NOT NULL AND transaction_pin <> '';   -- must be 0
+--   Browser (logged-in user): supabase.rpc('transfer_funds', {...}) without
+--     p_pin -> "Transaction PIN required (4 digits)."
+-- ============================================================================
