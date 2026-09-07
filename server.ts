@@ -1275,7 +1275,9 @@ async function startServer() {
       } catch (priceLookupErr) {
         console.warn("[Vendor Buy-Data] plan price lookup warning:", priceLookupErr);
       }
-      const chargeAmount = serverPrice > 0 ? serverPrice : parseFloat(costAmount || 0);
+      // SECURITY: fail closed when the plan cannot be priced server-side.
+      // Never fall back to client-controlled costAmount.
+      const chargeAmount = serverPrice;
       if (isNaN(chargeAmount) || chargeAmount <= 0) {
         return res.status(400).json({ success: false, message: "Invalid data plan or missing pricing configuration." });
       }
