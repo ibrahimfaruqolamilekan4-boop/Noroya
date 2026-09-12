@@ -1,13 +1,13 @@
 {
-  "name": "Noroya Data - VTU & Data Bundles",
-  "short_name": "Noroya Data",
-  "description": "Buy data, airtime, cable TV, electricity and more instantly with Noroya Data.",
+  "name": "NORODATA - VTU & Data Bundles",
+  "short_name": "NORODATA",
+  "description": "Buy data, airtime, cable TV, electricity and more instantly with NORODATA.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#DBE2EF",
-  "theme_color": "#2563EB",
+  "background_color": "#EDEDE9",
+  "theme_color": "#166534",
   "icons": [
     {
       "src": "/icons/icon-192.png",
