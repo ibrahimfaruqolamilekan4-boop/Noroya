@@ -29,6 +29,23 @@
     <link rel="icon" type="image/png" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
+    <!-- Capture beforeinstallprompt BEFORE the app bundle loads: Chrome fires
+         it once early during page load (often before React mounts) and
+         re-fires it when the user clicks the browser's own "Install app"
+         entry, so the install banner must be able to adopt the event later. -->
+    <script>
+      window.__NORODATA_INSTALL__ = { prompt: null, firedCount: 0, installed: false };
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        window.__NORODATA_INSTALL__.prompt = e;
+        window.__NORODATA_INSTALL__.firedCount += 1;
+      }, true);
+      window.addEventListener("appinstalled", function () {
+        window.__NORODATA_INSTALL__.installed = true;
+        window.__NORODATA_INSTALL__.prompt = null;
+      }, true);
+    </script>
+
     <!-- iPhone / iOS "Add to Home Screen" support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
