@@ -310,7 +310,12 @@ export function UserManagementTab() {
         method: 'POST',
         body: JSON.stringify({ amount: Number(adjustAmount), direction: adjustDirection, reason: adjustReason.trim() }),
       });
-      setMessage(`Success! New balance: ${formatCurrency(Number(json.newBalance || 0))}`);
+      if (json.warning) {
+        // Balance changed but a ledger/audit write failed — never hide this.
+        setMessage(`⚠ ${json.warning}`);
+      } else {
+        setMessage(`Success! New balance: ${formatCurrency(Number(json.newBalance || 0))}`);
+      }
       setAdjustAmount('');
       setAdjustReason('');
       await openUser(selectedUser);

@@ -2,14 +2,26 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, X, Smartphone, Share, PlusSquare, MoreVertical } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
-  readonly platforms: string[];
-  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
   prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+interface InstallGlobalState {
+  prompt: BeforeInstallPromptEvent | null;
+  firedCount: number;
+  installed?: boolean;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __NORODATA_INSTALL__: InstallGlobalState | undefined;
 }
 
 const DISMISS_KEY = 'NORODATA_pwa_dismissed';
 const IOS_DISMISS_KEY = 'NORODATA_ios_dismissed';
 const INSTALLED_KEY = 'NORODATA_pwa_installed';
+// Re-show the banner after a week instead of suppressing it forever.
+const DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isRunningStandalone(): boolean {
   return (
@@ -19,20 +31,38 @@ function isRunningStandalone(): boolean {
   );
 }
 
+function isDismissedRecently(key: string): boolean {
+  const raw = localStorage.getItem(key);
+  if (!raw) return false;
+  const dismissedAt = Number(raw);
+  // Legacy boolean "true" values suppressed the banner forever — expire them
+  // once so users who dismissed it during earlier testing see it again.
+  if (!Number.isFinite(dismissedAt)) {
+    localStorage.removeItem(key);
+    return false;
+  }
+  if (Date.now() - dismissedAt > DISMISS_TTL_MS) {
+    localStorage.removeItem(key);
+    return false;
+  }
+  return true;
+}
+
 type Platform = 'ios' | 'android' | 'desktop';
 
 function detectPlatform(): Platform {
   const userAgent = window.navigator.userAgent.toLowerCase();
   if (/iphone|ipad|ipod/.test(userAgent)) return 'ios';
+  // Modern iPadOS Safari reports a desktop "Macintosh" UA; touch points give it away.
+  if (/macintosh/.test(userAgent) && navigator.maxTouchPoints > 1) return 'ios';
   if (/android/.test(userAgent)) return 'android';
   return 'desktop';
 }
 
 export function PWAInstallBanner() {
-  // Keep the latest deferred event in a ref: Chrome re-fires
-  // `beforeinstallprompt` when the user clicks the browser's own install
-  // entry points (e.g. the ⋮ menu "Install app"), and prompt() must be
-  // called on the NEWEST event.
+  // Latest deferred event. Kept in a ref because Chrome only allows prompt()
+  // on the NEWEST beforeinstallprompt event, and it re-fires that event when
+  // the user clicks the browser's own install entry (⋮ menu / mini-infobar).
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const [showBanner, setShowBanner] = useState(false);
   const [platform, setPlatform] = useState<Platform>('desktop');
@@ -42,33 +72,42 @@ export function PWAInstallBanner() {
     const detected = detectPlatform();
     setPlatform(detected);
 
-    // Already running as an installed app: render nothing, ever.
+    const installState: InstallGlobalState =
+      window.__NORODATA_INSTALL__ ?? (window.__NORODATA_INSTALL__ = { prompt: null, firedCount: 0 });
+
+    // Already installed (now or in a previous session): never nag again.
+    if (installState.installed) localStorage.setItem(INSTALLED_KEY, 'true');
     if (isRunningStandalone() || localStorage.getItem(INSTALLED_KEY) === 'true') {
       return;
     }
 
-    const isDismissedFor = (p: Platform) =>
-      localStorage.getItem(p === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY) === 'true';
+    const dismissKey = detected === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY;
+    const revealBanner = () => {
+      if (!isDismissedRecently(dismissKey)) setShowBanner(true);
+    };
+
+    // Adopt the prompt the inline <head> script captured before React mounted
+    // (Chrome usually fires beforeinstallprompt once during initial page load).
+    if (installState.prompt) {
+      deferredPromptRef.current = installState.prompt;
+      revealBanner();
+    }
 
     const handleBeforeInstallPrompt = (e: Event) => {
-      // We manage the install UX ourselves, so always defer the event.
       e.preventDefault();
       const evt = e as BeforeInstallPromptEvent;
       const isRefire = deferredPromptRef.current !== null;
       deferredPromptRef.current = evt;
-
       if (isRefire) {
         // The user just clicked the browser's own "Install app" entry
-        // (Chrome menu / infobar). Since we cancel this event, the browser
-        // will NOT show its own dialog -- we must open it immediately,
-        // otherwise the click silently does nothing.
+        // (Chrome menu / infobar). We cancel this event, so the browser will
+        // NOT show its own dialog — we must open it immediately, otherwise
+        // the click silently does nothing.
         evt.prompt().catch(() => {});
+        revealBanner();
         return;
       }
-
-      if (!isDismissedFor(detected)) {
-        setShowBanner(true);
-      }
+      revealBanner();
     };
 
     const handleAppInstalled = () => {
@@ -81,27 +120,22 @@ export function PWAInstallBanner() {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // iOS never fires beforeinstallprompt -- show the manual instructions
-    // banner there (unless the user dismissed it before).
-    if (detected === 'ios' && !isDismissedFor('ios')) {
-      setShowBanner(true);
+    // iOS never fires beforeinstallprompt — always offer the manual
+    // "Add to Home Screen" steps banner there.
+    if (detected === 'ios') {
+      revealBanner();
+    } else if (detected === 'android' && !deferredPromptRef.current) {
+      // Some Android browsers never fire the event even though the site is
+      // installable from their own menu. Fall back to showing the banner
+      // (its Install button then opens the right manual instructions).
+      window.setTimeout(() => {
+        if (!deferredPromptRef.current && !isRunningStandalone()) revealBanner();
+      }, 3000);
     }
-
-    const handleOpenInstall = () => {
-      const deferredPrompt = deferredPromptRef.current;
-      if (deferredPrompt && detected !== 'ios') {
-        void triggerPrompt();
-      } else {
-        setShowBanner(true);
-        setShowInstructionsModal(true);
-      }
-    };
-    window.addEventListener('open-pwa-install', handleOpenInstall);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
-      window.removeEventListener('open-pwa-install', handleOpenInstall);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -115,40 +149,49 @@ export function PWAInstallBanner() {
       if (outcome === 'accepted') {
         setShowBanner(false);
       } else {
-        // Chrome only allows one prompt() per page load; stop nagging and
-        // fall back to the manual instructions instead.
+        // Chrome only allows one prompt() per page load; fall back to the
+        // manual steps instead of failing silently.
         setShowBanner(false);
         setShowInstructionsModal(true);
       }
-      // Keep the newest event only if it has not been answered yet.
       deferredPromptRef.current = null;
     } catch {
-      // prompt() can reject if a prompt is already showing or the event is
-      // stale; the manual instructions are the safe fallback.
       setShowInstructionsModal(true);
     }
   };
+
+  // window.open-pwa-install (dispatched by app menus, if any) installs
+  // directly when possible, otherwise shows the banner/instructions.
+  useEffect(() => {
+    const handleOpenInstall = () => {
+      if (deferredPromptRef.current && platform !== 'ios') {
+        void triggerPrompt();
+      } else {
+        setShowBanner(true);
+        setShowInstructionsModal(true);
+      }
+    };
+    window.addEventListener('open-pwa-install', handleOpenInstall);
+    return () => window.removeEventListener('open-pwa-install', handleOpenInstall);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform]);
 
   const handleInstallClick = async () => {
     if (platform === 'ios') {
       setShowInstructionsModal(true);
       return;
     }
-
     if (deferredPromptRef.current) {
       await triggerPrompt();
       return;
     }
-
-    // No deferred prompt available (not installable yet / prompt already
-    // used): show the right manual steps for this platform.
     setShowInstructionsModal(true);
   };
 
   const handleDismiss = () => {
     setShowBanner(false);
     setShowInstructionsModal(false);
-    localStorage.setItem(platform === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY, 'true');
+    localStorage.setItem(platform === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY, String(Date.now()));
   };
 
   if (!showBanner && !showInstructionsModal) return null;

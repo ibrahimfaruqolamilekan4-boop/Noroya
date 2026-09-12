@@ -4576,46 +4576,86 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
       const { data: { user: adminUser } } = await supabase.auth.getUser(token);
 
+      // Target user's email (kept for the ledger row, same shape as purchase rows)
+      const { data: targetProfile } = await supabase
+        .from('profiles').select('email').eq('id', userId).maybeSingle();
+      const targetUserEmail = targetProfile?.email || null;
+
+      // Credit and debit are each recorded with a transaction row the user's
+      // dashboard can display. IMPORTANT: use the exact column/type patterns
+      // already proven live by the SQL functions (process_payment_webhook
+      // writes type 'funding' rows; deduct_wallet_and_record writes the debit
+      // row atomically with the balance change inside the row lock). Write
+      // errors must be surfaced -- they used to be swallowed (supabase-js
+      // RETURNS errors, it does not throw them), so funds moved without a
+      // visible history entry and nobody noticed.
+      const reference = `ADMIN-ADJ-${Date.now()}`;
+      const txWarnings: string[] = [];
+
       if (direction === 'credit') {
         const { error: rpcErr } = await supabase.rpc('increment_balance', { user_uuid: userId, amount: numAmount });
         if (rpcErr) throw new Error(rpcErr.message);
+
+        const { error: txErr } = await supabase.from('transactions').insert({
+          user_id: userId,
+          user_email: targetUserEmail,
+          type: 'funding',
+          amount: numAmount,
+          status: 'completed',
+          description: `Admin credit: ${String(reason).trim()}`,
+          reference,
+          gateway: 'admin_adjustment',
+          metadata: { source: 'admin_adjustment', admin_id: adminUser?.id || null, direction },
+          created_at: new Date().toISOString(),
+        });
+        if (txErr) {
+          console.error("[Admin Balance Adjust] CREDIT transaction log FAILED:", txErr.message, txErr.details || "", txErr.hint || "");
+          txWarnings.push(`Wallet was credited, but the history entry failed to save (${txErr.message}).`);
+        }
       } else {
-        const { data: ok, error: rpcErr } = await supabase.rpc('deduct_balance', { user_uuid: userId, amount: numAmount });
+        // deduct_wallet_and_record: row-locked balance check + debit + the
+        // transactions row in ONE service-role call -- no window where the
+        // money moved but the ledger row was lost.
+        const { data: deductRes, error: rpcErr } = await supabase.rpc('deduct_wallet_and_record', {
+          p_user_id: userId,
+          p_amount: numAmount,
+          p_reference: reference,
+          p_description: `Admin debit: ${String(reason).trim()}`,
+          p_type: 'purchase',
+          p_metadata: { source: 'admin_adjustment', admin_id: adminUser?.id || null, direction },
+        });
         if (rpcErr) throw new Error(rpcErr.message);
-        if (!ok) return res.status(400).json({ error: "User has insufficient balance for this debit." });
+        const deductStatus = (deductRes as any)?.status;
+        if (deductStatus === 'insufficient_funds') {
+          return res.status(400).json({ error: "User has insufficient balance for this debit." });
+        }
+        if (deductStatus !== 'success') {
+          throw new Error((deductRes as any)?.message || "Debit failed.");
+        }
       }
 
-      // Audit log
-      try {
-        await supabase.from('admin_wallet_adjustments').insert({
+      // Audit log (best-effort; failures reported, never silent)
+      {
+        const { error: auditErr } = await supabase.from('admin_wallet_adjustments').insert({
           user_id: userId,
           admin_id: adminUser?.id || null,
           amount: numAmount,
           direction,
           reason: String(reason).trim(),
         });
-      } catch (auditErr: any) {
-        console.warn("[Admin Balance Adjust] audit log insert warning:", auditErr.message);
-      }
-
-      // Mirror into the user's own transaction history (id is bigint auto-increment — never set it manually)
-      try {
-        await supabase.from('transactions').insert({
-          user_id: userId,
-          type: 'admin_adjustment',
-          amount: numAmount,
-          status: 'completed',
-          description: `Admin ${direction === 'credit' ? 'credited' : 'debited'} wallet: ${String(reason).trim()}`,
-          reference: `ADMIN-ADJ-${Date.now()}`,
-          created_at: new Date().toISOString(),
-        });
-      } catch (txErr: any) {
-        console.warn("[Admin Balance Adjust] transaction log warning:", txErr.message);
+        if (auditErr) {
+          console.error("[Admin Balance Adjust] audit log FAILED:", auditErr.message);
+          txWarnings.push(`Admin audit log entry failed to save (${auditErr.message}).`);
+        }
       }
 
       const { data: updatedProfile } = await supabase.from('profiles').select('wallet_balance, balance').eq('id', userId).maybeSingle();
 
-      return res.json({ success: true, newBalance: updatedProfile?.wallet_balance ?? null });
+      return res.json({
+        success: true,
+        newBalance: updatedProfile?.wallet_balance ?? null,
+        ...(txWarnings.length ? { warning: txWarnings.join(" ") } : {}),
+      });
     } catch (err: any) {
       console.error("[Admin Balance Adjust Error]:", err.message);
       return res.status(500).json({ error: err.message });
