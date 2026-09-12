@@ -71,8 +71,14 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 
 // ─── VTU Provider Plugin System ─────────────────────────────────────────────
 // Providers live in src/lib/vtu-providers.ts
+// NOTE: the explicit `.ts` extension is required here. On Vercel, server.ts is
+// shipped as raw source and executed via Node's native TypeScript type-stripping
+// (same as the '../server.ts' import in api/index.js). Node's ESM resolver does
+// NOT map './x.js' specifiers to './x.ts' files like a bundler does, so pointing
+// at './src/lib/vtu-providers.js' throws ERR_MODULE_NOT_FOUND at function load
+// time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders, purchaseMozosubzUtility } from './src/lib/vtu-providers.js';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility } from './src/lib/vtu-providers.ts';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
