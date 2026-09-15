@@ -29,7 +29,7 @@ export default function AIChatSupport() {
       });
       const data = await response.json();
       
-      setMessages(prev => [...prev, { role: 'assistant', content: data.text || "I'm sorry, I couldn't process that." }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: data.text || data.error || "I'm sorry, I couldn't process that." }]);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I'm having trouble connecting right now." }]);
     } finally {
