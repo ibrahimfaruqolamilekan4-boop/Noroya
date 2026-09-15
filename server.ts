@@ -4585,7 +4585,30 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // Target user's email (kept for the ledger row, same shape as purchase rows)
       const { data: targetProfile } = await supabase
         .from('profiles').select('email').eq('id', userId).maybeSingle();
-      const targetUserEmail = targetProfile?.email || null;
+      if (!targetProfile) {
+        return res.status(404).json({ error: "Profile row not found for this user id." });
+      }
+      const targetUserEmail = targetProfile.email || null;
+
+      // SAFETY: a user's dashboard only ever reads the profile row whose id
+      // equals their login (auth.users) id. Duplicated/orphaned profile rows
+      // DO exist in this DB (ban deletes the auth user but not the profile;
+      // re-signup creates a new row), and crediting one of those moves money
+      // the admin can see but the user never will. Verify the row is
+      // login-linked before touching any balance, and flag sibling rows.
+      const { error: authLookupErr } = await supabase.auth.admin.getUserById(userId);
+      if (authLookupErr) {
+        return res.status(400).json({
+          error: `This profile row is NOT linked to a login account (${authLookupErr.message}). Crediting it would be invisible to the user — their dashboard reads their login-linked row. Search the user list by email and pick the row that matches their live account.`,
+        });
+      }
+      if (targetUserEmail) {
+        const { data: siblingRows } = await supabase
+          .from('profiles').select('id').eq('email', targetUserEmail);
+        if (siblingRows && siblingRows.length > 1) {
+          console.warn("[Admin Balance Adjust] multiple profile rows for email:", targetUserEmail, siblingRows.map(r => r.id));
+        }
+      }
 
       // Credit and debit are each recorded with a transaction row the user's
       // dashboard can display. IMPORTANT: use the exact column/type patterns

@@ -238,9 +238,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 2. Set up a bulletproof background polling interval (every 8 seconds) in case Realtime replication is disabled
         const pollInterval = setInterval(fetchLatestSupabaseProfile, 8000);
 
+        // 3. Phones/PWAs throttle setInterval while backgrounded, so a wallet
+        //    funding done while the app was closed stays invisible until the
+        //    tab is focused again. Refetch the moment the app resumes.
+        const handleResume = () => {
+          if (document.visibilityState === 'visible') {
+            fetchLatestSupabaseProfile();
+          }
+        };
+        document.addEventListener('visibilitychange', handleResume);
+        window.addEventListener('focus', handleResume);
+
         unsubProfile = () => {
           channel.unsubscribe();
           clearInterval(pollInterval);
+          document.removeEventListener('visibilitychange', handleResume);
+          window.removeEventListener('focus', handleResume);
         };
       } else {
         if (!isSimulated) {
