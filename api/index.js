@@ -375,6 +375,24 @@ var ai = new GoogleGenAI({
 });
 async function startServer() {
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
+  const requireUser = async (req, res) => {
+    const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+    if (!token) {
+      res.status(401).json({ error: "Unauthorized: no session token." });
+      return null;
+    }
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) {
+        res.status(401).json({ error: "Unauthorized: invalid session." });
+        return null;
+      }
+      return user;
+    } catch (e) {
+      res.status(401).json({ error: "Unauthorized." });
+      return null;
+    }
+  };
   const requireAdmin = async (req, res, allowSubAdmin = false) => {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     if (!token) {
@@ -3577,6 +3595,39 @@ AI:`;
       });
     } catch (err) {
       console.error("[Admin Revenue Audit Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/wallet/snapshot", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const userId = authUser.id;
+      const { data: profile, error: profErr } = await supabase.from("profiles").select("id, wallet_balance, balance, available_balance, updated_at").eq("id", userId).maybeSingle();
+      if (profErr) throw new Error(profErr.message);
+      const { data: recent, error: txErr } = await supabase.from("transactions").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
+      if (txErr) console.warn("[Wallet Snapshot] transactions warning:", txErr.message);
+      return res.json({
+        balance: Number(profile?.wallet_balance ?? profile?.balance ?? 0),
+        profile: profile || null,
+        transactions: recent || [],
+        serverTime: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.error("[Wallet Snapshot Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/wallet/transactions", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const limit = Math.min(Number(req.query.limit) || 200, 500);
+      const { data, error } = await supabase.from("transactions").select("*").eq("user_id", authUser.id).order("created_at", { ascending: false }).limit(limit);
+      if (error) throw new Error(error.message);
+      return res.json({ transactions: data || [] });
+    } catch (err) {
+      console.error("[Wallet Transactions Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });

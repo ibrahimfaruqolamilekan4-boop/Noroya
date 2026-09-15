@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { fetchWalletSnapshot } from '../lib/walletApi';
 import type { UserProfile } from '../types';
 
 interface AuthContextType {
@@ -173,6 +174,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Define a function to reload user profile directly from Supabase to sync balances
         const fetchLatestSupabaseProfile = async () => {
+          // Authoritative balance via the same-origin API (service-role read).
+          // This is what makes admin funding appear even when the browser's
+          // own Supabase role/realtime access can't see the row.
+          let apiBalance: number | null = null;
+          try {
+            const snap = await fetchWalletSnapshot();
+            apiBalance = snap.balance;
+          } catch (err) {
+            // Demo/simulated sessions have no API session — context keeps
+            // whatever it has; real users fall through to the direct read.
+          }
+
           try {
             const { data, error } = await supabase
               .from('profiles')
@@ -180,16 +193,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               .eq('id', sbUser.id)
               .maybeSingle();
 
-            if (!error && data) {
+            if ((!error && data) || apiBalance !== null) {
               setUserProfile(prev => {
                 const base = prev || defaultProfile;
-                const latestBalance = data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance);
+                const direct = data ? (data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance)) : (base.balance ?? 0);
+                const latestBalance = apiBalance !== null ? apiBalance : direct;
                 const updatedProfile = {
                   ...base,
-                  fullName: data.name || data.username || base.fullName,
+                  fullName: data?.name || data?.username || base.fullName,
                   balance: latestBalance,
                   wallet_balance: latestBalance,
-                  phoneNumber: data.phone_number || base.phoneNumber,
+                  phoneNumber: data?.phone_number || base.phoneNumber,
                   transactionPin: base.transactionPin, // hash never leaves the server
                 };
                 localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...updatedProfile, transactionPin: undefined }));
@@ -200,6 +214,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.warn("Error background polling user profile from Supabase:", err);
           }
         };
+
+        // Kick an immediate authoritative sync right after login (don't wait
+        // the full poll interval to show the true balance).
+        fetchLatestSupabaseProfile();
 
         // 1. Establish a real-time Postgres changes listener in Supabase for immediate balance updates
         const channel = supabase

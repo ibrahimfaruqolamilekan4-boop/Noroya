@@ -17,6 +17,7 @@ import {
 import { cn, formatCurrency } from '../lib/utils';
 import type { UserProfile, Transaction } from '../types';
 import { supabase } from '../lib/supabase';
+import { fetchWalletTransactions } from '../lib/walletApi';
 import { toast } from 'react-hot-toast';
 
 interface TransactionHistoryProps {
@@ -40,19 +41,11 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
     }
     setError(null);
 
-    const userId = user?.uid || (user as any)?.id;
-
     try {
-      // Query past transactions from the 'transactions' Supabase table
-      const { data, error: fetchErr } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (fetchErr) {
-        throw fetchErr;
-      }
+      // Authoritative read through the API (service-role) — the same rows the
+      // admin panel shows. Immune to realtime-publication and browser-role
+      // grant problems that made direct Supabase reads silently come up empty.
+      const { transactions: data } = await fetchWalletTransactions();
 
       // Map snake_case database rows to TypeScript camelCase structure for maximum compatibility
       const normalized = (data || []).map((row: any) => ({
@@ -100,8 +93,19 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
       )
       .subscribe();
 
+    // Poll the API too (realtime is a fast-path, not a dependency).
+    const poll = setInterval(() => fetchTransactions(false), 15000);
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') fetchTransactions(false);
+    };
+    document.addEventListener('visibilitychange', handleResume);
+    window.addEventListener('focus', handleResume);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.removeEventListener('focus', handleResume);
     };
   }, [user?.uid, (user as any)?.id]);
 
