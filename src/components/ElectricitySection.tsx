@@ -58,6 +58,7 @@ import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import { fetchWalletSnapshot } from '../lib/walletApi';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
 import ServicePurchase from './ServicePurchase';
@@ -713,7 +714,11 @@ function DashboardOverview({
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
 
+  // The API snapshot is authoritative once it has answered at least once;
+  // before that (or for simulated demo sessions) fall back to the context.
+  const apiBalanceRef = React.useRef(false);
   React.useEffect(() => {
+    if (apiBalanceRef.current) return;
     setCurrentBalance(user?.wallet_balance || user?.balance || 0);
   }, [user?.wallet_balance, user?.balance]);
 
@@ -732,20 +737,23 @@ function DashboardOverview({
   }, []);
 
   const refreshBalance = async () => {
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    if (!authUser) return;
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('wallet_balance')
-      .eq('id', authUser.id)
-      .single();
-    if (profile) setCurrentBalance(profile.wallet_balance || 0);
+    // Authoritative read through the API — the same row the admin panel
+    // shows after funding. No dependency on realtime/grants/config drift.
+    try {
+      const snap = await fetchWalletSnapshot();
+      apiBalanceRef.current = true;
+      setCurrentBalance(snap.balance || 0);
+    } catch (e: any) {
+      console.warn('[Wallet] snapshot refresh failed:', e.message);
+    }
   };
 
   React.useEffect(() => {
     const userId = (user as any)?.id || user?.uid;
     refreshBalance();
     if (!userId) return;
+    // Keep the Supabase realtime channel as an instant fast-path (works once
+    // migration 005 is applied), but it is no longer the only live update.
     const channel = supabase
       .channel('profile-changes')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
@@ -753,7 +761,22 @@ function DashboardOverview({
           if (payload.new?.wallet_balance !== undefined) setCurrentBalance(payload.new.wallet_balance);
         })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    // Belt-and-braces polling: works even where realtime or AuthContext's
+    // poll can't reach the profile row from the browser.
+    const poll = setInterval(refreshBalance, 10000);
+    // Refetch when the app returns to the foreground (backgrounded PWAs
+    // throttle timers/sockets; admin funding must appear on resume).
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') refreshBalance();
+    };
+    document.addEventListener('visibilitychange', handleResume);
+    window.addEventListener('focus', handleResume);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.removeEventListener('focus', handleResume);
+    };
   }, [user?.uid, (user as any)?.id]);
 
   const handleLookupRecipient = async () => {
@@ -1387,26 +1410,36 @@ function SupabaseTransactionHistoryWidget({
   const [txs, setTxs] = React.useState<Transaction[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  React.useEffect(() => {
+  const load = React.useCallback(async () => {
     const userId = user?.uid || (user as any)?.id;
     if (!userId) { setLoading(false); return; }
-    supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(5)
-      .then(({ data, error }) => {
-        if (!error && data) {
-          setTxs(data.map((row: any) => ({
-            ...row,
-            userId: row.user_id || row.userId,
-            createdAt: row.created_at || row.createdAt,
-          })));
-        }
-        setLoading(false);
-      });
-  }, [user]);
+    try {
+      // Same authoritative source as the balance card + admin panel.
+      const snap = await fetchWalletSnapshot();
+      setTxs((snap.transactions || []).map((row: any) => ({
+        ...row,
+        userId: row.user_id || row.userId,
+        createdAt: row.created_at || row.createdAt,
+      })));
+    } catch (e: any) {
+      console.warn('[Wallet] recent activity snapshot failed:', e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.uid, (user as any)?.id]);
+
+  React.useEffect(() => {
+    load();
+    const poll = setInterval(load, 10000);
+    const handleResume = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', handleResume);
+    window.addEventListener('focus', handleResume);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.removeEventListener('focus', handleResume);
+    };
+  }, [load]);
 
   return (
     <div>

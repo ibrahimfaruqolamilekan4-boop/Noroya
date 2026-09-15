@@ -327,6 +327,24 @@ async function startServer() {
   // Only the hardcoded owner email is recognised as admin.
   // No role field, no body flag, no JWT claim can override this.
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
+  // Verifies the caller's Supabase session and returns the auth user (or null
+  // after sending the 401). Used by the wallet read endpoints: the user's
+  // dashboard reads its money data through here (service-role, same source of
+  // truth the admin panel uses) instead of relying on direct browser→Supabase
+  // grants/realtime, which silently no-op when a table isn't published for
+  // realtime or the authenticated role lacks SELECT privileges.
+  const requireUser = async (req: any, res: any): Promise<any | null> => {
+    const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+    if (!token) { res.status(401).json({ error: "Unauthorized: no session token." }); return null; }
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) { res.status(401).json({ error: "Unauthorized: invalid session." }); return null; }
+      return user;
+    } catch (e) {
+      res.status(401).json({ error: "Unauthorized." }); return null;
+    }
+  };
+
   const requireAdmin = async (req: any, res: any, allowSubAdmin = false): Promise<boolean> => {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     if (!token) { res.status(401).json({ error: "Unauthorized: no session token." }); return false; }
@@ -4458,6 +4476,64 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       });
     } catch (err: any) {
       console.error("[Admin Revenue Audit Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Wallet: user-scoped snapshot + ledger (authoritative reads) ─────────
+  // The dashboard MUST show exactly what the admin panel shows for the same
+  // user. Serving the money reads through this API (service-role) instead of
+  // direct browser→Supabase queries removes every remaining way they can
+  // diverge: realtime publication membership, authenticated-role table
+  // grants, stale anon-key config, and background-tab throttling all stop
+  // mattering — the client just polls/refreshes this endpoint.
+  app.get("/api/wallet/snapshot", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const userId = authUser.id;
+      const { data: profile, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, wallet_balance, balance, available_balance, updated_at')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profErr) throw new Error(profErr.message);
+
+      const { data: recent, error: txErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (txErr) console.warn("[Wallet Snapshot] transactions warning:", txErr.message);
+
+      return res.json({
+        balance: Number(profile?.wallet_balance ?? profile?.balance ?? 0),
+        profile: profile || null,
+        transactions: recent || [],
+        serverTime: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[Wallet Snapshot Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/wallet/transactions", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const limit = Math.min(Number(req.query.limit) || 200, 500);
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw new Error(error.message);
+      return res.json({ transactions: data || [] });
+    } catch (err: any) {
+      console.error("[Wallet Transactions Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });
