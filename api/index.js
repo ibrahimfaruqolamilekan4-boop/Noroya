@@ -3654,7 +3654,22 @@ AI:`;
       const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
       const { data: { user: adminUser } } = await supabase.auth.getUser(token);
       const { data: targetProfile } = await supabase.from("profiles").select("email").eq("id", userId).maybeSingle();
-      const targetUserEmail = targetProfile?.email || null;
+      if (!targetProfile) {
+        return res.status(404).json({ error: "Profile row not found for this user id." });
+      }
+      const targetUserEmail = targetProfile.email || null;
+      const { error: authLookupErr } = await supabase.auth.admin.getUserById(userId);
+      if (authLookupErr) {
+        return res.status(400).json({
+          error: `This profile row is NOT linked to a login account (${authLookupErr.message}). Crediting it would be invisible to the user \u2014 their dashboard reads their login-linked row. Search the user list by email and pick the row that matches their live account.`
+        });
+      }
+      if (targetUserEmail) {
+        const { data: siblingRows } = await supabase.from("profiles").select("id").eq("email", targetUserEmail);
+        if (siblingRows && siblingRows.length > 1) {
+          console.warn("[Admin Balance Adjust] multiple profile rows for email:", targetUserEmail, siblingRows.map((r) => r.id));
+        }
+      }
       const reference = `ADMIN-ADJ-${Date.now()}`;
       const txWarnings = [];
       if (direction === "credit") {

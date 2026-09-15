@@ -753,7 +753,18 @@ function DashboardOverview({
           if (payload.new?.wallet_balance !== undefined) setCurrentBalance(payload.new.wallet_balance);
         })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    // Refetch when the app returns to the foreground (backgrounded PWAs
+    // throttle timers/sockets; admin funding must appear on resume).
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') refreshBalance();
+    };
+    document.addEventListener('visibilitychange', handleResume);
+    window.addEventListener('focus', handleResume);
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.removeEventListener('focus', handleResume);
+    };
   }, [user?.uid, (user as any)?.id]);
 
   const handleLookupRecipient = async () => {
