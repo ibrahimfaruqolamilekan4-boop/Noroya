@@ -5,7 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
-import { supabase } from "./src/lib/supabase.js";
+import { supabase, serverHasServiceRoleKey } from "./src/lib/supabase.js";
 import axios from "axios";
 
 // SECURITY: sanitize client-supplied values before interpolating them into
@@ -312,16 +312,43 @@ const getOrCreateProfileByEmail = async (email: string): Promise<any> => {
 
 return null;
 };
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || "",
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// The Gemini client is created lazily: an unset/rotated GEMINI_API_KEY must not
+// poison startup logs, and a redeploy with a fresh key takes effect immediately.
+let _geminiAi: GoogleGenAI | null = null;
+const getGeminiAi = (): GoogleGenAI | null => {
+  const geminiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!geminiKey) return null;
+  if (!_geminiAi) {
+    _geminiAi = new GoogleGenAI({
+      apiKey: geminiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return _geminiAi;
+};
 
 async function startServer() {
+
+  // ── Environment config audit ──────────────────────────────────────────────
+  // After an API-key rotation, a missing env var fails LOUD here instead of
+  // surfacing later as confusing "Invalid API key" / permission-denied errors.
+  const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+  const optionalEnvs = ["GEMINI_API_KEY", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
+  const missingRequired = requiredEnvs.filter((k) => !(process.env[k] || "").trim());
+  const missingOptional = optionalEnvs.filter((k) => !(process.env[k] || "").trim());
+  if (missingRequired.length) {
+    console.error(`CONFIG AUDIT - CRITICAL: missing environment variables: ${missingRequired.join(", ")}. Funding wallets, admin operations and protected reads will fail until these are set (Project Settings -> Environment Variables) and the site is redeployed.`);
+  }
+  if (missingOptional.length) {
+    console.warn(`CONFIG AUDIT - optional envs not set: ${missingOptional.join(", ")}. Features depending on them (AI chat, Flutterwave verification, VTU providers) will degrade.`);
+  }
+  if (!missingRequired.length && !missingOptional.length) {
+    console.log("CONFIG AUDIT - all configured environment variables present.");
+  }
 
   // ── Admin Identity Guard ──────────────────────────────────────────────────
   // Only the hardcoded owner email is recognised as admin.
@@ -346,6 +373,10 @@ async function startServer() {
   };
 
   const requireAdmin = async (req: any, res: any, allowSubAdmin = false): Promise<boolean> => {
+    if (!serverHasServiceRoleKey) {
+      res.status(500).json({ error: "Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY is not set on this deployment, so admin operations cannot run. Add the project's service_role key as the SUPABASE_SERVICE_ROLE_KEY environment variable and redeploy." });
+      return false;
+    }
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     if (!token) { res.status(401).json({ error: "Unauthorized: no session token." }); return false; }
     try {
@@ -4036,6 +4067,11 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   app.post("/api/chat", rateLimit(20, 60_000), async (req, res) => {
     const { message } = req.body;
 
+    if (!getGeminiAi()) {
+      console.error("CONFIG: /api/chat called but GEMINI_API_KEY is not set on this deployment.");
+      return res.status(503).json({ error: "AI assistant is not configured on this server yet. The GEMINI_API_KEY environment variable must be set (Project Settings -> Environment Variables -> GEMINI_API_KEY), then redeploy." });
+    }
+
     try {
       let context = "You are Noroya, the friendly AI assistant for Noroya Data, a VTU platform in Nigeria.";
 
@@ -4059,8 +4095,12 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       context += " Help the user with their queries about data bundles, airtime, and billing. Be concise and professional.";
 
       const prompt = `${context}\n\nUser: ${message}\nAI:`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+      const gemini = getGeminiAi();
+      if (!gemini) {
+        return res.status(503).json({ error: "AI assistant is not configured on this server yet." });
+      }
+      const response = await gemini.models.generateContent({
+        model: (process.env.GEMINI_MODEL || "gemini-3.5-flash").trim(),
         contents: prompt,
       });
       res.json({ text: response.text || "" });

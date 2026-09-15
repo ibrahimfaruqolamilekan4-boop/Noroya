@@ -18,25 +18,36 @@ var dataRoutes_default = router;
 import { createClient } from "@supabase/supabase-js";
 var getEnv = (key) => {
   if (typeof window !== "undefined") {
+    const cfg = window.SUPABASE_CONFIG;
+    let cfgUrl = null;
+    let cfgKey = null;
+    if (cfg) {
+      const u = cfg.supabaseUrl;
+      if (typeof u === "string" && u.trim() !== "" && !u.includes("placeholder-project") && !u.includes("undefined")) cfgUrl = u.trim();
+      const k = cfg.supabaseAnonKey;
+      if (typeof k === "string" && k.trim() !== "" && !k.includes("placeholder-anon-key") && !k.includes("undefined")) cfgKey = k.trim();
+    }
+    if (cfgUrl && cfgKey) {
+      try {
+        localStorage.removeItem("DYNAMIC_SUPABASE_URL");
+        localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
+        localStorage.removeItem("DYNAMIC_SUPABASE_SERVICE_ROLE_KEY");
+      } catch (e) {
+      }
+    }
     if (key === "VITE_SUPABASE_URL" || key === "SUPABASE_URL") {
+      if (cfgUrl) return cfgUrl;
       const overridingUrl = localStorage.getItem("DYNAMIC_SUPABASE_URL");
       if (overridingUrl && overridingUrl.trim() !== "" && !overridingUrl.includes("placeholder")) {
         return overridingUrl.trim();
       }
     }
     if (key === "VITE_SUPABASE_ANON_KEY" || key === "SUPABASE_ANON_KEY") {
+      if (cfgKey) return cfgKey;
       const overridingKey = localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY");
       if (overridingKey && overridingKey.trim() !== "" && !overridingKey.includes("placeholder")) {
         return overridingKey.trim();
       }
-    }
-    if (window.SUPABASE_CONFIG) {
-      const u = window.SUPABASE_CONFIG.supabaseUrl;
-      if (u && !u.includes("placeholder-project") && !u.includes("undefined")) return u;
-    }
-    if (window.SUPABASE_CONFIG) {
-      const k = window.SUPABASE_CONFIG.supabaseAnonKey;
-      if (k && !k.includes("placeholder-anon-key") && !k.includes("undefined")) return k;
     }
   }
   if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env[key]) {
@@ -50,15 +61,16 @@ var getEnv = (key) => {
 var isServer = typeof window === "undefined" && typeof process !== "undefined";
 var supabaseUrl = getEnv("VITE_SUPABASE_URL") || getEnv("SUPABASE_URL") || typeof process !== "undefined" && (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL) || "https://placeholder-project.supabase.co";
 var serviceRoleKey = isServer ? getEnv("SUPABASE_SERVICE_ROLE_KEY") || getEnv("VITE_SUPABASE_SERVICE_ROLE_KEY") || typeof process !== "undefined" && process.env.SUPABASE_SERVICE_ROLE_KEY : null;
+var serverHasServiceRoleKey = Boolean(serviceRoleKey);
 var anonKey = getEnv("VITE_SUPABASE_ANON_KEY") || getEnv("SUPABASE_ANON_KEY") || typeof process !== "undefined" && (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.REACT_APP_SUPABASE_ANON_KEY) || "placeholder-anon-key";
-var apiKey = serviceRoleKey || anonKey;
+var apiKey = isServer ? serviceRoleKey || anonKey : anonKey;
 if (!supabaseUrl || !apiKey || supabaseUrl.includes("placeholder-project") || apiKey.includes("placeholder-anon-key")) {
   console.warn("WARNING: Supabase environment configuration keys are using default placeholders or are unconfigured. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY to link to your live database.");
 }
 if (isServer && serviceRoleKey) {
   console.log("Supabase Client initialized successfully with Service Role Key (Bypass RLS Enabled).");
 } else if (isServer) {
-  console.log("Supabase Client initialized with Anon Key on Server-side (No service role key provided).");
+  console.error("CRITICAL: SUPABASE_SERVICE_ROLE_KEY is NOT set \u2014 the server is running with the anon key only. Admin operations, balance funding, payment crediting and protected reads WILL fail. Set SUPABASE_SERVICE_ROLE_KEY (project's service_role key) in the deployment environment and redeploy.");
 }
 var supabase = createClient(supabaseUrl, apiKey);
 
@@ -365,15 +377,36 @@ var getOrCreateProfile = async (pgUuid, finalUserId) => {
   }
   return null;
 };
-var ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || "",
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build"
-    }
+var _geminiAi = null;
+var getGeminiAi = () => {
+  const geminiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!geminiKey) return null;
+  if (!_geminiAi) {
+    _geminiAi = new GoogleGenAI({
+      apiKey: geminiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
   }
-});
+  return _geminiAi;
+};
 async function startServer() {
+  const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+  const optionalEnvs = ["GEMINI_API_KEY", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
+  const missingRequired = requiredEnvs.filter((k) => !(process.env[k] || "").trim());
+  const missingOptional = optionalEnvs.filter((k) => !(process.env[k] || "").trim());
+  if (missingRequired.length) {
+    console.error(`CONFIG AUDIT - CRITICAL: missing environment variables: ${missingRequired.join(", ")}. Funding wallets, admin operations and protected reads will fail until these are set (Project Settings -> Environment Variables) and the site is redeployed.`);
+  }
+  if (missingOptional.length) {
+    console.warn(`CONFIG AUDIT - optional envs not set: ${missingOptional.join(", ")}. Features depending on them (AI chat, Flutterwave verification, VTU providers) will degrade.`);
+  }
+  if (!missingRequired.length && !missingOptional.length) {
+    console.log("CONFIG AUDIT - all configured environment variables present.");
+  }
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
   const requireUser = async (req, res) => {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
@@ -394,6 +427,10 @@ async function startServer() {
     }
   };
   const requireAdmin = async (req, res, allowSubAdmin = false) => {
+    if (!serverHasServiceRoleKey) {
+      res.status(500).json({ error: "Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY is not set on this deployment, so admin operations cannot run. Add the project's service_role key as the SUPABASE_SERVICE_ROLE_KEY environment variable and redeploy." });
+      return false;
+    }
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     if (!token) {
       res.status(401).json({ error: "Unauthorized: no session token." });
@@ -3290,6 +3327,10 @@ async function startServer() {
   });
   app.post("/api/chat", rateLimit(20, 6e4), async (req, res) => {
     const { message } = req.body;
+    if (!getGeminiAi()) {
+      console.error("CONFIG: /api/chat called but GEMINI_API_KEY is not set on this deployment.");
+      return res.status(503).json({ error: "AI assistant is not configured on this server yet. The GEMINI_API_KEY environment variable must be set (Project Settings -> Environment Variables -> GEMINI_API_KEY), then redeploy." });
+    }
     try {
       let context = "You are Noroya, the friendly AI assistant for Noroya Data, a VTU platform in Nigeria.";
       const verifiedUserId = await verifyCallerUserId(req);
@@ -3306,8 +3347,12 @@ async function startServer() {
 
 User: ${message}
 AI:`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+      const gemini = getGeminiAi();
+      if (!gemini) {
+        return res.status(503).json({ error: "AI assistant is not configured on this server yet." });
+      }
+      const response = await gemini.models.generateContent({
+        model: (process.env.GEMINI_MODEL || "gemini-3.5-flash").trim(),
         contents: prompt
       });
       res.json({ text: response.text || "" });
