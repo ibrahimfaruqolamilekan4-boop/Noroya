@@ -32,7 +32,6 @@
       ]
     },
     {
-      "//": "runtime Supabase config is emitted as a static build asset (vite.config.ts); no-cache so a rotated key propagates on redeploy. The /config/supabase.js rewrite above stays as a fallback to the runtime route.",
       "source": "/config/supabase.js",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
