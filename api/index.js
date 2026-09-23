@@ -79,6 +79,54 @@ import axios2 from "axios";
 
 // src/lib/vtu-providers.ts
 import axios from "axios";
+var PROVIDER_TIMEOUT_MS = 45e3;
+function classifyAxiosError(err) {
+  if (err?.response) return "responded";
+  if (err?.code === "ECONNABORTED") return "unknown";
+  if (err?.code && String(err.code).startsWith("E")) return "unknown";
+  return "unknown";
+}
+function isTimeoutError(err) {
+  return err?.code === "ECONNABORTED" || /timeout/i.test(String(err?.message || ""));
+}
+function axiosErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.response?.data?.message || err?.response?.data?.Status || err?.message || fallback;
+}
+function pickField(obj, ...keys) {
+  if (!obj || typeof obj !== "object") return void 0;
+  for (const k of keys) {
+    if (obj[k] !== void 0 && obj[k] !== null) return obj[k];
+  }
+  const lowered = {};
+  for (const [k, v] of Object.entries(obj)) lowered[k.toLowerCase()] = v;
+  for (const k of keys) {
+    if (lowered[k.toLowerCase()] !== void 0 && lowered[k.toLowerCase()] !== null) return lowered[k.toLowerCase()];
+  }
+  return void 0;
+}
+var SUCCESS_WORDS = ["success", "successful", "successfully", "completed", "complete", "delivered", "approved"];
+function bodyReportsSuccess(d) {
+  if (!d || typeof d !== "object") return false;
+  if (d.success === true || d.ok === true) return true;
+  const status = String(pickField(d, "status", "Status", "state") ?? "").toLowerCase().trim();
+  if (status && SUCCESS_WORDS.includes(status)) return true;
+  const apiResponse = String(pickField(d, "api_response", "apiResponse", "message", "remark") ?? "");
+  if (/successfully|successful|subscribed|delivered|approved/i.test(apiResponse) && !/fail|insufficient|error/i.test(apiResponse)) {
+    return true;
+  }
+  return false;
+}
+function bodyReportsFailure(d) {
+  if (!d || typeof d !== "object") return false;
+  if (d.success === false) return true;
+  const status = String(pickField(d, "status", "Status", "state") ?? "").toLowerCase().trim();
+  if (status && (status.includes("fail") || status.includes("reject") || status.includes("error") || status.includes("declined"))) {
+    return true;
+  }
+  const apiResponse = String(pickField(d, "api_response", "apiResponse") ?? "");
+  if (/fail|insufficient|error|declined|reversed/i.test(apiResponse)) return true;
+  return false;
+}
 var _supabase = null;
 function initProviders(supabaseClient) {
   _supabase = supabaseClient;
@@ -111,8 +159,9 @@ function bigiNetworkId(network) {
   const n = normNetwork(network);
   if (n === "mtn") return 1;
   if (n === "glo") return 2;
-  if (n === "airtel") return 3;
-  return 4;
+  if (n === "etisalat") return 3;
+  if (n === "airtel") return 4;
+  return 1;
 }
 var mozosubzProvider = {
   name: "mozosubz",
@@ -128,15 +177,43 @@ var mozosubzProvider = {
     const rawPlanId = rawPlanIdStr.startsWith(`${service}_`) ? rawPlanIdStr.slice(service.length + 1) : rawPlanIdStr;
     const payload = p.type === "data" ? { service, plan_id: rawPlanId, phone: p.phone } : { network: net, amount: p.amount, phone: p.phone };
     console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
-    const resp = await axios.post(url, payload, {
-      headers: { "Content-Type": "application/json", "X-Connect-Key": p.apiKey },
-      timeout: 12e3
-    });
-    const d = resp.data;
-    if (d?.success === true) {
-      return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+    let resp;
+    try {
+      resp = await axios.post(url, payload, {
+        headers: { "Content-Type": "application/json", "X-Connect-Key": p.apiKey },
+        timeout: PROVIDER_TIMEOUT_MS
+      });
+    } catch (err) {
+      if (classifyAxiosError(err) === "unknown") {
+        console.warn(`[Mozosubz] ${p.type} purchase outcome UNKNOWN (${isTimeoutError(err) ? "timeout" : "network error"}): ${axiosErrorMessage(err, "connection failed")} -- leaving charge pending for review`);
+        return {
+          success: false,
+          ambiguous: true,
+          error: isTimeoutError(err) ? "Provider is taking longer than usual to confirm this transaction." : axiosErrorMessage(err, "Provider connection failed."),
+          raw: { error: axiosErrorMessage(err, "connection failed"), code: err?.code }
+        };
+      }
+      return {
+        success: false,
+        error: axiosErrorMessage(err, "Rejected by Mozosubz"),
+        raw: err?.response?.data
+      };
     }
-    return { success: false, error: d?.error || d?.message || "Rejected by Mozosubz", raw: d };
+    const d = resp.data;
+    if (bodyReportsSuccess(d)) {
+      const reference = pickField(d, "transaction_id", "reference", "id", "tran_id");
+      return { success: true, reference, raw: d };
+    }
+    if (bodyReportsFailure(d) || d?.error || d?.message) {
+      const errMsg = pickField(d, "error", "message") || "Rejected by Mozosubz";
+      return { success: false, error: errMsg, raw: d };
+    }
+    return {
+      success: false,
+      ambiguous: true,
+      error: "Provider returned an unrecognised response for this transaction.",
+      raw: d
+    };
   }
 };
 async function purchaseMozosubzUtility(p) {
@@ -170,54 +247,110 @@ async function purchaseMozosubzUtility(p) {
     phone: p.phone
   };
   console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
-  const resp = await axios.post(url, payload, {
-    headers: { "Content-Type": "application/json", "X-Connect-Key": p.apiKey },
-    timeout: 12e3
-  });
-  const d = resp.data;
-  if (d?.success === true) {
-    return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+  let resp;
+  try {
+    resp = await axios.post(url, payload, {
+      headers: { "Content-Type": "application/json", "X-Connect-Key": p.apiKey },
+      timeout: PROVIDER_TIMEOUT_MS
+    });
+  } catch (err) {
+    if (classifyAxiosError(err) === "unknown") {
+      return {
+        success: false,
+        ambiguous: true,
+        error: isTimeoutError(err) ? "Provider is taking longer than usual to confirm this transaction." : axiosErrorMessage(err, "Provider connection failed."),
+        raw: { error: axiosErrorMessage(err, "connection failed"), code: err?.code }
+      };
+    }
+    return {
+      success: false,
+      error: axiosErrorMessage(err, `Rejected by Mozosubz (${p.type})`),
+      raw: err?.response?.data
+    };
   }
-  return { success: false, error: d?.error || d?.message || `Rejected by Mozosubz (${p.type})`, raw: d };
+  const d = resp.data;
+  if (bodyReportsSuccess(d)) {
+    const reference = pickField(d, "transaction_id", "reference", "id", "tran_id");
+    return { success: true, reference, raw: d };
+  }
+  if (bodyReportsFailure(d) || d?.error || d?.message) {
+    const errMsg = pickField(d, "error", "message") || `Rejected by Mozosubz (${p.type})`;
+    return { success: false, error: errMsg, raw: d };
+  }
+  return {
+    success: false,
+    ambiguous: true,
+    error: "Provider returned an unrecognised response for this transaction.",
+    raw: d
+  };
 }
 var bigisubProvider = {
   name: "bigisub",
   resolveApiKey: () => resolveKeyFromEnvOrDb("BIGISUB_API_KEY", "bigisub_api_key"),
   async purchase(p) {
-    const base = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
-    const endpoint = p.type === "airtime" ? "airtime" : "data";
-    const url = `${base}/${endpoint}`;
+    const base = process.env.BIGISUB_BASE_URL || "https://bigisub.ng/api/v1";
+    const endpoint = p.type === "airtime" ? "airtime_topup/" : "data_topup/";
+    const url = `${base.replace(/\/$/, "")}/${endpoint}`;
     const planCode = p.providerPlanId || p.planId;
     const payload = {
       network: bigiNetworkId(p.network),
-      mobile_number: p.phone,
-      amount: p.amount,
+      phone_number: p.phone,
       Ported_number: true
     };
     if (p.type === "data") {
       payload.plan = planCode;
-      payload.plan_id = planCode;
-      payload.data_plan = planCode;
     } else {
-      payload.airtime_type = "VTU";
+      payload.amount = String(p.amount);
+      payload.airtime_type = "vtu";
     }
     console.log(`[Bigisub] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
-    const resp = await axios.post(url, payload, {
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${p.apiKey}` },
-      timeout: 1e4
-    });
-    const d = resp.data;
-    const ok = d?.status === "success" || d?.status === "SUCCESSFUL" || d?.success === true || d?.status === "completed";
-    if (ok) {
-      return { success: true, reference: d.reference || d.id || d.transaction_id, raw: d };
+    let resp;
+    try {
+      resp = await axios.post(url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          // Bigisub authenticates with a `Token <key>` scheme, NOT Bearer.
+          "Authorization": `Token ${p.apiKey}`
+        },
+        timeout: PROVIDER_TIMEOUT_MS
+      });
+    } catch (err) {
+      if (classifyAxiosError(err) === "unknown") {
+        console.warn(`[Bigisub] ${p.type} purchase outcome UNKNOWN (${isTimeoutError(err) ? "timeout" : "network error"}): ${axiosErrorMessage(err, "connection failed")} -- leaving charge pending for review`);
+        return {
+          success: false,
+          ambiguous: true,
+          error: isTimeoutError(err) ? "Provider is taking longer than usual to confirm this transaction." : axiosErrorMessage(err, "Provider connection failed."),
+          raw: { error: axiosErrorMessage(err, "connection failed"), code: err?.code }
+        };
+      }
+      return {
+        success: false,
+        error: axiosErrorMessage(err, "Rejected by Bigisub"),
+        raw: err?.response?.data
+      };
     }
-    return { success: false, error: d?.error || d?.message || "Rejected by Bigisub", raw: d };
+    const d = resp.data;
+    if (bodyReportsSuccess(d)) {
+      const reference = pickField(d, "tran_id", "reference", "id", "transaction_id");
+      return { success: true, reference, raw: d };
+    }
+    if (bodyReportsFailure(d) || d?.error || d?.message) {
+      const errMsg = pickField(d, "error", "message", "api_response") || "Rejected by Bigisub";
+      return { success: false, error: errMsg, raw: d };
+    }
+    return {
+      success: false,
+      ambiguous: true,
+      error: "Provider returned an unrecognised response for this transaction.",
+      raw: d
+    };
   }
 };
 var PROVIDERS = {
   mozosubz: mozosubzProvider,
   bigisub: bigisubProvider
-  // myprovider: myProvider,  ← add new providers here
+  // myprovider: myProvider,  <- add new providers here
 };
 function getProvider(name) {
   return PROVIDERS[name?.toLowerCase()] || null;
@@ -983,6 +1116,7 @@ async function startServer() {
       let apiResponseData = null;
       let apiErrorMsg = "";
       let apiErrorCode = null;
+      let purchaseOutcome = "failed";
       if (!provider) {
         return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
       }
@@ -1018,6 +1152,11 @@ async function startServer() {
       } catch (txErr) {
         console.warn("[VTU pending transaction insert warning]:", txErr.message || txErr);
       }
+      const isAmbiguousProviderError = (err) => {
+        if (!err) return false;
+        if (err.response) return false;
+        return true;
+      };
       try {
         const result = await provider.purchase({
           type: finalType,
@@ -1032,6 +1171,11 @@ async function startServer() {
         apiResponseData = result.raw;
         if (result.success) {
           apiSuccess = true;
+          purchaseOutcome = "success";
+        } else if (result.ambiguous) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = result.error || "Provider confirmation pending.";
+          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
         } else {
           apiErrorMsg = result.error || "Purchase rejected by gateway.";
           apiErrorCode = apiResponseData?.error_code || null;
@@ -1050,18 +1194,39 @@ async function startServer() {
       } catch (providerErr) {
         const rawErrData = providerErr.response?.data;
         apiResponseData = rawErrData;
-        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || "Provider connection failed.";
-        apiErrorCode = rawErrData?.error_code || null;
-        await logVtuFailure({
-          provider: chosenProvider,
-          network: finalNetwork,
-          phone: finalPhone,
-          planId: resolvedPlanCode,
-          planName: plan_name || planName || "",
-          amount: finalAmount,
-          error: apiErrorMsg,
-          raw: rawErrData,
-          userId: pgUuid
+        if (isAmbiguousProviderError(providerErr)) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = providerErr?.message || "Provider connection could not be confirmed.";
+          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
+        } else {
+          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || "Provider connection failed.";
+          apiErrorCode = rawErrData?.error_code || null;
+          await logVtuFailure({
+            provider: chosenProvider,
+            network: finalNetwork,
+            phone: finalPhone,
+            planId: resolvedPlanCode,
+            planName: plan_name || planName || "",
+            amount: finalAmount,
+            error: apiErrorMsg,
+            raw: rawErrData,
+            userId: pgUuid
+          });
+        }
+      }
+      if (purchaseOutcome === "pending") {
+        console.warn(`[VTU PENDING] Leaving ${finalType} purchase for ${finalPhone} pending (${localRef}).`);
+        return res.json({
+          status: "processing",
+          message: "Your purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+          reference: localRef,
+          transaction: {
+            reference: localRef,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType
+          }
         });
       }
       if (apiSuccess) {
@@ -2017,12 +2182,28 @@ async function startServer() {
           apiKey: apiKey2
         });
       } catch (provErr) {
+        if (!provErr?.response) {
+          console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${provErr?.message || "network error"} -- funds kept locked, transaction left pending (${localRef}).`);
+          return res.status(200).json({
+            status: "processing",
+            message: "Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+            reference: localRef
+          });
+        }
         const errMsg = provErr.response?.data?.error || provErr.message || "Provider connection failed.";
         await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: "airtime", planName: "airtime", amount: parsedAmount, error: errMsg, raw: provErr.response?.data, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc("increment_balance", { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from("transactions").update({ status: refundErr ? "failed" : "refunded" }).eq("id", txDbId);
         return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
+      }
+      if (purchaseResult.ambiguous) {
+        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${purchaseResult.error} -- funds kept locked, transaction left pending (${localRef}).`);
+        return res.status(200).json({
+          status: "processing",
+          message: "Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+          reference: localRef
+        });
       }
       if (!purchaseResult.success) {
         const errMsg = purchaseResult.error || "Gateway rejected the transaction.";
@@ -2549,6 +2730,12 @@ async function startServer() {
       let apiResponseData = null;
       let apiErrorMsg = "";
       let apiErrorCode = null;
+      let purchaseOutcome = "failed";
+      const isAmbiguousProviderError = (err) => {
+        if (!err) return false;
+        if (err.response) return false;
+        return true;
+      };
       try {
         const result = await provider.purchase({
           type: finalType,
@@ -2563,6 +2750,11 @@ async function startServer() {
         apiResponseData = result.raw;
         if (result.success) {
           apiSuccess = true;
+          purchaseOutcome = "success";
+        } else if (result.ambiguous) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = result.error || "Provider confirmation pending.";
+          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
         } else {
           apiErrorMsg = result.error || "Purchase rejected by gateway.";
           apiErrorCode = apiResponseData?.error_code || null;
@@ -2581,18 +2773,39 @@ async function startServer() {
       } catch (providerErr) {
         const rawErrData = providerErr.response?.data;
         apiResponseData = rawErrData;
-        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || "Provider connection failed.";
-        apiErrorCode = rawErrData?.error_code || null;
-        await logVtuFailure({
-          provider: chosenProvider,
-          network: finalNetwork,
-          phone: finalPhone,
-          planId: resolvedPlanCode,
-          planName: finalPlan || finalType,
-          amount: finalAmount,
-          error: apiErrorMsg,
-          raw: rawErrData,
-          userId: pgUuid
+        if (isAmbiguousProviderError(providerErr)) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = providerErr?.message || "Provider connection could not be confirmed.";
+          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
+        } else {
+          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || "Provider connection failed.";
+          apiErrorCode = rawErrData?.error_code || null;
+          await logVtuFailure({
+            provider: chosenProvider,
+            network: finalNetwork,
+            phone: finalPhone,
+            planId: resolvedPlanCode,
+            planName: finalPlan || finalType,
+            amount: finalAmount,
+            error: apiErrorMsg,
+            raw: rawErrData,
+            userId: pgUuid
+          });
+        }
+      }
+      if (purchaseOutcome === "pending") {
+        console.warn(`[VTU/purchase PENDING] Leaving ${finalType} purchase for ${finalPhone} pending (${localRef}).`);
+        return res.json({
+          status: "processing",
+          message: "Your purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+          reference: localRef,
+          transaction: {
+            reference: localRef,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType
+          }
         });
       }
       if (apiSuccess) {
@@ -3037,6 +3250,10 @@ async function startServer() {
           apiKey: mozKey
         });
         const reference = utilityResult.reference || `MOZO-${reqType.toUpperCase()}-${Date.now()}`;
+        if (utilityResult.ambiguous) {
+          console.warn(`[Utility AMBIGUOUS OUTCOME] ${reqType} for ${number}: ${utilityResult.error} -- funds kept locked, left pending.`);
+          return res.json({ status: "processing", pending: true, message: "Your transaction is being confirmed by the provider.", reference });
+        }
         if (!utilityResult.success) {
           const { error: refundErr } = await supabase.rpc("increment_balance", { user_uuid: profile.id, amount: finalPrice });
           await supabase.from("transactions").insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: refundErr ? "refund_failed" : "refunded", description: `${String(provider).toUpperCase()} ${reqType} failed`, reference, platform: "mozosubz", payment_method: "wallet", created_at: (/* @__PURE__ */ new Date()).toISOString() });

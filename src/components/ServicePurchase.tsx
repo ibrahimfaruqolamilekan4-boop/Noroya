@@ -65,7 +65,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   const [fetchingPlans, setFetchingPlans] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [showConfirmModal, setShowConfirmModal] = React.useState(false);
-  const [purchaseStatus, setPurchaseStatus] = React.useState<'idle' | 'success' | 'failed'>('idle');
+  const [purchaseStatus, setPurchaseStatus] = React.useState<'idle' | 'success' | 'failed' | 'processing'>('idle');
   const [createdTransaction, setCreatedTransaction] = React.useState<any>(null);
 
   // Dropdown open states
@@ -203,6 +203,12 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
           setPurchaseStatus('success');
           toast.success('Data purchase successful!');
+        } else if (response.ok && resData.status === 'processing') {
+          // Provider outcome pending (slow gateway). Funds are locked and the
+          // transaction is NOT refunded -- show a neutral "processing" state
+          // instead of the old false "purchase failed / wallet refunded" error.
+          setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
+          setPurchaseStatus('processing');
         } else {
           setPurchaseStatus('failed');
           toast.error(resData.error || resData.provider_message || 'Data purchase failed.', { duration: 6000 });
@@ -215,6 +221,11 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
           setPurchaseStatus('success');
           toast.success(`₦${airtimeAmount} airtime sent!`);
+        } else if (response.ok && resData.status === 'processing') {
+          // Provider outcome pending (slow gateway): show "processing", not a
+          // false failure -- the wallet stays charged while the network confirms.
+          setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
+          setPurchaseStatus('processing');
         } else {
           setPurchaseStatus('failed');
           toast.error(resData.error || resData.provider_message || 'Airtime purchase failed.', { duration: 6000 });
@@ -231,14 +242,19 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     setPurchaseStatus('idle'); setCreatedTransaction(null);
   };
 
-  if (purchaseStatus === 'success') {
+  if (purchaseStatus === 'success' || purchaseStatus === 'processing') {
+    const isProcessing = purchaseStatus === 'processing';
     return (
       <div className="max-w-lg mx-auto">
         <div className="rounded-3xl p-8 text-center" style={{ backgroundColor: '#132613' }}>
-          <SuccessFeedback size={80} showConfetti={true} />
-          <h2 className="text-2xl font-black text-white mt-5 mb-2">Purchase successful!</h2>
+          <SuccessFeedback size={80} showConfetti={!isProcessing} />
+          <h2 className="text-2xl font-black text-white mt-5 mb-2">
+            {isProcessing ? 'Purchase processing' : 'Purchase successful!'}
+          </h2>
           <p className="text-sm mb-7" style={{ color: '#8FB88F' }}>
-            Your transaction is processing. The recipient will be credited shortly.
+            {isProcessing
+              ? 'Your purchase has been sent to the network and is being confirmed. Your wallet has been charged; if the network rejects it, you are refunded automatically.'
+              : 'Your transaction is processing. The recipient will be credited shortly.'}
           </p>
 
           <div className="rounded-2xl p-5 text-left space-y-3 mb-6" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
