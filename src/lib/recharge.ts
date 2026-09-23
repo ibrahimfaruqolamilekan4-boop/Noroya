@@ -198,7 +198,10 @@ export async function purchaseDataBundle(
   }
   return {
     success: true,
-    reference: data.transaction?.reference
+    // Provider outcome pending (slow gateway): charged but not yet confirmed.
+    // NOT a failure -- the server keeps the funds locked instead of refunding.
+    processing: data.status === 'processing',
+    reference: data.transaction?.reference || data.reference
   };
 }
 

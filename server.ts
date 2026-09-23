@@ -1111,6 +1111,10 @@ async function startServer() {
       let apiResponseData: any = null;
       let apiErrorMsg = "";
       let apiErrorCode: string | null = null;
+      // 'pending' = outcome unknown (provider timeout / network error). Funds stay
+      // locked and the transaction stays pending -- the provider may still have
+      // delivered the value, so we must NOT auto-refund in that case.
+      let purchaseOutcome: "success" | "failed" | "pending" = "failed";
 
       if (!provider) {
         return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
@@ -1155,6 +1159,15 @@ async function startServer() {
         console.warn("[VTU pending transaction insert warning]:", txErr.message || txErr);
       }
 
+      // A provider error with NO HTTP response (timeout, DNS, connection reset)
+      // means the gateway may still have processed the order: the outcome is
+      // UNKNOWN. Only a real HTTP error response is a definite rejection.
+      const isAmbiguousProviderError = (err: any): boolean => {
+        if (!err) return false;
+        if (err.response) return false; // gateway definitely answered
+        return true;                    // no response = unknown outcome
+      };
+
       // 5. Call the provider now that funds are safely locked.
       try {
         const result = await provider.purchase({
@@ -1171,6 +1184,14 @@ async function startServer() {
         apiResponseData = result.raw;
         if (result.success) {
           apiSuccess = true;
+          purchaseOutcome = "success";
+        } else if (result.ambiguous) {
+          // Unknown outcome -- keep funds locked and the transaction pending.
+          // The provider may still deliver the value; refunding here is what
+          // previously refunded users whose data HAD actually arrived.
+          purchaseOutcome = "pending";
+          apiErrorMsg = result.error || 'Provider confirmation pending.';
+          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
         } else {
           apiErrorMsg = result.error || 'Purchase rejected by gateway.';
           apiErrorCode = apiResponseData?.error_code || null;
@@ -1189,24 +1210,49 @@ async function startServer() {
       } catch (providerErr: any) {
         const rawErrData = providerErr.response?.data;
         apiResponseData = rawErrData;
-        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-        apiErrorCode = rawErrData?.error_code || null;
-        await logVtuFailure({
-          provider:  chosenProvider,
-          network:   finalNetwork,
-          phone:     finalPhone,
-          planId:    resolvedPlanCode,
-          planName:  plan_name || planName || '',
-          amount:    finalAmount,
-          error:     apiErrorMsg,
-          raw:       rawErrData,
-          userId:    pgUuid,
-        });
+        if (isAmbiguousProviderError(providerErr)) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
+          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
+        } else {
+          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
+          apiErrorCode = rawErrData?.error_code || null;
+          await logVtuFailure({
+            provider:  chosenProvider,
+            network:   finalNetwork,
+            phone:     finalPhone,
+            planId:    resolvedPlanCode,
+            planName:  plan_name || planName || '',
+            amount:    finalAmount,
+            error:     apiErrorMsg,
+            raw:       rawErrData,
+            userId:    pgUuid,
+          });
+        }
       }
 
       // 6. Settle: on success just mark the transaction complete (funds already locked/deducted).
-      // On failure, AUTOMATICALLY REFUND the locked amount back to the user's wallet via the
-      // increment_balance() RPC, and mark the transaction failed/refunded.
+      // On an UNKNOWN outcome (pending), keep the funds locked and leave the
+      // transaction pending -- the provider may still deliver the value, so we
+      // must NOT refund. On a definite failure, AUTOMATICALLY REFUND the locked
+      // amount back to the user's wallet via the increment_balance() RPC, and
+      // mark the transaction failed/refunded.
+      if (purchaseOutcome === "pending") {
+        console.warn(`[VTU PENDING] Leaving ${finalType} purchase for ${finalPhone} pending (${localRef}).`);
+        return res.json({
+          status: "processing",
+          message: "Your purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+          reference: localRef,
+          transaction: {
+            reference: localRef,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType,
+          },
+        });
+      }
+
       if (apiSuccess) {
         const referenceCode = apiResponseData?.transaction_id || apiResponseData?.reference || apiResponseData?.id || localRef;
         try {
@@ -2461,12 +2507,33 @@ if (Object.keys(updateData).length <= 1) {
           apiKey,
         });
       } catch (provErr: any) {
+        // No HTTP response (timeout / DNS / connection reset) = unknown outcome:
+        // the provider may still deliver the airtime, so keep the funds locked
+        // and leave the transaction pending instead of auto-refunding.
+        if (!provErr?.response) {
+          console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${provErr?.message || 'network error'} -- funds kept locked, transaction left pending (${localRef}).`);
+          return res.status(200).json({
+            status: 'processing',
+            message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
+            reference: localRef,
+          });
+        }
         const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
         await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
         return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
+      }
+
+      if (purchaseResult.ambiguous) {
+        // Unknown outcome -- keep the charge, leave the transaction pending.
+        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${purchaseResult.error} -- funds kept locked, transaction left pending (${localRef}).`);
+        return res.status(200).json({
+          status: 'processing',
+          message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
+          reference: localRef,
+        });
       }
 
       if (!purchaseResult.success) {
@@ -3122,6 +3189,19 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       let apiResponseData: any = null;
       let apiErrorMsg = "";
       let apiErrorCode: string | null = null;
+      // 'pending' = outcome unknown (provider timeout / network error). Funds stay
+      // locked and the transaction stays pending -- the provider may still have
+      // delivered the value, so we must NOT auto-refund in that case.
+      let purchaseOutcome: "success" | "failed" | "pending" = "failed";
+
+      // A provider error with NO HTTP response (timeout, DNS, connection reset)
+      // means the gateway may still have processed the order: the outcome is
+      // UNKNOWN. Only a real HTTP error response is a definite rejection.
+      const isAmbiguousProviderError = (err: any): boolean => {
+        if (!err) return false;
+        if (err.response) return false; // gateway definitely answered
+        return true;                    // no response = unknown outcome
+      };
 
       try {
         const result = await provider.purchase({
@@ -3137,6 +3217,11 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         apiResponseData = result.raw;
         if (result.success) {
           apiSuccess = true;
+          purchaseOutcome = "success";
+        } else if (result.ambiguous) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = result.error || 'Provider confirmation pending.';
+          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
         } else {
           apiErrorMsg = result.error || 'Purchase rejected by gateway.';
           apiErrorCode = apiResponseData?.error_code || null;
@@ -3149,12 +3234,36 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       } catch (providerErr: any) {
         const rawErrData = providerErr.response?.data;
         apiResponseData = rawErrData;
-        apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-        apiErrorCode = rawErrData?.error_code || null;
-        await logVtuFailure({
-          provider: chosenProvider, network: finalNetwork, phone: finalPhone,
-          planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
-          error: apiErrorMsg, raw: rawErrData, userId: pgUuid,
+        if (isAmbiguousProviderError(providerErr)) {
+          purchaseOutcome = "pending";
+          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
+          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
+        } else {
+          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
+          apiErrorCode = rawErrData?.error_code || null;
+          await logVtuFailure({
+            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
+            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
+            error: apiErrorMsg, raw: rawErrData, userId: pgUuid,
+          });
+        }
+      }
+
+      if (purchaseOutcome === "pending") {
+        // Outcome unknown: the provider may still deliver the value, so funds
+        // stay locked and the transaction stays pending -- never refund here.
+        console.warn(`[VTU/purchase PENDING] Leaving ${finalType} purchase for ${finalPhone} pending (${localRef}).`);
+        return res.json({
+          status: "processing",
+          message: "Your purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.",
+          reference: localRef,
+          transaction: {
+            reference: localRef,
+            amount: finalAmount,
+            phone: finalPhone,
+            network: finalNetwork,
+            type: finalType,
+          },
         });
       }
 
@@ -3698,6 +3807,12 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           amount: finalPrice, phone: String(req.body.phone || req.body.phoneNumber || number), apiKey: mozKey,
         });
         const reference = utilityResult.reference || `MOZO-${reqType.toUpperCase()}-${Date.now()}`;
+        if (utilityResult.ambiguous) {
+          // Unknown outcome: the provider may still fulfil the request. Keep the
+          // funds locked and report processing instead of auto-refunding.
+          console.warn(`[Utility AMBIGUOUS OUTCOME] ${reqType} for ${number}: ${utilityResult.error} -- funds kept locked, left pending.`);
+          return res.json({ status: 'processing', pending: true, message: 'Your transaction is being confirmed by the provider.', reference });
+        }
         if (!utilityResult.success) {
           const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: profile.id, amount: finalPrice });
           await supabase.from('transactions').insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: refundErr ? 'refund_failed' : 'refunded', description: `${String(provider).toUpperCase()} ${reqType} failed`, reference, platform: 'mozosubz', payment_method: 'wallet', created_at: new Date().toISOString() });

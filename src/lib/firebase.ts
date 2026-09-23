@@ -21,4 +21,10 @@ async function testConnection() {
   }
 }
 
-testConnection();
+// Defer the connection probe off the initial page load (it is diagnostic only
+// and used to compete with the app bundle for the first network slots).
+if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+  window.requestIdleCallback(() => { void testConnection(); });
+} else if (typeof window !== "undefined") {
+  window.setTimeout(() => { void testConnection(); }, 3000);
+}
