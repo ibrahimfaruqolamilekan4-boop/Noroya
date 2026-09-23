@@ -4228,164 +4228,225 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   });
 
   // Secure Flutterwave Webhook Endpoint
+  //
+  // SERVERLESS SAFETY (root cause of "webhook delivered but wallet never
+  // credited"): this handler used to answer Flutterwave with
+  // res.status(200).send("Webhook Received") FIRST and then do the real work
+  // (signature check, transaction re-verification, wallet credit RPC) inside a
+  // fire-and-forget promise. That pattern only works on a long-lived Express
+  // server. On Vercel's serverless runtime the invocation is frozen as soon as
+  // the response is flushed, so the background promise was regularly killed
+  // mid-flight -- Flutterwave saw a clean 200 "Webhook Received" while the
+  // payment was never credited. The handler now performs ALL work and only
+  // then responds: a delivered webhook always ends in either a credit or a
+  // retryable 5xx (Flutterwave re-delivers, and the insert-first credit RPC
+  // makes every retry idempotent).
   const handleFlutterwaveWebhook = async (req: any, res: any) => {
-    // Acknowledge Flutterwave immediately so they know the server is up
-    res.status(200).send("Webhook Received");
+    const respond = (code: number, body: string) => {
+      if (res.writableEnded || res.headersSent) return;
+      try { res.status(code).send(body); } catch { /* socket already gone */ }
+    };
+    try {
+      console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave");
 
-    // Process everything in the background to prevent timeouts
-    (async () => {
-      try {
-        console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave asynchronously");
-        
-        // 2. SIGNATURE VALIDATION
-        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
-        
-        const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-        const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+      // 2. SIGNATURE VALIDATION
+      const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+      const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
 
-        let isAuthorized = false;
-        // Flutterwave's current contract is HMAC-SHA256 over the exact raw request
-        // bytes, encoded as Base64, in the flutterwave-signature header.
-        if (signature && secretHash) {
-          try {
-            const rawBody = Buffer.isBuffer(req.rawBody)
-              ? req.rawBody
-              : Buffer.from(typeof req.rawBody === 'string' ? req.rawBody : safeJsonStringify(req.body), 'utf8');
-            const expectedSignature = crypto
-              .createHmac('sha256', secretHash)
-              .update(rawBody)
-              .digest('base64');
-            if (signature === expectedSignature) isAuthorized = true;
+      const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
+      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
 
-            // Keep legacy dashboard verif-hash compatibility, but never use it
-            // for the current flutterwave-signature HMAC path.
-            if (!isAuthorized && rawSignature === req.headers['verif-hash'] && signature === secretHash) {
-              isAuthorized = true;
-            }
-          } catch (cryptoErr) {
-            console.error('[Flutterwave Webhook HMAC validation error]:', cryptoErr);
+      let isAuthorized = false;
+      // Flutterwave's current contract is HMAC-SHA256 over the exact raw request
+      // bytes, encoded as Base64, in the flutterwave-signature header.
+      if (signature && secretHash) {
+        try {
+          const rawBody = Buffer.isBuffer(req.rawBody)
+            ? req.rawBody
+            : Buffer.from(typeof req.rawBody === 'string' ? req.rawBody : safeJsonStringify(req.body), 'utf8');
+          const expectedSignature = crypto
+            .createHmac('sha256', secretHash)
+            .update(rawBody)
+            .digest('base64');
+          if (signature === expectedSignature) isAuthorized = true;
+
+          // Keep legacy dashboard verif-hash compatibility, but never use it
+          // for the current flutterwave-signature HMAC path.
+          if (!isAuthorized && rawSignature === req.headers['verif-hash'] && signature === secretHash) {
+            isAuthorized = true;
           }
+        } catch (cryptoErr) {
+          console.error('[Flutterwave Webhook HMAC validation error]:', cryptoErr);
         }
+      }
 
-        // SECURITY: fail closed. The webhook secret hash is separate from the
-        // Flutterwave API secret used later for independent transaction verification.
-        if (!secretHash) {
-          console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook.");
-          return;
-        }
-        if (!isAuthorized) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
-          return;
-        }
+      // SECURITY: fail closed. The webhook secret hash is separate from the
+      // Flutterwave API secret used later for independent transaction verification.
+      if (!secretHash) {
+        console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook (respond 200 so Flutterwave stops retrying; fix the env var to receive credits).");
+        respond(200, "Webhook Received");
+        return;
+      }
+      if (!isAuthorized) {
+        console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. If this repeats, FLW_SECRET_HASH in Vercel does not match the secret hash on the Flutterwave dashboard.");
+        respond(200, "Webhook Received");
+        return;
+      }
 
-        const payload = req.body;
-        const event = payload.event;
-        const status = payload.data?.status || payload.status;
+      const payload = req.body;
+      const event = payload.event;
+      const status = payload.data?.status || payload.status;
 
-        // 3. TRANSACTION VERIFICATION
-        const isChargeCompleted = event === "charge.completed";
-        const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
+      // 3. TRANSACTION VERIFICATION
+      const isChargeCompleted = event === "charge.completed";
+      const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
 
-        if (!isChargeCompleted || !isSuccessful) {
-          console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
-          return;
-        }
+      if (!isChargeCompleted || !isSuccessful) {
+        console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+        respond(200, "Webhook Received");
+        return;
+      }
 
-        // SECURITY: Defense-in-depth -- independently re-verify this transaction directly against
-        // Flutterwave's own API before crediting anyone, even though the signature already passed.
-        const fwTxId = payload.data?.id || payload.id;
-        if (flwSecretKey && fwTxId) {
-          try {
-            const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
-              method: 'GET',
-              headers: { 'Authorization': `Bearer ${flwSecretKey}`, 'Content-Type': 'application/json' }
-            });
-            if (!verifyResp.ok) {
-              console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
-              return;
-            }
-            const verifyData = await verifyResp.json() as any;
-            if (verifyData?.status !== 'success' || !['successful', 'succeeded'].includes(verifyData?.data?.status)) {
-              console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
-              return;
-            }
-          } catch (verifyErr: any) {
-            console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+      // SECURITY: Defense-in-depth -- independently re-verify this transaction directly against
+      // Flutterwave's own API before crediting anyone, even though the signature already passed.
+      const fwTxId = payload.data?.id || payload.id;
+      if (flwSecretKey && fwTxId) {
+        try {
+          const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${flwSecretKey}`, 'Content-Type': 'application/json' }
+          });
+          if (!verifyResp.ok) {
+            console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
+            respond(500, "Verification temporarily unavailable");
             return;
           }
-        } else {
-          console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
+          const verifyData = await verifyResp.json() as any;
+          if (verifyData?.status !== 'success' || !['successful', 'succeeded'].includes(verifyData?.data?.status)) {
+            console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
+            respond(500, "Verification failed");
+            return;
+          }
+        } catch (verifyErr: any) {
+          console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+          respond(500, "Verification temporarily unavailable");
           return;
         }
+      } else {
+        console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
+        respond(200, "Webhook Received");
+        return;
+      }
 
-        // Extract transaction details
-        const txId = payload.data?.id || payload.id;
-        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-        const amount = Number(payload.data?.amount || payload.amount);
+      // Extract transaction details
+      const txId = payload.data?.id || payload.id;
+      // The client-generated tx_ref (e.g. "NOR-FW-...") is the SAME key claimed by
+      // the frontend /api/payments/verify-flutterwave path, so using it here makes
+      // both credit paths share one idempotency lock -- no double-credit when the
+      // in-page verification and the webhook both fire for the same payment.
+      const txRef = String(payload.data?.tx_ref || payload.tx_ref || "").trim();
+      const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
+      const amount = Number(payload.data?.amount || payload.amount);
 
-        if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
-          console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
-          return;
-        }
+      if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
+        console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
+        respond(400, "Bad Request: Incomplete webhook payload parameters.");
+        return;
+      }
 
-        console.log(`[Flutterwave Webhook Background] Processing transaction ${txId} for customer ${customerEmail} (Amount: ₦${amount})`);
+      if (!serverHasServiceRoleKey) {
+        console.error("[Flutterwave Webhook] SUPABASE_SERVICE_ROLE_KEY is missing on this deployment -- wallet credit RPCs are service-role only and will fail. Set it in Project Settings -> Environment Variables and redeploy.");
+      }
 
-        // Idempotency check: Prevent double-crediting
+      console.log(`[Flutterwave Webhook] Processing transaction ${txId} (tx_ref ${txRef || 'n/a'}) for customer ${customerEmail} (Amount: ₦${amount})`);
+
+      // Idempotency check across BOTH keys and BOTH tables: the transactions
+      // row written by either credit path and the processed_payments lock row.
+      const referenceKeys = [txRef, String(txId)].filter(Boolean);
+      let alreadyCredited = false;
+      {
         const { data: existingTx, error: txCheckErr } = await supabase
           .from("transactions")
-          .select("id")
-          .eq("reference", String(txId))
-          .maybeSingle();
-
+          .select("reference")
+          .in("reference", referenceKeys)
+          .limit(1);
         if (txCheckErr) {
-          console.warn("[Flutterwave Webhook Background] Idempotency query warning:", txCheckErr.message);
+          console.warn("[Flutterwave Webhook] Idempotency query warning (transactions):", txCheckErr.message);
         }
-
-        if (existingTx) {
-          console.log(`[Flutterwave Webhook Background] Reference ${txId} already processed. Skipping balance credit.`);
-          return;
-        }
-
-        // 4. SUPABASE WALLET UPDATE: Look up user in 'profiles' where email matches the customer email
-        const { data: profile, error: selectErr } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("email", customerEmail)
-          .maybeSingle();
-
-        if (selectErr) {
-          console.error(`[Flutterwave Webhook Background] Database error fetching profile for email ${customerEmail}:`, selectErr.message);
-          return;
-        }
-
-        if (!profile) {
-          console.error(`[Flutterwave Webhook Background] No profile found matching email: ${customerEmail}`);
-          return;
-        }
-
-        // SECURITY (audit H5/H6): credit via the insert-first idempotent RPC so a
-        // duplicate or replayed webhook delivery can never double-credit a wallet.
-        const { data: creditResult, error: rpcErr } = await supabase.rpc('process_webhook_credit_by_user', {
-          p_reference: String(txId),
-          p_user_uuid: profile.id,
-          p_amount: amount,
-          p_gateway: 'flutterwave',
-        });
-        if (rpcErr) {
-          console.error(`[Flutterwave Webhook Background] credit RPC FAILED -- manual intervention needed:`, rpcErr.message, { profileId: profile.id, amount, txId });
-          return;
-        }
-        if (creditResult?.status === 'already_processed') {
-          console.log(`[Flutterwave Webhook Background] Reference ${txId} already credited. Skipping.`);
-          return;
-        }
-        console.log(`[Flutterwave Webhook Background] Wallet credited via idempotent RPC for user ID: ${profile.id} (ref ${txId})`);
-
-      } catch (bgExc: any) {
-        console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
+        if (existingTx && existingTx.length > 0) alreadyCredited = true;
       }
-    })();
+      if (!alreadyCredited) {
+        const { data: existingPayment, error: payCheckErr } = await supabase
+          .from("processed_payments")
+          .select("reference")
+          .in("reference", referenceKeys)
+          .limit(1);
+        if (payCheckErr) {
+          console.warn("[Flutterwave Webhook] Idempotency query warning (processed_payments):", payCheckErr.message);
+        }
+        if (existingPayment && existingPayment.length > 0) alreadyCredited = true;
+      }
+      if (alreadyCredited) {
+        console.log(`[Flutterwave Webhook] Reference(s) ${referenceKeys.join(", ")} already credited. Skipping duplicate webhook.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+
+      // 4. SUPABASE WALLET UPDATE: Look up user in 'profiles' where email matches the customer email
+      const { data: profile, error: selectErr } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", customerEmail)
+        .maybeSingle();
+
+      if (selectErr) {
+        console.error(`[Flutterwave Webhook] Database error fetching profile for email ${customerEmail}:`, selectErr.message);
+        respond(500, "Database error");
+        return;
+      }
+
+      if (!profile) {
+        // Retrying will not help -- the paying email is not a registered profile
+        // email. Respond 200 so Flutterwave stops retrying, but scream in the
+        // logs: this payment needs a manual credit.
+        console.error(`[Flutterwave Webhook] CRITICAL: No profile found matching email: ${customerEmail} (tx ${txId}, ₦${amount}). This payment was NOT credited and needs manual intervention.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+
+      // SECURITY (audit H5/H6): credit via the insert-first idempotent RPC so a
+      // duplicate or replayed webhook delivery can never double-credit a wallet.
+      const { data: creditResult, error: rpcErr } = await supabase.rpc('process_webhook_credit_by_user', {
+        p_reference: txRef || String(txId),
+        p_user_uuid: profile.id,
+        p_amount: amount,
+        p_gateway: 'flutterwave',
+      });
+      if (rpcErr) {
+        // Transient/DB-side failure: answer 5xx so Flutterwave re-delivers.
+        // The insert-first RPC keeps the retry idempotent.
+        console.error(`[Flutterwave Webhook] credit RPC FAILED -- manual intervention may be needed:`, rpcErr.message, { profileId: profile.id, amount, txId, txRef });
+        respond(500, "Credit failed");
+        return;
+      }
+      if (creditResult?.status === 'already_processed') {
+        console.log(`[Flutterwave Webhook] Reference ${txRef || txId} already credited. Skipping.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+      if (creditResult?.status === 'error') {
+        console.error(`[Flutterwave Webhook] credit RPC returned error:`, creditResult.message, { profileId: profile.id, amount, txId, txRef });
+        respond(500, "Credit failed");
+        return;
+      }
+      console.log(`[Flutterwave Webhook] Wallet credited via idempotent RPC for user ID: ${profile.id} (ref ${txRef || txId})`);
+
+      respond(200, "Webhook Received");
+
+    } catch (bgExc: any) {
+      console.error("[Flutterwave Webhook Execution Error]:", bgExc.message || bgExc);
+      respond(500, "Webhook processing failed");
+    }
   };
 
   // Both legacy webhook URL variants point to the same hardened handler above.
