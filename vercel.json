@@ -9,6 +9,10 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/(webhook|webhooks)/flutterwave",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/config/supabase.js",
       "destination": "/api/index.js"
     },

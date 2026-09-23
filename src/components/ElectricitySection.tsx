@@ -851,14 +851,41 @@ function DashboardOverview({
         setFwLoading(false); toast.error('Flutterwave not configured.', { duration: 8000 }); return;
       }
       const verifyOnServer = async (transactionId: string) => {
-        setFwLoading(false);
-        fetch('/api/payments/verify-flutterwave', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
-        }).catch(() => {});
-        toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
-        setShowFundModal(false); setOpayAmount('2000');
-        setTimeout(refreshBalance, 1500);
+        // SECURITY/UX: wait for the server-side verification result before
+        // claiming success. The old code fired this request without awaiting
+        // and immediately showed "Topped up!" -- users saw success while the
+        // wallet was never credited (the exact "money confirmed but balance
+        // not added" complaint). The wallet credit itself is always the
+        // server-side /api/payments/verify-flutterwave (or the Flutterwave
+        // webhook) -- never the client.
+        setFwLoading(true);
+        try {
+          const resp = await fetch('/api/payments/verify-flutterwave', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
+          });
+          const data = await resp.json().catch(() => ({} as any));
+          if (resp.ok) {
+            // 200 = wallet credited (or already credited earlier)
+            toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
+            setShowFundModal(false); setOpayAmount('2000');
+            setTimeout(refreshBalance, 1200);
+          } else {
+            // Payment went through at the gateway but the credit is not
+            // confirmed yet (typically a delayed bank-transfer confirmation).
+            // The webhook finishes the credit server-side, so tell the user
+            // the truth and re-check later.
+            toast.error(data?.error || data?.message || 'Payment received — wallet credit is still pending. It will reflect automatically.', { duration: 9000 });
+            setShowFundModal(false); setOpayAmount('2000');
+            setTimeout(refreshBalance, 6000);
+          }
+        } catch {
+          toast('Payment submitted — your wallet will update once the payment is confirmed.', { duration: 9000, icon: '⏳' });
+          setShowFundModal(false); setOpayAmount('2000');
+          setTimeout(refreshBalance, 6000);
+        } finally {
+          setFwLoading(false);
+        }
       };
       (window as any).FlutterwaveCheckout({
         public_key: flutterwavePublicKey, tx_ref: reference, amount: amt, currency: 'NGN', country: 'NG',
