@@ -337,7 +337,7 @@ async function startServer() {
   // After an API-key rotation, a missing env var fails LOUD here instead of
   // surfacing later as confusing "Invalid API key" / permission-denied errors.
   const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-  const optionalEnvs = ["GEMINI_API_KEY", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
+  const optionalEnvs = ["GEMINI_API_KEY", "FLW_SECRET_HASH", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
   const missingRequired = requiredEnvs.filter((k) => !(process.env[k] || "").trim());
   const missingOptional = optionalEnvs.filter((k) => !(process.env[k] || "").trim());
   if (missingRequired.length) {
@@ -428,7 +428,16 @@ async function startServer() {
   };
 
   const JSON_BODY_LIMIT = "128kb";
-  app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  // SECURITY: capture the RAW body bytes BEFORE JSON parsing so webhook HMAC
+  // signature checks (Flutterwave/Paystack) always verify against the exact
+  // bytes the provider signed. Without this, req.rawBody only exists on the
+  // Vercel serverless wrapper; every other runtime falls back to re-serialized
+  // JSON whose whitespace/key order makes signature verification fail, so
+  // webhooks are silently discarded.
+  app.use(express.json({
+    limit: JSON_BODY_LIMIT,
+    verify: (req: any, _res: any, buf: Buffer) => { req.rawBody = buf; }
+  }));
   // Global API throttle + a stricter bucket for money-touching endpoints.
   app.use("/api", rateLimit(300, 60_000));
   const purchaseRateLimit = rateLimit(30, 60_000);
@@ -4368,8 +4377,12 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
       const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
 
-      const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+      // Accept BOTH documented env-var names. The startup config audit used to
+      // advertise FLUTTERWAVE_SECRET_HASH while this handler read only
+      // FLW_SECRET_HASH: a hash configured under the "other" name left this
+      // empty, and every webhook was swallowed with a silent 200 and no credit.
+      const secretHash = (process.env.FLW_SECRET_HASH || process.env.FLUTTERWAVE_SECRET_HASH || "").trim().replace(/['"]/g, "");
+      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY || "").trim().replace(/['"]/g, "");
 
       let isAuthorized = false;
       // Flutterwave's current contract is HMAC-SHA256 over the exact raw request
@@ -4398,13 +4411,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // SECURITY: fail closed. The webhook secret hash is separate from the
       // Flutterwave API secret used later for independent transaction verification.
       if (!secretHash) {
-        console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook (respond 200 so Flutterwave stops retrying; fix the env var to receive credits).");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] WEBHOOK SECRET NOT CONFIGURED on this deployment. Set FLW_SECRET_HASH (or FLUTTERWAVE_SECRET_HASH) to the Secret hash from Flutterwave Dashboard -> Settings -> Webhooks, then redeploy. Answering 503 so the failure is visible in Flutterwave's delivery log instead of silently swallowing every webhook.");
+        respond(503, "Server not configured for webhook verification");
         return;
       }
       if (!isAuthorized) {
-        console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. If this repeats, FLW_SECRET_HASH in Vercel does not match the secret hash on the Flutterwave dashboard.");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] SIGNATURE VERIFICATION FAILED. The FLW_SECRET_HASH/FLUTTERWAVE_SECRET_HASH env var on this deployment does not match the Secret hash on the Flutterwave dashboard (or the request did not come from Flutterwave). Fix the env var to resume automatic wallet credits.");
+        respond(401, "Unauthorized: Invalid webhook signature");
         return;
       }
 
@@ -4448,8 +4461,8 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           return;
         }
       } else {
-        console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] Cannot independently verify the transaction: FLUTTERWAVE_SECRET_KEY is not configured on this deployment (or tx id missing). Answering 503 -- silently answering 200 here is what made 'confirmed payments with no wallet credit' invisible in the Flutterwave dashboard.");
+        respond(503, "Cannot verify transaction: API secret key not configured");
         return;
       }
 
@@ -4565,7 +4578,42 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   };
 
   // Both legacy webhook URL variants point to the same hardened handler above.
-  app.post(["/api/webhook/flutterwave", "/api/webhooks/flutterwave"], handleFlutterwaveWebhook);
+  // Reachability: Flutterwave POSTs only to the exact URL saved in its
+  // dashboard. A path the app never served reads as "cannot reach your
+  // endpoint" from Flutterwave's side (404). Serve every common variant.
+  app.post(
+    [
+      "/api/webhook/flutterwave",
+      "/api/webhooks/flutterwave",
+      "/api/flutterwave/webhook",
+      "/api/flutterwave/webhooks",
+      "/api/payments/flutterwave-webhook",
+      "/api/v1/webhook/flutterwave",
+      "/api/v1/webhooks/flutterwave",
+      // Root-level variants (routed here by the vercel.json rewrite).
+      "/webhook/flutterwave",
+      "/webhooks/flutterwave",
+    ],
+    handleFlutterwaveWebhook
+  );
+
+  // Lightweight self-check so the owner can confirm from any browser that the
+  // live deployment is configured to receive Flutterwave webhooks. Reports
+  // presence only -- never the secret values themselves.
+  app.get(["/api/payments/flutterwave-webhook-health", "/api/webhook/flutterwave/health"], (_req, res) => {
+    const secretHash = (process.env.FLW_SECRET_HASH || process.env.FLUTTERWAVE_SECRET_HASH || "").trim();
+    const secretKey = (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY || "").trim();
+    const looksReal = (v: string) => Boolean(v) && !v.includes("PASTE_YOUR") && !v.includes("xxxxxx");
+    res.json({
+      status: "ok",
+      flutterwaveWebhookSecretConfigured: looksReal(secretHash),
+      flutterwaveSecretKeyConfigured: looksReal(secretKey),
+      supabaseServiceRoleConfigured: serverHasServiceRoleKey,
+      // This is the URL to set in Flutterwave Dashboard -> Settings -> Webhooks
+      recommendedWebhookUrl: "/api/webhook/flutterwave",
+      timestamp: new Date().toISOString(),
+    });
+  });
 
 
   // Secure Mozosubz Webhook Handler Route

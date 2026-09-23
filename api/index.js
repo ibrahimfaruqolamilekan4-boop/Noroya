@@ -528,7 +528,7 @@ var getGeminiAi = () => {
 };
 async function startServer() {
   const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-  const optionalEnvs = ["GEMINI_API_KEY", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
+  const optionalEnvs = ["GEMINI_API_KEY", "FLW_SECRET_HASH", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
   const missingRequired = requiredEnvs.filter((k) => !(process.env[k] || "").trim());
   const missingOptional = optionalEnvs.filter((k) => !(process.env[k] || "").trim());
   if (missingRequired.length) {
@@ -615,7 +615,12 @@ async function startServer() {
     return next();
   };
   const JSON_BODY_LIMIT = "128kb";
-  app.use(express2.json({ limit: JSON_BODY_LIMIT }));
+  app.use(express2.json({
+    limit: JSON_BODY_LIMIT,
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
   app.use("/api", rateLimit(300, 6e4));
   const purchaseRateLimit = rateLimit(30, 6e4);
   const isProviderSecretRow = (row) => /(_api_key|_connect_key|_webhook_secret)$/i.test(String(row?.bigisub_identifier_id || "")) || /^(sk|pk)_|^connect_/i.test(String(row?.item_name || ""));
@@ -3667,8 +3672,8 @@ AI:`;
       console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave");
       const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
       const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
-      const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+      const secretHash = (process.env.FLW_SECRET_HASH || process.env.FLUTTERWAVE_SECRET_HASH || "").trim().replace(/['"]/g, "");
+      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY || "").trim().replace(/['"]/g, "");
       let isAuthorized = false;
       if (signature && secretHash) {
         try {
@@ -3683,13 +3688,13 @@ AI:`;
         }
       }
       if (!secretHash) {
-        console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook (respond 200 so Flutterwave stops retrying; fix the env var to receive credits).");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] WEBHOOK SECRET NOT CONFIGURED on this deployment. Set FLW_SECRET_HASH (or FLUTTERWAVE_SECRET_HASH) to the Secret hash from Flutterwave Dashboard -> Settings -> Webhooks, then redeploy. Answering 503 so the failure is visible in Flutterwave's delivery log instead of silently swallowing every webhook.");
+        respond(503, "Server not configured for webhook verification");
         return;
       }
       if (!isAuthorized) {
-        console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. If this repeats, FLW_SECRET_HASH in Vercel does not match the secret hash on the Flutterwave dashboard.");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] SIGNATURE VERIFICATION FAILED. The FLW_SECRET_HASH/FLUTTERWAVE_SECRET_HASH env var on this deployment does not match the Secret hash on the Flutterwave dashboard (or the request did not come from Flutterwave). Fix the env var to resume automatic wallet credits.");
+        respond(401, "Unauthorized: Invalid webhook signature");
         return;
       }
       const payload = req.body;
@@ -3726,8 +3731,8 @@ AI:`;
           return;
         }
       } else {
-        console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
-        respond(200, "Webhook Received");
+        console.error("[Flutterwave Webhook] Cannot independently verify the transaction: FLUTTERWAVE_SECRET_KEY is not configured on this deployment (or tx id missing). Answering 503 -- silently answering 200 here is what made 'confirmed payments with no wallet credit' invisible in the Flutterwave dashboard.");
+        respond(503, "Cannot verify transaction: API secret key not configured");
         return;
       }
       const txId = payload.data?.id || payload.id;
@@ -3803,7 +3808,35 @@ AI:`;
       respond(500, "Webhook processing failed");
     }
   };
-  app.post(["/api/webhook/flutterwave", "/api/webhooks/flutterwave"], handleFlutterwaveWebhook);
+  app.post(
+    [
+      "/api/webhook/flutterwave",
+      "/api/webhooks/flutterwave",
+      "/api/flutterwave/webhook",
+      "/api/flutterwave/webhooks",
+      "/api/payments/flutterwave-webhook",
+      "/api/v1/webhook/flutterwave",
+      "/api/v1/webhooks/flutterwave",
+      // Root-level variants (routed here by the vercel.json rewrite).
+      "/webhook/flutterwave",
+      "/webhooks/flutterwave"
+    ],
+    handleFlutterwaveWebhook
+  );
+  app.get(["/api/payments/flutterwave-webhook-health", "/api/webhook/flutterwave/health"], (_req, res) => {
+    const secretHash = (process.env.FLW_SECRET_HASH || process.env.FLUTTERWAVE_SECRET_HASH || "").trim();
+    const secretKey = (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY || "").trim();
+    const looksReal = (v) => Boolean(v) && !v.includes("PASTE_YOUR") && !v.includes("xxxxxx");
+    res.json({
+      status: "ok",
+      flutterwaveWebhookSecretConfigured: looksReal(secretHash),
+      flutterwaveSecretKeyConfigured: looksReal(secretKey),
+      supabaseServiceRoleConfigured: serverHasServiceRoleKey,
+      // This is the URL to set in Flutterwave Dashboard -> Settings -> Webhooks
+      recommendedWebhookUrl: "/api/webhook/flutterwave",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  });
   app.post(["/api/webhooks/mozosubz", "/api/webhook/mozosubz"], async (req, res) => {
     try {
       const body = req.body;
