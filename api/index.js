@@ -3439,112 +3439,152 @@ AI:`;
     }
   });
   const handleFlutterwaveWebhook = async (req, res) => {
-    res.status(200).send("Webhook Received");
-    (async () => {
+    const respond = (code, body) => {
+      if (res.writableEnded || res.headersSent) return;
       try {
-        console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave asynchronously");
-        const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
-        const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
-        const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
-        const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
-        let isAuthorized = false;
-        if (signature && secretHash) {
-          try {
-            const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body), "utf8");
-            const expectedSignature = crypto.createHmac("sha256", secretHash).update(rawBody).digest("base64");
-            if (signature === expectedSignature) isAuthorized = true;
-            if (!isAuthorized && rawSignature === req.headers["verif-hash"] && signature === secretHash) {
-              isAuthorized = true;
-            }
-          } catch (cryptoErr) {
-            console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
+        res.status(code).send(body);
+      } catch {
+      }
+    };
+    try {
+      console.log("[Flutterwave Webhook] Processing notification at /api/webhook/flutterwave");
+      const rawSignature = req.headers["verif-hash"] || req.headers["flutterwave-signature"];
+      const signature = typeof rawSignature === "string" ? rawSignature.trim() : "";
+      const secretHash = (process.env.FLW_SECRET_HASH || "").trim().replace(/['"]/g, "");
+      const flwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim().replace(/['"]/g, "");
+      let isAuthorized = false;
+      if (signature && secretHash) {
+        try {
+          const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body), "utf8");
+          const expectedSignature = crypto.createHmac("sha256", secretHash).update(rawBody).digest("base64");
+          if (signature === expectedSignature) isAuthorized = true;
+          if (!isAuthorized && rawSignature === req.headers["verif-hash"] && signature === secretHash) {
+            isAuthorized = true;
           }
+        } catch (cryptoErr) {
+          console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
         }
-        if (!secretHash) {
-          console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook.");
-          return;
-        }
-        if (!isAuthorized) {
-          console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. Received:", signature);
-          return;
-        }
-        const payload = req.body;
-        const event = payload.event;
-        const status = payload.data?.status || payload.status;
-        const isChargeCompleted = event === "charge.completed";
-        const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
-        if (!isChargeCompleted || !isSuccessful) {
-          console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
-          return;
-        }
-        const fwTxId = payload.data?.id || payload.id;
-        if (flwSecretKey && fwTxId) {
-          try {
-            const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
-              method: "GET",
-              headers: { "Authorization": `Bearer ${flwSecretKey}`, "Content-Type": "application/json" }
-            });
-            if (!verifyResp.ok) {
-              console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
-              return;
-            }
-            const verifyData = await verifyResp.json();
-            if (verifyData?.status !== "success" || !["successful", "succeeded"].includes(verifyData?.data?.status)) {
-              console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
-              return;
-            }
-          } catch (verifyErr) {
-            console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+      }
+      if (!secretHash) {
+        console.error("[Flutterwave Webhook] No FLW_SECRET_HASH/FLUTTERWAVE_SECRET_KEY configured. Rejecting webhook (respond 200 so Flutterwave stops retrying; fix the env var to receive credits).");
+        respond(200, "Webhook Received");
+        return;
+      }
+      if (!isAuthorized) {
+        console.warn("[Flutterwave Webhook] Unauthorized: Signature verification failed. If this repeats, FLW_SECRET_HASH in Vercel does not match the secret hash on the Flutterwave dashboard.");
+        respond(200, "Webhook Received");
+        return;
+      }
+      const payload = req.body;
+      const event = payload.event;
+      const status = payload.data?.status || payload.status;
+      const isChargeCompleted = event === "charge.completed";
+      const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
+      if (!isChargeCompleted || !isSuccessful) {
+        console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
+        respond(200, "Webhook Received");
+        return;
+      }
+      const fwTxId = payload.data?.id || payload.id;
+      if (flwSecretKey && fwTxId) {
+        try {
+          const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${fwTxId}/verify`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${flwSecretKey}`, "Content-Type": "application/json" }
+          });
+          if (!verifyResp.ok) {
+            console.error("[Flutterwave Webhook] Independent verification request failed:", verifyResp.status);
+            respond(500, "Verification temporarily unavailable");
             return;
           }
-        } else {
-          console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
+          const verifyData = await verifyResp.json();
+          if (verifyData?.status !== "success" || !["successful", "succeeded"].includes(verifyData?.data?.status)) {
+            console.error("[Flutterwave Webhook] Independent verification did not confirm a successful charge for tx", fwTxId);
+            respond(500, "Verification failed");
+            return;
+          }
+        } catch (verifyErr) {
+          console.error("[Flutterwave Webhook] Independent verification call errored:", verifyErr.message);
+          respond(500, "Verification temporarily unavailable");
           return;
         }
-        const txId = payload.data?.id || payload.id;
-        const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-        const amount = Number(payload.data?.amount || payload.amount);
-        if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
-          console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
-          return;
-        }
-        console.log(`[Flutterwave Webhook Background] Processing transaction ${txId} for customer ${customerEmail} (Amount: \u20A6${amount})`);
-        const { data: existingTx, error: txCheckErr } = await supabase.from("transactions").select("id").eq("reference", String(txId)).maybeSingle();
-        if (txCheckErr) {
-          console.warn("[Flutterwave Webhook Background] Idempotency query warning:", txCheckErr.message);
-        }
-        if (existingTx) {
-          console.log(`[Flutterwave Webhook Background] Reference ${txId} already processed. Skipping balance credit.`);
-          return;
-        }
-        const { data: profile, error: selectErr } = await supabase.from("profiles").select("*").eq("email", customerEmail).maybeSingle();
-        if (selectErr) {
-          console.error(`[Flutterwave Webhook Background] Database error fetching profile for email ${customerEmail}:`, selectErr.message);
-          return;
-        }
-        if (!profile) {
-          console.error(`[Flutterwave Webhook Background] No profile found matching email: ${customerEmail}`);
-          return;
-        }
-        const { data: creditResult, error: rpcErr } = await supabase.rpc("process_webhook_credit_by_user", {
-          p_reference: String(txId),
-          p_user_uuid: profile.id,
-          p_amount: amount,
-          p_gateway: "flutterwave"
-        });
-        if (rpcErr) {
-          console.error(`[Flutterwave Webhook Background] credit RPC FAILED -- manual intervention needed:`, rpcErr.message, { profileId: profile.id, amount, txId });
-          return;
-        }
-        if (creditResult?.status === "already_processed") {
-          console.log(`[Flutterwave Webhook Background] Reference ${txId} already credited. Skipping.`);
-          return;
-        }
-        console.log(`[Flutterwave Webhook Background] Wallet credited via idempotent RPC for user ID: ${profile.id} (ref ${txId})`);
-      } catch (bgExc) {
-        console.error("[Flutterwave Webhook Background Execution Error]:", bgExc.message || bgExc);
+      } else {
+        console.error("[Flutterwave Webhook] Cannot independently verify (missing secret key or tx id). Rejecting.");
+        respond(200, "Webhook Received");
+        return;
       }
-    })();
+      const txId = payload.data?.id || payload.id;
+      const txRef = String(payload.data?.tx_ref || payload.tx_ref || "").trim();
+      const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
+      const amount = Number(payload.data?.amount || payload.amount);
+      if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
+        console.warn(`[Flutterwave Webhook] Invalid webhook payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
+        respond(400, "Bad Request: Incomplete webhook payload parameters.");
+        return;
+      }
+      if (!serverHasServiceRoleKey) {
+        console.error("[Flutterwave Webhook] SUPABASE_SERVICE_ROLE_KEY is missing on this deployment -- wallet credit RPCs are service-role only and will fail. Set it in Project Settings -> Environment Variables and redeploy.");
+      }
+      console.log(`[Flutterwave Webhook] Processing transaction ${txId} (tx_ref ${txRef || "n/a"}) for customer ${customerEmail} (Amount: \u20A6${amount})`);
+      const referenceKeys = [txRef, String(txId)].filter(Boolean);
+      let alreadyCredited = false;
+      {
+        const { data: existingTx, error: txCheckErr } = await supabase.from("transactions").select("reference").in("reference", referenceKeys).limit(1);
+        if (txCheckErr) {
+          console.warn("[Flutterwave Webhook] Idempotency query warning (transactions):", txCheckErr.message);
+        }
+        if (existingTx && existingTx.length > 0) alreadyCredited = true;
+      }
+      if (!alreadyCredited) {
+        const { data: existingPayment, error: payCheckErr } = await supabase.from("processed_payments").select("reference").in("reference", referenceKeys).limit(1);
+        if (payCheckErr) {
+          console.warn("[Flutterwave Webhook] Idempotency query warning (processed_payments):", payCheckErr.message);
+        }
+        if (existingPayment && existingPayment.length > 0) alreadyCredited = true;
+      }
+      if (alreadyCredited) {
+        console.log(`[Flutterwave Webhook] Reference(s) ${referenceKeys.join(", ")} already credited. Skipping duplicate webhook.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+      const { data: profile, error: selectErr } = await supabase.from("profiles").select("*").eq("email", customerEmail).maybeSingle();
+      if (selectErr) {
+        console.error(`[Flutterwave Webhook] Database error fetching profile for email ${customerEmail}:`, selectErr.message);
+        respond(500, "Database error");
+        return;
+      }
+      if (!profile) {
+        console.error(`[Flutterwave Webhook] CRITICAL: No profile found matching email: ${customerEmail} (tx ${txId}, \u20A6${amount}). This payment was NOT credited and needs manual intervention.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+      const { data: creditResult, error: rpcErr } = await supabase.rpc("process_webhook_credit_by_user", {
+        p_reference: txRef || String(txId),
+        p_user_uuid: profile.id,
+        p_amount: amount,
+        p_gateway: "flutterwave"
+      });
+      if (rpcErr) {
+        console.error(`[Flutterwave Webhook] credit RPC FAILED -- manual intervention may be needed:`, rpcErr.message, { profileId: profile.id, amount, txId, txRef });
+        respond(500, "Credit failed");
+        return;
+      }
+      if (creditResult?.status === "already_processed") {
+        console.log(`[Flutterwave Webhook] Reference ${txRef || txId} already credited. Skipping.`);
+        respond(200, "Webhook Received");
+        return;
+      }
+      if (creditResult?.status === "error") {
+        console.error(`[Flutterwave Webhook] credit RPC returned error:`, creditResult.message, { profileId: profile.id, amount, txId, txRef });
+        respond(500, "Credit failed");
+        return;
+      }
+      console.log(`[Flutterwave Webhook] Wallet credited via idempotent RPC for user ID: ${profile.id} (ref ${txRef || txId})`);
+      respond(200, "Webhook Received");
+    } catch (bgExc) {
+      console.error("[Flutterwave Webhook Execution Error]:", bgExc.message || bgExc);
+      respond(500, "Webhook processing failed");
+    }
   };
   app.post(["/api/webhook/flutterwave", "/api/webhooks/flutterwave"], handleFlutterwaveWebhook);
   app.post(["/api/webhooks/mozosubz", "/api/webhook/mozosubz"], async (req, res) => {
