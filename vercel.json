@@ -9,7 +9,15 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/(webhook|webhooks)/flutterwave",
+      "source": "/webhook/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/webhooks/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/flutterwave/(.*)",
       "destination": "/api/index.js"
     },
     {
@@ -25,21 +33,36 @@
     {
       "source": "/service-worker.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
       ]
     },
     {
       "source": "/manifest.json",
       "headers": [
-        { "key": "Content-Type", "value": "application/manifest+json" }
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
+        }
       ]
     },
     {
       "source": "/config/supabase.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
       ]
     }
   ],
