@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Download, X, Smartphone, Share, PlusSquare, MoreVertical } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform?: string }>;
 }
 
 interface InstallGlobalState {
@@ -17,13 +17,10 @@ declare global {
   var __NORODATA_INSTALL__: InstallGlobalState | undefined;
 }
 
-const DISMISS_KEY = 'NORODATA_pwa_dismissed';
-const IOS_DISMISS_KEY = 'NORODATA_ios_dismissed';
-const INSTALLED_KEY = 'NORODATA_pwa_installed';
-// Re-show the banner after a week instead of suppressing it forever.
-const DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+type Platform = 'ios' | 'android' | 'desktop';
 
 function isRunningStandalone(): boolean {
+  if (typeof window === 'undefined') return false;
   return (
     window.matchMedia?.('(display-mode: standalone)').matches ||
     window.matchMedia?.('(display-mode: window-controls-overlay)').matches ||
@@ -31,185 +28,158 @@ function isRunningStandalone(): boolean {
   );
 }
 
-function isDismissedRecently(key: string): boolean {
-  const raw = localStorage.getItem(key);
-  if (!raw) return false;
-  const dismissedAt = Number(raw);
-  // Legacy boolean "true" values suppressed the banner forever — expire them
-  // once so users who dismissed it during earlier testing see it again.
-  if (!Number.isFinite(dismissedAt)) {
-    localStorage.removeItem(key);
-    return false;
-  }
-  if (Date.now() - dismissedAt > DISMISS_TTL_MS) {
-    localStorage.removeItem(key);
-    return false;
-  }
-  return true;
-}
-
-type Platform = 'ios' | 'android' | 'desktop';
-
 function detectPlatform(): Platform {
-  const userAgent = window.navigator.userAgent.toLowerCase();
-  if (/iphone|ipad|ipod/.test(userAgent)) return 'ios';
-  // Modern iPadOS Safari reports a desktop "Macintosh" UA; touch points give it away.
-  if (/macintosh/.test(userAgent) && navigator.maxTouchPoints > 1) return 'ios';
-  if (/android/.test(userAgent)) return 'android';
+  if (typeof window === 'undefined') return 'desktop';
+  const ua = window.navigator.userAgent.toLowerCase();
+  if (/iphone|ipad|ipod/.test(ua)) return 'ios';
+  if (/macintosh/.test(ua) && navigator.maxTouchPoints > 1) return 'ios';
+  if (/android/.test(ua)) return 'android';
   return 'desktop';
 }
 
+const DISMISS_KEY = 'NORODATA_pwa_dismissed';
+const DISMISS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 export function PWAInstallBanner() {
-  // Latest deferred event. Kept in a ref because Chrome only allows prompt()
-  // on the NEWEST beforeinstallprompt event, and it re-fires that event when
-  // the user clicks the browser's own install entry (⋮ menu / mini-infobar).
-  const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showBanner, setShowBanner] = useState(false);
-  const [platform, setPlatform] = useState<Platform>('desktop');
-  const [showInstructionsModal, setShowInstructionsModal] = useState(false);
+  const [platform, setPlatform] = useState<Platform>('android');
+  const [showModal, setShowModal] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
-    const detected = detectPlatform();
-    setPlatform(detected);
+    const currentPlatform = detectPlatform();
+    setPlatform(currentPlatform);
 
-    const installState: InstallGlobalState =
-      window.__NORODATA_INSTALL__ ?? (window.__NORODATA_INSTALL__ = { prompt: null, firedCount: 0 });
-
-    // Already installed (now or in a previous session): never nag again.
-    if (installState.installed) localStorage.setItem(INSTALLED_KEY, 'true');
-    if (isRunningStandalone() || localStorage.getItem(INSTALLED_KEY) === 'true') {
+    if (isRunningStandalone() || window.__NORODATA_INSTALL__?.installed) {
+      setIsInstalled(true);
       return;
     }
 
-    const dismissKey = detected === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY;
-    const revealBanner = () => {
-      if (!isDismissedRecently(dismissKey)) setShowBanner(true);
-    };
+    // Check if dismissed within the last 24h
+    const dismissedTime = Number(localStorage.getItem(DISMISS_KEY) || '0');
+    const isDismissed = Date.now() - dismissedTime < DISMISS_TTL_MS;
 
-    // Adopt the prompt the inline <head> script captured before React mounted
-    // (Chrome usually fires beforeinstallprompt once during initial page load).
-    if (installState.prompt) {
-      deferredPromptRef.current = installState.prompt;
-      revealBanner();
+    // Check if inline <script> in <head> already caught beforeinstallprompt
+    if (window.__NORODATA_INSTALL__?.prompt) {
+      setDeferredPrompt(window.__NORODATA_INSTALL__.prompt);
+      if (!isDismissed) setShowBanner(true);
+    } else if (!isDismissed) {
+      // Show banner on mobile/desktop to encourage installation
+      setShowBanner(true);
     }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      const evt = e as BeforeInstallPromptEvent;
-      const isRefire = deferredPromptRef.current !== null;
-      deferredPromptRef.current = evt;
-      if (isRefire) {
-        // The user just clicked the browser's own "Install app" entry
-        // (Chrome menu / infobar). We cancel this event, so the browser will
-        // NOT show its own dialog — we must open it immediately, otherwise
-        // the click silently does nothing.
-        evt.prompt().catch(() => {});
-        revealBanner();
-        return;
+      const promptEvent = e as BeforeInstallPromptEvent;
+      setDeferredPrompt(promptEvent);
+      if (window.__NORODATA_INSTALL__) {
+        window.__NORODATA_INSTALL__.prompt = promptEvent;
       }
-      revealBanner();
+      if (!isDismissed && !isRunningStandalone()) {
+        setShowBanner(true);
+      }
     };
 
     const handleAppInstalled = () => {
-      localStorage.setItem(INSTALLED_KEY, 'true');
-      deferredPromptRef.current = null;
+      setIsInstalled(true);
       setShowBanner(false);
-      setShowInstructionsModal(false);
+      setShowModal(false);
+      setDeferredPrompt(null);
+      if (window.__NORODATA_INSTALL__) {
+        window.__NORODATA_INSTALL__.installed = true;
+        window.__NORODATA_INSTALL__.prompt = null;
+      }
+    };
+
+    const handleOpenInstall = () => {
+      setShowBanner(true);
+      const activePrompt = deferredPrompt || window.__NORODATA_INSTALL__?.prompt;
+      if (activePrompt && currentPlatform !== 'ios') {
+        void triggerPrompt(activePrompt);
+      } else {
+        setShowModal(true);
+      }
+    };
+
+    const handlePromptAvailable = () => {
+      if (window.__NORODATA_INSTALL__?.prompt) {
+        setDeferredPrompt(window.__NORODATA_INSTALL__.prompt);
+      }
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
-
-    // iOS never fires beforeinstallprompt — always offer the manual
-    // "Add to Home Screen" steps banner there.
-    if (detected === 'ios') {
-      revealBanner();
-    } else if (detected === 'android' && !deferredPromptRef.current) {
-      // Some Android browsers never fire the event even though the site is
-      // installable from their own menu. Fall back to showing the banner
-      // (its Install button then opens the right manual instructions).
-      window.setTimeout(() => {
-        if (!deferredPromptRef.current && !isRunningStandalone()) revealBanner();
-      }, 3000);
-    }
+    window.addEventListener('open-pwa-install', handleOpenInstall);
+    window.addEventListener('pwa-prompt-available', handlePromptAvailable);
+    window.addEventListener('pwa-installed', handleAppInstalled);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('open-pwa-install', handleOpenInstall);
+      window.removeEventListener('pwa-prompt-available', handlePromptAvailable);
+      window.removeEventListener('pwa-installed', handleAppInstalled);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [deferredPrompt]);
 
-  const triggerPrompt = async (): Promise<void> => {
-    const deferredPrompt = deferredPromptRef.current;
-    if (!deferredPrompt) return;
+  const triggerPrompt = async (promptToUse: BeforeInstallPromptEvent) => {
     try {
-      await deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
+      await promptToUse.prompt();
+      const choice = await promptToUse.userChoice;
+      if (choice.outcome === 'accepted') {
         setShowBanner(false);
+        setIsInstalled(true);
       } else {
-        // Chrome only allows one prompt() per page load; fall back to the
-        // manual steps instead of failing silently.
         setShowBanner(false);
-        setShowInstructionsModal(true);
+        setShowModal(true);
       }
-      deferredPromptRef.current = null;
+      setDeferredPrompt(null);
+      if (window.__NORODATA_INSTALL__) {
+        window.__NORODATA_INSTALL__.prompt = null;
+      }
     } catch {
-      setShowInstructionsModal(true);
+      setShowModal(true);
     }
   };
 
-  // window.open-pwa-install (dispatched by app menus, if any) installs
-  // directly when possible, otherwise shows the banner/instructions.
-  useEffect(() => {
-    const handleOpenInstall = () => {
-      if (deferredPromptRef.current && platform !== 'ios') {
-        void triggerPrompt();
-      } else {
-        setShowBanner(true);
-        setShowInstructionsModal(true);
-      }
-    };
-    window.addEventListener('open-pwa-install', handleOpenInstall);
-    return () => window.removeEventListener('open-pwa-install', handleOpenInstall);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform]);
-
   const handleInstallClick = async () => {
     if (platform === 'ios') {
-      setShowInstructionsModal(true);
+      setShowModal(true);
       return;
     }
-    if (deferredPromptRef.current) {
-      await triggerPrompt();
-      return;
+
+    const activePrompt = deferredPrompt || window.__NORODATA_INSTALL__?.prompt;
+    if (activePrompt) {
+      await triggerPrompt(activePrompt);
+    } else {
+      setShowModal(true);
     }
-    setShowInstructionsModal(true);
   };
 
   const handleDismiss = () => {
     setShowBanner(false);
-    setShowInstructionsModal(false);
-    localStorage.setItem(platform === 'ios' ? IOS_DISMISS_KEY : DISMISS_KEY, String(Date.now()));
+    setShowModal(false);
+    localStorage.setItem(DISMISS_KEY, String(Date.now()));
   };
 
-  if (!showBanner && !showInstructionsModal) return null;
+  if (isInstalled) return null;
+  if (!showBanner && !showModal) return null;
 
   return (
     <>
       {showBanner && (
-        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-50 bg-slate-900 border-2 border-indigo-500/50 rounded-2xl p-4 shadow-2xl shadow-indigo-950/80 text-white flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-50 bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-4 shadow-2xl shadow-emerald-950/80 text-white flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-5 duration-300">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-md">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-green-500 flex items-center justify-center text-white shrink-0 shadow-md">
               <Smartphone size={24} />
             </div>
             <div>
               <h4 className="text-sm font-black tracking-tight">Install NORODATA App</h4>
-              <p className="text-xs text-slate-400 font-medium">
+              <p className="text-xs text-slate-300 font-medium">
                 {platform === 'ios'
-                  ? 'Add to Home Screen for instant VTU access'
-                  : 'Install for lightning-fast VTU services & offline feel'}
+                  ? 'Add to Home Screen for quick access'
+                  : 'Fast data, instant recharge & offline feel'}
               </p>
             </div>
           </div>
@@ -217,7 +187,7 @@ export function PWAInstallBanner() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleInstallClick}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black px-3.5 py-2.5 rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-3.5 py-2.5 rounded-xl shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Download size={14} />
               <span>Install</span>
@@ -233,19 +203,19 @@ export function PWAInstallBanner() {
         </div>
       )}
 
-      {/* Manual install instructions (iOS, or when the prompt is unavailable) */}
-      {showInstructionsModal && (
+      {/* Clear Platform-Specific Instructions Modal */}
+      {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 text-white space-y-5 relative shadow-2xl">
             <button
-              onClick={() => setShowInstructionsModal(false)}
+              onClick={() => setShowModal(false)}
               className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-full bg-slate-800 cursor-pointer"
             >
               <X size={18} />
             </button>
 
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-bold">
                 📱
               </div>
               <div>
@@ -253,63 +223,83 @@ export function PWAInstallBanner() {
                   {platform === 'ios'
                     ? 'Install on iPhone & iPad'
                     : platform === 'android'
-                      ? 'Install on Android'
-                      : 'Install on your computer'}
+                    ? 'Install on Android Phone'
+                    : 'Install on your computer'}
                 </h3>
                 <p className="text-xs text-slate-400">Follow these 2 simple steps:</p>
               </div>
             </div>
 
             <div className="space-y-3.5 text-xs text-slate-300">
-              <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white font-black flex items-center justify-center shrink-0">1</span>
-                <div>
-                  {platform === 'ios' ? (
-                    <>
-                      <p className="font-bold text-white mb-0.5">Tap the Share button</p>
-                      <p className="text-slate-400 flex items-center gap-1">Look for the Share icon <Share size={14} className="text-indigo-400 inline" /> at the bottom of Safari.</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="font-bold text-white mb-0.5">Open the browser menu</p>
+              {platform === 'android' ? (
+                <>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <div>
+                      <p className="font-bold text-white mb-0.5">Open Chrome menu</p>
                       <p className="text-slate-400 flex items-center gap-1">
-                        {platform === 'android' ? (
-                          <>Tap <MoreVertical size={14} className="text-indigo-400 inline" /> <b>⋮</b> at the top-right of Chrome.</>
-                        ) : (
-                          <>Click <MoreVertical size={14} className="text-indigo-400 inline" /> <b>⋮</b> at the top-right of the browser.</>
-                        )}
+                        Tap <MoreVertical size={14} className="text-emerald-400 inline" /> <b>⋮</b> in the top right corner of Chrome.
                       </p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white font-black flex items-center justify-center shrink-0">2</span>
-                <div>
-                  {platform === 'ios' ? (
-                    <>
-                      <p className="font-bold text-white mb-0.5">Select 'Add to Home Screen'</p>
-                      <p className="text-slate-400 flex items-center gap-1">Scroll down and tap <PlusSquare size={14} className="text-indigo-400 inline" /> <b>Add to Home Screen</b>.</p>
-                    </>
-                  ) : platform === 'android' ? (
-                    <>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <div>
                       <p className="font-bold text-white mb-0.5">Tap 'Install app'</p>
-                      <p className="text-slate-400">If you don't see it, tap <b>Add to Home screen</b> instead.</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="font-bold text-white mb-0.5">Select 'Install NORODATA'</p>
-                      <p className="text-slate-400">Look under <b>Apps</b> in the menu, or click the install icon <Download size={14} className="text-indigo-400 inline" /> in the address bar.</p>
-                    </>
-                  )}
-                </div>
-              </div>
+                      <p className="text-slate-400">
+                        Tap <b className="text-white">Install app</b> (or <b className="text-white">Add to Home screen</b>). NORODATA will install directly onto your home screen!
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : platform === 'ios' ? (
+                <>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <div>
+                      <p className="font-bold text-white mb-0.5">Tap the Share button</p>
+                      <p className="text-slate-400 flex items-center gap-1">
+                        Look for the Share icon <Share size={14} className="text-emerald-400 inline" /> at the bottom of Safari.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <div>
+                      <p className="font-bold text-white mb-0.5">Select 'Add to Home Screen'</p>
+                      <p className="text-slate-400 flex items-center gap-1">
+                        Scroll down and tap <PlusSquare size={14} className="text-emerald-400 inline" /> <b>Add to Home Screen</b>.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <div>
+                      <p className="font-bold text-white mb-0.5">Click the Install icon</p>
+                      <p className="text-slate-400">
+                        Click the Install icon in the browser address bar (or menu ⋮).
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <div>
+                      <p className="font-bold text-white mb-0.5">Click 'Install'</p>
+                      <p className="text-slate-400">
+                        Confirm installation to open NORODATA in its own window.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             <button
               onClick={handleDismiss}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-3 rounded-xl transition-all text-xs cursor-pointer"
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 rounded-xl transition-all text-xs cursor-pointer"
             >
               Got it, thanks!
             </button>

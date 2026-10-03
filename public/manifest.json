@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "NORODATA - VTU & Data Bundles",
   "short_name": "NORODATA",
   "description": "Buy data, airtime, cable TV, electricity and more instantly with NORODATA.",
@@ -6,8 +7,9 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#EDEDE9",
+  "background_color": "#ffffff",
   "theme_color": "#166534",
+  "categories": ["finance", "utilities", "business"],
   "icons": [
     {
       "src": "/icons/icon-192.png",

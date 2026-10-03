@@ -58,7 +58,6 @@ import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
-import { fetchWalletSnapshot } from '../lib/walletApi';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
 import ServicePurchase from './ServicePurchase';
@@ -261,7 +260,19 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                 ))}
               </nav>
 
-              <div className="px-3 py-4 border-t border-gray-100">
+              <div className="px-3 py-4 border-t border-gray-100 space-y-1">
+                {typeof window !== 'undefined' && !(window.matchMedia?.('(display-mode: standalone)').matches || (navigator as any).standalone) && (
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      window.dispatchEvent(new CustomEvent('open-pwa-install'));
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-all cursor-pointer"
+                  >
+                    <Download size={18} />
+                    Install App
+                  </button>
+                )}
                 <button
                   onClick={handleLoggedOut}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-all"
@@ -303,10 +314,19 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
           ))}
         </nav>
 
-        <div className="px-3 py-4 border-t border-gray-100">
+        <div className="px-3 py-4 border-t border-gray-100 space-y-1">
+          {typeof window !== 'undefined' && !(window.matchMedia?.('(display-mode: standalone)').matches || (navigator as any).standalone) && (
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-pwa-install'))}
+              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-all cursor-pointer"
+            >
+              <Download size={18} />
+              Install App
+            </button>
+          )}
           <button
             onClick={handleLoggedOut}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-all"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-500 hover:bg-red-50 transition-all cursor-pointer"
           >
             <LogOut size={18} />
             Logout
@@ -710,15 +730,10 @@ function DashboardOverview({
   const [transferAmount, setTransferAmount] = React.useState('');
   const [transferNote, setTransferNote] = React.useState('');
   const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
-  const [transferPin, setTransferPin] = React.useState('');
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
 
-  // The API snapshot is authoritative once it has answered at least once;
-  // before that (or for simulated demo sessions) fall back to the context.
-  const apiBalanceRef = React.useRef(false);
   React.useEffect(() => {
-    if (apiBalanceRef.current) return;
     setCurrentBalance(user?.wallet_balance || user?.balance || 0);
   }, [user?.wallet_balance, user?.balance]);
 
@@ -737,23 +752,20 @@ function DashboardOverview({
   }, []);
 
   const refreshBalance = async () => {
-    // Authoritative read through the API — the same row the admin panel
-    // shows after funding. No dependency on realtime/grants/config drift.
-    try {
-      const snap = await fetchWalletSnapshot();
-      apiBalanceRef.current = true;
-      setCurrentBalance(snap.balance || 0);
-    } catch (e: any) {
-      console.warn('[Wallet] snapshot refresh failed:', e.message);
-    }
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (!authUser) return;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('wallet_balance')
+      .eq('id', authUser.id)
+      .single();
+    if (profile) setCurrentBalance(profile.wallet_balance || 0);
   };
 
   React.useEffect(() => {
     const userId = (user as any)?.id || user?.uid;
     refreshBalance();
     if (!userId) return;
-    // Keep the Supabase realtime channel as an instant fast-path (works once
-    // migration 005 is applied), but it is no longer the only live update.
     const channel = supabase
       .channel('profile-changes')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
@@ -761,22 +773,7 @@ function DashboardOverview({
           if (payload.new?.wallet_balance !== undefined) setCurrentBalance(payload.new.wallet_balance);
         })
       .subscribe();
-    // Belt-and-braces polling: works even where realtime or AuthContext's
-    // poll can't reach the profile row from the browser.
-    const poll = setInterval(refreshBalance, 10000);
-    // Refetch when the app returns to the foreground (backgrounded PWAs
-    // throttle timers/sockets; admin funding must appear on resume).
-    const handleResume = () => {
-      if (document.visibilityState === 'visible') refreshBalance();
-    };
-    document.addEventListener('visibilitychange', handleResume);
-    window.addEventListener('focus', handleResume);
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(poll);
-      document.removeEventListener('visibilitychange', handleResume);
-      window.removeEventListener('focus', handleResume);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [user?.uid, (user as any)?.id]);
 
   const handleLookupRecipient = async () => {
@@ -801,19 +798,18 @@ function DashboardOverview({
   const handleConfirmTransfer = async () => {
     const amt = Number(transferAmount);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
-    if (!/^\d{4}$/.test(transferPin)) { toast.error('Enter your 4-digit transaction PIN'); return; }
     setTransferLoading(true);
     const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     try {
       const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote, p_pin: transferPin
+        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote
       });
       if (error) throw error;
       if (data.status === 'success') {
         toast.success(`₦${amt.toLocaleString()} sent!`);
         setShowTransferModal(false);
         setTransferStep('input');
-        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null); setTransferPin('');
+        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null);
         refreshBalance();
       } else if (data.status === 'insufficient_funds') {
         toast.error(`Insufficient balance.`);
@@ -851,38 +847,14 @@ function DashboardOverview({
         setFwLoading(false); toast.error('Flutterwave not configured.', { duration: 8000 }); return;
       }
       const verifyOnServer = async (transactionId: string) => {
-        // SECURITY/UX: wait for the server-side verification result before claiming
-        // success. The old code fired the verification request without awaiting it
-        // and immediately showed a "Topped up!" toast -- users saw success while the
-        // wallet was never credited (and never retried), which is exactly the
-        // "money confirmed but balance not added" complaint.
-        setFwLoading(true);
-        try {
-          const resp = await fetch('/api/payments/verify-flutterwave', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
-          });
-          const data = await resp.json().catch(() => ({} as any));
-          if (resp.ok) {
-            // 200 = wallet credited, or 'skipped' (this transaction was already credited)
-            toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
-            setShowFundModal(false); setOpayAmount('2000');
-            setTimeout(refreshBalance, 1200);
-          } else {
-            // Payment went through at the gateway but the credit is not confirmed yet
-            // (typically a delayed bank-transfer confirmation). The webhook finishes
-            // the credit server-side, so tell the user the truth and re-check later.
-            toast.error(data?.error || data?.message || 'Payment received — wallet credit is still pending. It will reflect automatically.', { duration: 9000 });
-            setShowFundModal(false); setOpayAmount('2000');
-            setTimeout(refreshBalance, 6000);
-          }
-        } catch {
-          toast('Payment submitted — your wallet will update once the payment is confirmed.', { duration: 9000, icon: '⏳' });
-          setShowFundModal(false); setOpayAmount('2000');
-          setTimeout(refreshBalance, 6000);
-        } finally {
-          setFwLoading(false);
-        }
+        setFwLoading(false);
+        fetch('/api/payments/verify-flutterwave', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
+        }).catch(() => {});
+        toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
+        setShowFundModal(false); setOpayAmount('2000');
+        setTimeout(refreshBalance, 1500);
       };
       (window as any).FlutterwaveCheckout({
         public_key: flutterwavePublicKey, tx_ref: reference, amount: amt, currency: 'NGN', country: 'NG',
@@ -1388,24 +1360,11 @@ function DashboardOverview({
                       <span className="text-xl font-black" style={{ color: '#3B7A3B' }}>₦{Number(transferAmount).toLocaleString()}</span>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-400 font-bold uppercase">Transaction PIN</label>
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      value={transferPin}
-                      onChange={(e) => setTransferPin(e.target.value.replace(/\D/g, ''))}
-                      placeholder="••••"
-                      className="mt-1.5 w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-semibold text-gray-700 focus:outline-none focus:ring-2"
-                      style={{ letterSpacing: '0.5rem' }}
-                    />
-                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading || !/^\d{4}$/.test(transferPin)} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
                       {transferLoading ? 'Sending…' : 'Confirm'}
                     </button>
                   </div>
@@ -1434,36 +1393,26 @@ function SupabaseTransactionHistoryWidget({
   const [txs, setTxs] = React.useState<Transaction[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  const load = React.useCallback(async () => {
+  React.useEffect(() => {
     const userId = user?.uid || (user as any)?.id;
     if (!userId) { setLoading(false); return; }
-    try {
-      // Same authoritative source as the balance card + admin panel.
-      const snap = await fetchWalletSnapshot();
-      setTxs((snap.transactions || []).map((row: any) => ({
-        ...row,
-        userId: row.user_id || row.userId,
-        createdAt: row.created_at || row.createdAt,
-      })));
-    } catch (e: any) {
-      console.warn('[Wallet] recent activity snapshot failed:', e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.uid, (user as any)?.id]);
-
-  React.useEffect(() => {
-    load();
-    const poll = setInterval(load, 10000);
-    const handleResume = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', handleResume);
-    window.addEventListener('focus', handleResume);
-    return () => {
-      clearInterval(poll);
-      document.removeEventListener('visibilitychange', handleResume);
-      window.removeEventListener('focus', handleResume);
-    };
-  }, [load]);
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setTxs(data.map((row: any) => ({
+            ...row,
+            userId: row.user_id || row.userId,
+            createdAt: row.created_at || row.createdAt,
+          })));
+        }
+        setLoading(false);
+      });
+  }, [user]);
 
   return (
     <div>
@@ -1567,6 +1516,26 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
     commissionTx.filter((tx) => tx.description?.toLowerCase().includes(fullName.toLowerCase())).reduce((sum, tx) => sum + tx.amount, 0);
 
   const referralLink = `${window.location.origin}?ref=${user.referralCode}`;
+  const downloadQR = (id: string, filename: string) => {
+    const svg = document.getElementById(id);
+    if (svg && svg.tagName.toLowerCase() === 'svg') {
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx?.drawImage(img, 0, 0);
+        const pngFile = canvas.toDataURL("image/png");
+        const downloadLink = document.createElement("a");
+        downloadLink.download = filename;
+        downloadLink.href = pngFile;
+        downloadLink.click();
+      };
+      img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+    }
+  };
   const handleCopyCode = () => { navigator.clipboard.writeText(user.referralCode); setCopiedCode(true); toast.success('Code copied!'); setTimeout(() => setCopiedCode(false), 2000); };
   const handleCopyLink = () => { navigator.clipboard.writeText(referralLink); setCopiedLink(true); toast.success('Link copied!'); setTimeout(() => setCopiedLink(false), 2000); };
 
@@ -1753,7 +1722,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
 // ─────────────────────────────────────────────────────────────────
 function SettingsSection({ user }: { user: UserProfile }) {
   const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
-  const [transactionPin, setTransactionPin] = React.useState('');
+  const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
   const [isUpdating, setIsUpdating] = React.useState(false);
 
   const handleUpdateSecurity = async (e: React.FormEvent) => {
@@ -1768,17 +1737,9 @@ function SettingsSection({ user }: { user: UserProfile }) {
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ phone_number: phoneNumber })
+        .update({ phone_number: phoneNumber, transaction_pin: transactionPin })
         .eq('id', (user as any).uid || (user as any).id);
       if (error) throw error;
-      // SECURITY: PIN is hashed server-side (bcrypt) via this RPC -- the client
-      // never writes the PIN column directly.
-      if (transactionPin) {
-        const { data: pinRes, error: pinErr } = await supabase.rpc('set_transaction_pin', { p_pin: transactionPin });
-        if (pinErr) throw pinErr;
-        if (pinRes?.status !== 'success') throw new Error(pinRes?.message || 'PIN update failed');
-        setTransactionPin('');
-      }
       toast.success('Profile updated! 🔐');
     } catch (error: any) {
       toast.error('Failed to update: ' + error.message);

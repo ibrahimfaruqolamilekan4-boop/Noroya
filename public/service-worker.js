@@ -1,25 +1,43 @@
-// NORODATA service worker.
-// v2: navigations are NETWORK-FIRST so users always get the current app shell
-// (the previous cache-first strategy kept users pinned to a stale index.html +
-// bundle revision for an extra visit after every deploy). The cache remains as
-// the offline fallback.
-const CACHE_NAME = 'noroya-v2';
-const OFFLINE_URLS = ['/', '/index.html', '/manifest.json'];
+// NORODATA Progressive Web App Service Worker
+const CACHE_NAME = 'norodata-pwa-v3';
+const PRECACHE_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-192.png',
+  '/icons/icon-maskable-512.png',
+  '/icons/apple-touch-icon.png',
+  '/icon.svg',
+  '/favicon.ico'
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(OFFLINE_URLS))
+    caches.open(CACHE_NAME).then((cache) => {
+      // Use map with catch so a single asset failure never blocks service worker installation
+      return Promise.allSettled(
+        PRECACHE_ASSETS.map((url) =>
+          fetch(url, { cache: 'no-cache' }).then((res) => {
+            if (res.ok) return cache.put(url, res);
+          }).catch(() => {})
+        )
+      );
+    })
   );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) =>
+    caches.keys().then((keys) =>
       Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
+        })
       )
     )
   );
@@ -27,46 +45,62 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // Only handle GET requests
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
-  const sameOrigin = url.origin === self.location.origin;
 
-  // App shell / navigations: network-first, fall back to cache when offline.
+  // Never cache or intercept API endpoints, webhooks, or third-party auth
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/webhook') ||
+    url.pathname.startsWith('/flutterwave') ||
+    url.pathname.startsWith('/config/') ||
+    url.hostname.includes('supabase.co') ||
+    url.hostname.includes('flutterwave.com') ||
+    url.hostname.includes('googleapis.com')
+  ) {
+    return;
+  }
+
+  // Navigation requests: Network-first, fall back to cached shell
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
-        .then((networkResponse) => {
-          const copy = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
-          return networkResponse;
+        .then((networkRes) => {
+          if (networkRes && networkRes.status === 200) {
+            const clone = networkRes.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone));
+          }
+          return networkRes;
         })
         .catch(() =>
-          caches
-            .match('/index.html')
-            .then((cached) => cached || caches.match('/'))
+          caches.match('/index.html').then((cached) => cached || caches.match('/'))
         )
     );
     return;
   }
 
-  // Static same-origin assets: cache-first with background refresh. Hashed
-  // JS/CSS files are immutable by name; icons/manifest refresh in background.
-  if (sameOrigin) {
+  // Same-origin static assets: Stale-while-revalidate
+  if (url.origin === self.location.origin) {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
-        const networkFetch = fetch(event.request)
+        const fetchPromise = fetch(event.request)
           .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-              const copy = networkResponse.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            if (
+              networkResponse &&
+              networkResponse.status === 200 &&
+              networkResponse.type === 'basic'
+            ) {
+              const clone = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
             }
             return networkResponse;
           })
           .catch(() => {});
-        return cachedResponse || networkFetch;
+
+        return cachedResponse || fetchPromise;
       })
     );
   }
-  // Cross-origin requests: pass through untouched (no caching).
 });

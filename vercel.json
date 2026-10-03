@@ -5,19 +5,23 @@
   "installCommand": "npm install --production=false",
   "rewrites": [
     {
+      "source": "/webhook(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/webhooks(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/flutterwave(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/flw(.*)",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/api/(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/webhook/(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/webhooks/(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/flutterwave/(.*)",
       "destination": "/api/index.js"
     },
     {
@@ -44,11 +48,28 @@
       ]
     },
     {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
+      ]
+    },
+    {
       "source": "/manifest.json",
       "headers": [
         {
           "key": "Content-Type",
           "value": "application/manifest+json"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
         }
       ]
     },
