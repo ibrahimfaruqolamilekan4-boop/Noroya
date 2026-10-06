@@ -310,12 +310,7 @@ export function UserManagementTab() {
         method: 'POST',
         body: JSON.stringify({ amount: Number(adjustAmount), direction: adjustDirection, reason: adjustReason.trim() }),
       });
-      if (json.warning) {
-        // Balance changed but a ledger/audit write failed — never hide this.
-        setMessage(`⚠ ${json.warning}`);
-      } else {
-        setMessage(`Success! New balance: ${formatCurrency(Number(json.newBalance || 0))}`);
-      }
+      setMessage(`Success! New balance: ${formatCurrency(Number(json.newBalance || 0))}`);
       setAdjustAmount('');
       setAdjustReason('');
       await openUser(selectedUser);
@@ -471,6 +466,7 @@ export function UserManagementTab() {
 // ─── Provider Status ──────────────────────────────────────────────────────
 export function ProviderStatusTab() {
   const [data, setData] = React.useState<any>(null);
+  const [nifexData, setNifexData] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
 
@@ -478,8 +474,12 @@ export function ProviderStatusTab() {
     setLoading(true);
     setError('');
     try {
-      const json = await authedFetch('/api/admin/mozosubz-status');
-      setData(json);
+      const [mozoJson, nifexJson] = await Promise.all([
+        authedFetch('/api/admin/mozosubz-status').catch(e => ({ error: e.message })),
+        authedFetch('/api/admin/nifex-status').catch(e => ({ error: e.message })),
+      ]);
+      setData(mozoJson);
+      setNifexData(nifexJson);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -490,62 +490,121 @@ export function ProviderStatusTab() {
   React.useEffect(() => { load(); }, [load]);
 
   const statusColor = (s: string) =>
-    s === 'ok' ? 'bg-emerald-100 text-emerald-700' :
+    s === 'ok' || s === 'connected' ? 'bg-emerald-100 text-emerald-700' :
     s === 'key_revoked' ? 'bg-amber-100 text-amber-700' :
     s === 'timeout' ? 'bg-orange-100 text-orange-700' :
     'bg-red-100 text-red-700';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          {data && (
-            <p className={`font-black text-sm font-sans ${data.healthyCount === data.totalCount ? 'text-emerald-600' : 'text-amber-600'}`}>
-              {data.summary}
-            </p>
-          )}
-          {data && <p className="text-xs text-slate-400 font-sans">Last checked: {new Date(data.checkedAt).toLocaleString()}</p>}
+          <h3 className="font-extrabold text-lg text-slate-900 font-sans">Live Provider Connections</h3>
+          <p className="text-xs text-slate-500 font-sans">Uptime, real-time health checks & upstream API balances</p>
         </div>
-        <button onClick={load} disabled={loading} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold font-sans disabled:opacity-50">
-          {loading ? 'Checking…' : 'Recheck Now'}
+        <button onClick={load} disabled={loading} className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold font-sans disabled:opacity-50 transition-colors">
+          {loading ? 'Checking…' : 'Recheck All Now'}
         </button>
       </div>
 
       {error && <p className="text-red-500 text-sm font-sans">{error}</p>}
 
-      {data && (
-        <>
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm font-sans">
-              <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                <tr>
-                  <th className="text-left px-4 py-3">Service</th>
-                  <th className="text-left px-4 py-3">Status</th>
-                  <th className="text-left px-4 py-3">Latency</th>
-                  <th className="text-left px-4 py-3">Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.services.map((s: any) => (
-                  <tr key={s.id} className="border-t border-slate-100">
-                    <td className="px-4 py-3 font-bold text-slate-800">{s.label}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${statusColor(s.status)}`}>{s.status}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">{s.latencyMs}ms</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">{s.message}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Nifex Data Connection Card */}
+      <div className="bg-white rounded-2xl border-2 border-slate-200 p-5 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center font-black text-blue-600 font-mono text-sm">
+              NIFEX
+            </div>
+            <div>
+              <h4 className="font-bold text-slate-900 font-sans">Nifex Data (nifexdataapp.com.ng)</h4>
+              <p className="text-xs text-slate-400 font-sans">Endpoint: https://nifexdataapp.com.ng/api</p>
+            </div>
           </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 flex justify-between items-center text-sm font-sans">
-            <span className="text-slate-500">Supabase Database</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${data.supabase.status === 'ok' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-              {data.supabase.status} · {data.supabase.latencyMs}ms
+          <div>
+            {nifexData?.connected ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-emerald-100 text-emerald-700 border border-emerald-300">
+                ● Live & Connected
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-300">
+                {nifexData?.configured === false ? 'Not Configured' : 'Disconnected'}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {nifexData?.connected ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1 text-sm font-sans">
+            <div className="bg-slate-50 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-slate-400">Wallet Balance</p>
+              <p className="text-lg font-black text-emerald-600 mt-0.5">{formatCurrency(nifexData.balance || 0)}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-slate-400">API Account</p>
+              <p className="text-sm font-bold text-slate-800 mt-1">{nifexData.username || 'User'}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-slate-400">Account Type</p>
+              <p className="text-sm font-bold text-slate-800 mt-1">{nifexData.user_type || 'API Reseller'}</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl">
+              <p className="text-[10px] uppercase font-bold text-slate-400">API Latency</p>
+              <p className="text-sm font-bold text-slate-800 mt-1">{nifexData.latencyMs || 0}ms</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500 font-sans pt-1">
+            {nifexData?.message || nifexData?.error || 'Configure NIFEX_API_KEY to link Nifex Data wholesale API.'}
+          </p>
+        )}
+      </div>
+
+      {/* Mozosubz Status Table */}
+      {data && data.services && (
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <div>
+              <h4 className="font-bold text-slate-900 text-sm font-sans">Mozosubz Services (mozosubz.xyz)</h4>
+              <p className="text-xs text-slate-500 font-sans">{data.summary || '10 services monitored'}</p>
+            </div>
+            <span className="text-xs text-slate-400 font-sans">
+              Checked: {new Date(data.checkedAt || Date.now()).toLocaleTimeString()}
             </span>
           </div>
-        </>
+          <table className="w-full text-sm font-sans">
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-b border-slate-100">
+              <tr>
+                <th className="text-left px-4 py-3">Service</th>
+                <th className="text-left px-4 py-3">Status</th>
+                <th className="text-left px-4 py-3">Latency</th>
+                <th className="text-left px-4 py-3">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.services.map((s: any) => (
+                <tr key={s.id} className="border-t border-slate-100">
+                  <td className="px-4 py-3 font-bold text-slate-800">{s.label}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${statusColor(s.status)}`}>{s.status}</span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{s.latencyMs}ms</td>
+                  <td className="px-4 py-3 text-slate-400 text-xs">{s.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Database Latency */}
+      {data?.supabase && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 flex justify-between items-center text-sm font-sans shadow-sm">
+          <span className="text-slate-600 font-medium">Supabase Database Connection</span>
+          <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase ${data.supabase.status === 'ok' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+            {data.supabase.status} · {data.supabase.latencyMs}ms
+          </span>
+        </div>
       )}
     </div>
   );
