@@ -78,7 +78,7 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 // at './src/lib/vtu-providers.js' throws ERR_MODULE_NOT_FOUND at function load
 // time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders, purchaseMozosubzUtility } from './src/lib/vtu-providers.ts';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser } from './src/lib/vtu-providers.ts';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
@@ -116,6 +116,9 @@ const logVtuFailure = async (opts: {
 
 const resolveMozosubzApiKey = async (): Promise<string> =>
   resolveProviderSecret('mozosubz_api_key', ['MOZOSUBS_CONNECT_KEY', 'MOZOSUBZ_CONNECT_KEY', 'MOZOSUBZ_API_KEY']);
+
+const resolveNifexApiKey = async (): Promise<string> =>
+  resolveProviderSecret('nifex_api_key', ['NIFEX_API_KEY', 'NIFEXDATA_API_KEY', 'NIFEX_TOKEN']);
 
 dotenv.config();
 
@@ -2938,15 +2941,32 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  // Admin Delete Plan backend endpoint
+  // Admin Delete Plan backend endpoint (supports single id or array of ids, and any identifier)
   app.post("/api/admin/delete-plan", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
-    const { id, collectionName } = req.body;
+    const { id, ids } = req.body;
 
     try {
-      const colName = collectionName || 'data_plans';
-      // Supabase: using services_config table instead of Firestore data_plans
-      await supabase.from('services_config').delete().eq('bigisub_identifier_id', id);
+      if (Array.isArray(ids) && ids.length > 0) {
+        for (const planId of ids) {
+          await supabase.from('services_config').delete().or(`id.eq.${planId},mozosubz_plan_id.eq.${planId},mozosubs_plan_id.eq.${planId},bigisub_identifier_id.eq.${planId},bigisub_plan_id.eq.${planId}`);
+        }
+        return res.json({ success: true, message: `Successfully deleted ${ids.length} service plans!` });
+      }
+
+      if (!id) {
+        return res.status(400).json({ error: "Missing plan id to delete." });
+      }
+
+      await supabase
+        .from('services_config')
+        .delete()
+        .or(`id.eq.${id},mozosubz_plan_id.eq.${id},mozosubs_plan_id.eq.${id},bigisub_identifier_id.eq.${id},bigisub_plan_id.eq.${id}`);
+
+      try {
+        await supabase.from('data_plans').delete().or(`id.eq.${id},plan_id.eq.${id}`);
+      } catch (_) {}
+
       return res.json({ success: true, message: "Successfully deleted service plan!" });
     } catch (err: any) {
       console.error("Error deleting plan:", err);
@@ -3803,18 +3823,33 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         });
       }
 
-      // Mozosubz utility flow: atomic debit before provider call, automatic refund on rejection.
+      // Multi-provider utility flow (Mozosubz & Nifex Data): atomic debit before provider call, automatic refund on rejection.
       if (reqType === 'cable' || reqType === 'electricity') {
-        const mozKey = await resolveMozosubzApiKey();
-        if (!mozKey) return res.status(503).json({ error: 'Mozosubz provider is not configured.' });
-        const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
-        if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
-        const utilityResult = await purchaseMozosubzUtility({
-          type: reqType as 'cable' | 'electricity', provider: String(provider), packageName: String(service.item_name || plan || ''),
-          smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
-          meterType: String(meter_type || 'prepaid').toLowerCase() === 'postpaid' || String(meter_type) === '2' ? 'POSTPAID' : 'PREPAID',
-          amount: finalPrice, phone: String(req.body.phone || req.body.phoneNumber || number), apiKey: mozKey,
-        });
+        const isNifex = String(provider || service?.provider || '').toLowerCase().includes('nifex');
+        let utilityResult;
+        if (isNifex) {
+          const nifexKey = await resolveNifexApiKey();
+          if (!nifexKey) return res.status(503).json({ error: 'Nifex Data provider is not configured. Please set NIFEX_API_KEY.' });
+          const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
+          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
+          utilityResult = await purchaseNifexUtility({
+            type: reqType as 'cable' | 'electricity', provider: String(service.provider_or_network || provider), packageName: String(service.item_name || plan || ''),
+            smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
+            meterType: String(meter_type || 'prepaid').toLowerCase() === 'postpaid' || String(meter_type) === '2' ? 'POSTPAID' : 'PREPAID',
+            amount: finalPrice, phone: String(req.body.phone || req.body.phoneNumber || number), apiKey: nifexKey,
+          });
+        } else {
+          const mozKey = await resolveMozosubzApiKey();
+          if (!mozKey) return res.status(503).json({ error: 'Mozosubz provider is not configured.' });
+          const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
+          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
+          utilityResult = await purchaseMozosubzUtility({
+            type: reqType as 'cable' | 'electricity', provider: String(provider), packageName: String(service.item_name || plan || ''),
+            smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
+            meterType: String(meter_type || 'prepaid').toLowerCase() === 'postpaid' || String(meter_type) === '2' ? 'POSTPAID' : 'PREPAID',
+            amount: finalPrice, phone: String(req.body.phone || req.body.phoneNumber || number), apiKey: mozKey,
+          });
+        }
         const reference = utilityResult.reference || `MOZO-${reqType.toUpperCase()}-${Date.now()}`;
         if (utilityResult.ambiguous) {
           // Unknown outcome: the provider may still fulfil the request. Keep the
@@ -5212,6 +5247,130 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   });
 
   // ─── Admin: Dashboard summary metrics ────────────────────────────────────
+
+  // ─── Admin: Nifex Data provider status & live balance (nifexdataapp.com.ng) ────
+  app.get("/api/admin/nifex-status", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const apiKey = await resolveNifexApiKey();
+      if (!apiKey) {
+        return res.json({
+          connected: false,
+          configured: false,
+          message: "Nifex Data API token is not configured. Set NIFEX_API_KEY in environment or admin settings."
+        });
+      }
+
+      const start = Date.now();
+      try {
+        const userData = await fetchNifexUser(apiKey);
+        const latencyMs = Date.now() - start;
+
+        if (userData && (userData.user || userData.status === "success")) {
+          const userObj = userData.user || userData;
+          return res.json({
+            connected: true,
+            configured: true,
+            latencyMs,
+            username: userObj.username || "",
+            email: userObj.email || "",
+            balance: Number(userObj.wallet_balance ?? 0),
+            user_type: userObj.user_type || "API User",
+            message: "Connected to Nifex Data successfully",
+            raw: userData
+          });
+        }
+
+        return res.json({
+          connected: false,
+          configured: true,
+          latencyMs,
+          error: userData?.msg || userData?.message || "Invalid Nifex Data token or unauthorized"
+        });
+      } catch (apiErr: any) {
+        const latencyMs = Date.now() - start;
+        const errMsg = apiErr.response?.data?.msg || apiErr.response?.data?.message || apiErr.message;
+        return res.json({
+          connected: false,
+          configured: true,
+          latencyMs,
+          error: errMsg || "Failed to connect to Nifex Data API",
+          raw: apiErr.response?.data
+        });
+      }
+    } catch (err: any) {
+      console.error("[GET /api/admin/nifex-status Exception]:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Fetch / Sync Nifex Data plans ─────────────────────────────────
+  app.post("/api/admin/fetch-nifex-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const apiKey = await resolveNifexApiKey();
+      if (!apiKey) {
+        return res.status(503).json({ error: "Nifex Data API token not configured. Please set NIFEX_API_KEY." });
+      }
+
+      let userBalance = 0;
+      try {
+        const u = await fetchNifexUser(apiKey);
+        if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
+      } catch (_) {}
+
+      // Standard active Nifex Data packages across MTN, GLO, Airtel, 9mobile
+      const NIFEX_CATALOG = [
+        // MTN SME & CG
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_1gb",   plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_2gb",   plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_3gb",   plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_5gb",   plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
+        { network: "MTN", plan_type: "SME", id: "mtn_sme_10gb",  plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
+        { network: "MTN", plan_type: "CG",  id: "mtn_cg_1gb",    plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
+        { network: "MTN", plan_type: "CG",  id: "mtn_cg_2gb",    plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
+        { network: "MTN", plan_type: "CG",  id: "mtn_cg_5gb",    plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
+        // GLO Data & SME
+        { network: "GLO", plan_type: "SME", id: "glo_sme_1gb",   plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
+        { network: "GLO", plan_type: "SME", id: "glo_sme_2gb",   plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
+        { network: "GLO", plan_type: "SME", id: "glo_sme_3gb",   plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
+        { network: "GLO", plan_type: "SME", id: "glo_sme_5gb",   plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
+        { network: "GLO", plan_type: "SME", id: "glo_sme_10gb",  plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
+        // Airtel SME & CG
+        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
+        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
+        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
+        { network: "AIRTEL", plan_type: "CG",  id: "airtel_cg_1gb",  plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
+        // 9mobile / Etisalat
+        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
+        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
+        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
+      ];
+
+      const { data: dbRows } = await supabase
+        .from("services_config")
+        .select("mozosubz_plan_id, bigisub_identifier_id, selling_price, provider");
+      const priceMap: Record<string, number> = {};
+      (dbRows || []).forEach((r: any) => {
+        const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || "");
+        if (k) priceMap[k] = Number(r.selling_price || 0);
+      });
+
+      const enriched = NIFEX_CATALOG.map(p => ({
+        ...p,
+        service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
+        selling_price: priceMap[p.id] || priceMap[String(p.plan_id)] || Math.ceil(p.price * 1.12),
+        provider: "nifex"
+      }));
+
+      return res.json({ success: true, balance: userBalance, plans: enriched });
+    } catch (err: any) {
+      console.error("[POST /api/admin/fetch-nifex-plans Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
   app.get("/api/admin/dashboard-summary", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {

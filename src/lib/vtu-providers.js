@@ -9,15 +9,15 @@ export function initProviders(supabaseClient) {
 }
 
 async function resolveKeyFromEnvOrDb(envVar, dbIdentifier) {
-  if (process.env[envVar]) return process.env[envVar];
+  if (process.env[envVar] && !process.env[envVar].includes('PASTE_YOUR')) return process.env[envVar];
   if (_supabase) {
     try {
       const { data } = await _supabase
         .from('services_config')
         .select('item_name')
-        .eq('bigisub_identifier_id', dbIdentifier)
+        .or(`bigisub_identifier_id.eq.${dbIdentifier},mozosubz_plan_id.eq.${dbIdentifier}`)
         .maybeSingle();
-      if (data?.item_name) return data.item_name;
+      if (data?.item_name && !data.item_name.includes('PASTE_YOUR')) return data.item_name;
     } catch (_) {}
   }
   return '';
@@ -40,13 +40,24 @@ function bigiNetworkId(network) {
   return 4;
 }
 
+function nifexNetworkId(network) {
+  const n = normNetwork(network);
+  if (n === 'mtn') return 1;
+  if (n === 'glo') return 2;
+  if (n === 'etisalat') return 3;
+  if (n === 'airtel') return 4;
+  return 1;
+}
+
 const mozosubzProvider = {
   name: 'mozosubz',
   resolveApiKey: async () => {
     return process.env.MOZOSUBS_CONNECT_KEY
         || process.env.MOZOSUBZ_CONNECT_KEY
         || process.env.MOZOSUBZ_API_KEY
+        || process.env.MOZOSUBS_API_KEY
         || await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_api_key')
+        || await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_connect_key')
         || '';
   },
   async purchase(p) {
@@ -54,7 +65,7 @@ const mozosubzProvider = {
     const net = normNetwork(p.network);
     const url = p.type === 'data' ? `${base}/data/purchase` : `${base}/airtime/purchase`;
     const service = p.mozosubzService || `${net}_sme`;
-    const rawPlanIdStr = String(p.planId);
+    const rawPlanIdStr = String(p.providerPlanId || p.planId);
     const rawPlanId = rawPlanIdStr.startsWith(`${service}_`)
       ? rawPlanIdStr.slice(service.length + 1)
       : rawPlanIdStr;
@@ -63,15 +74,78 @@ const mozosubzProvider = {
       : { network: net, amount: p.amount, phone: p.phone };
 
     console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
-    const resp = await axios.post(url, payload, {
-      headers: { 'Content-Type': 'application/json', 'X-Connect-Key': p.apiKey },
-      timeout: 12000,
-    });
-    const d = resp.data;
-    if (d?.success === true) {
-      return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+    try {
+      const resp = await axios.post(url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Connect-Key': p.apiKey,
+          'Authorization': `Token ${p.apiKey}`
+        },
+        timeout: 15000,
+      });
+      const d = resp.data;
+      if (d?.success === true || d?.status === 'success') {
+        return { success: true, reference: d.transaction_id || d.reference || d.id || d.ident, raw: d };
+      }
+      return { success: false, error: d?.error || d?.message || d?.msg || 'Rejected by Mozosubz', raw: d };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.error || err.response?.data?.message || err.message, raw: err.response?.data };
     }
-    return { success: false, error: d?.error || d?.message || 'Rejected by Mozosubz', raw: d };
+  },
+};
+
+const nifexProvider = {
+  name: 'nifex',
+  resolveApiKey: async () => {
+    return process.env.NIFEX_API_KEY
+        || process.env.NIFEXDATA_API_KEY
+        || await resolveKeyFromEnvOrDb('NIFEX_API_KEY', 'nifex_api_key')
+        || await resolveKeyFromEnvOrDb('NIFEX_API_KEY', 'nifex_token')
+        || '';
+  },
+  async purchase(p) {
+    const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+    const netId = nifexNetworkId(p.network);
+    const planCode = p.providerPlanId || p.planId;
+    const url = p.type === 'data' ? `${base}/data/` : `${base}/airtime/`;
+    const payload = p.type === 'data'
+      ? {
+          network: netId,
+          mobile_number: p.phone,
+          plan: planCode,
+          Ported_number: true,
+        }
+      : {
+          network: netId,
+          amount: p.amount,
+          mobile_number: p.phone,
+          Ported_number: true,
+          airtime_type: 'VTU',
+        };
+
+    console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+    try {
+      const resp = await axios.post(url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${p.apiKey.replace(/^Token\s+/i, '').trim()}`,
+        },
+        timeout: 15000,
+      });
+      const d = resp.data;
+      const ok = d?.status === 'success' || d?.Status === 'successful' || d?.status === 'successful' || d?.status === 'completed' || d?.success === true;
+      if (ok) {
+        return { success: true, reference: d.ident || d.id || d.reference || d.transid || d.transaction_id, raw: d };
+      }
+      return { success: false, error: d?.msg || d?.message || d?.error || 'Rejected by Nifex Data', raw: d };
+    } catch (err) {
+      const errBody = err.response?.data;
+      return {
+        success: false,
+        error: errBody?.msg || errBody?.message || errBody?.error || err.message || 'Network error contacting Nifex Data',
+        raw: errBody,
+      };
+    }
   },
 };
 
@@ -101,15 +175,80 @@ export async function purchaseMozosubzUtility(p) {
       };
 
   console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
-  const resp = await axios.post(url, payload, {
-    headers: { 'Content-Type': 'application/json', 'X-Connect-Key': p.apiKey },
-    timeout: 12000,
-  });
-  const d = resp.data;
-  if (d?.success === true) {
-    return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+  try {
+    const resp = await axios.post(url, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Connect-Key': p.apiKey,
+        'Authorization': `Token ${p.apiKey}`
+      },
+      timeout: 15000,
+    });
+    const d = resp.data;
+    if (d?.success === true || d?.status === 'success') {
+      return { success: true, reference: d.transaction_id || d.reference || d.id || d.ident, raw: d };
+    }
+    return { success: false, error: d?.error || d?.message || `Rejected by Mozosubz (${p.type})`, raw: d };
+  } catch (err) {
+    return { success: false, error: err.response?.data?.error || err.message, raw: err.response?.data };
   }
-  return { success: false, error: d?.error || d?.message || `Rejected by Mozosubz (${p.type})`, raw: d };
+}
+
+export async function purchaseNifexUtility(p) {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  const isCable = p.type === 'cable';
+  const url = isCable ? `${base}/cabletv/` : `${base}/electricity/`;
+
+  const cableMap = { gotv: 1, dstv: 2, startimes: 3 };
+  const discoMap = {
+    IKEDC: 1, EKEDC: 2, AEDC: 3, KEDCO: 4, PHED: 5,
+    JED: 6, IBEDC: 7, KAEDCO: 8, EEDC: 9, BEDC: 10, YEDC: 11
+  };
+
+  const payload = isCable
+    ? {
+        cablename: cableMap[String(p.provider || '').toLowerCase()] || 1,
+        cableplan: p.packageName,
+        smart_card_number: p.smartcard,
+      }
+    : {
+        disco_name: discoMap[String(p.provider || '').toUpperCase()] || 1,
+        amount: p.amount,
+        meter_number: p.meterNumber,
+        MeterType: p.meterType === 'POSTPAID' ? 2 : 1,
+      };
+
+  console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+  try {
+    const resp = await axios.post(url, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Token ${p.apiKey.replace(/^Token\s+/i, '').trim()}`,
+      },
+      timeout: 15000,
+    });
+    const d = resp.data;
+    const ok = d?.status === 'success' || d?.Status === 'successful' || d?.status === true || d?.success === true;
+    if (ok) {
+      return { success: true, reference: d.ident || d.id || d.reference || d.transid, raw: d };
+    }
+    return { success: false, error: d?.msg || d?.message || `Rejected by Nifex Data (${p.type})`, raw: d };
+  } catch (err) {
+    return { success: false, error: err.response?.data?.msg || err.message, raw: err.response?.data };
+  }
+}
+
+export async function fetchNifexUser(apiKey) {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  const cleanKey = apiKey.replace(/^Token\s+/i, '').trim();
+  const resp = await axios.get(`${base}/user/`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Token ${cleanKey}`,
+    },
+    timeout: 10000,
+  });
+  return resp.data;
 }
 
 const bigisubProvider = {
@@ -135,22 +274,29 @@ const bigisubProvider = {
     }
 
     console.log(`[Bigisub] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
-    const resp = await axios.post(url, payload, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${p.apiKey}` },
-      timeout: 10000,
-    });
-    const d = resp.data;
-    const ok = d?.status === 'success' || d?.status === 'SUCCESSFUL' || d?.success === true || d?.status === 'completed';
-    if (ok) {
-      return { success: true, reference: d.reference || d.id || d.transaction_id, raw: d };
+    try {
+      const resp = await axios.post(url, payload, {
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${p.apiKey}` },
+        timeout: 12000,
+      });
+      const d = resp.data;
+      const ok = d?.status === 'success' || d?.status === 'SUCCESSFUL' || d?.success === true || d?.status === 'completed';
+      if (ok) {
+        return { success: true, reference: d.reference || d.id || d.transaction_id, raw: d };
+      }
+      return { success: false, error: d?.error || d?.message || 'Rejected by Bigisub', raw: d };
+    } catch (err) {
+      return { success: false, error: err.response?.data?.error || err.message, raw: err.response?.data };
     }
-    return { success: false, error: d?.error || d?.message || 'Rejected by Bigisub', raw: d };
   },
 };
 
 export const PROVIDERS = {
-  mozosubz: mozosubzProvider,
-  bigisub: bigisubProvider,
+  mozosubz:  mozosubzProvider,
+  mozosubs:  mozosubzProvider,
+  nifex:     nifexProvider,
+  nifexdata: nifexProvider,
+  bigisub:   bigisubProvider,
 };
 
 export function getProvider(name) {
