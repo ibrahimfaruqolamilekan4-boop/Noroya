@@ -15,7 +15,7 @@ import {
   RefreshCw, Save, DollarSign, CheckCircle, AlertTriangle,
   Loader2, Search, Eye, EyeOff, TrendingUp, Zap,
   BarChart2, Globe, Percent, ToggleLeft, ToggleRight, Filter,
-  Trash2, Layers
+  Trash2, Layers, Key, ShieldCheck, Check, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
@@ -158,6 +158,77 @@ export default function AdminPricingManager() {
   const [batchProvider,   setBatchProvider]   = useState<ProviderSlug>('mozosubz');
   const [lastFetched,     setLastFetched]     = useState<Date | null>(null);
   const [providerBalance, setProviderBalance] = useState<number | null>(null);
+
+  // ── Provider API Key Management ───────────────────────────────────────────
+  const [apiKeyInput,     setApiKeyInput]     = useState('');
+  const [isTestingKey,    setIsTestingKey]    = useState(false);
+  const [isSavingKey,     setIsSavingKey]     = useState(false);
+  const [keyStatus,       setKeyStatus]       = useState<Record<string, { configured: boolean; masked: string | null }>>({});
+  const [showKeyConfig,   setShowKeyConfig]   = useState(false);
+
+  const loadKeyStatus = useCallback(async () => {
+    try {
+      const session = await getSession();
+      const res = await fetch('/api/admin/provider-secrets', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeyStatus(data);
+      }
+    } catch (_) {}
+  }, []);
+
+  React.useEffect(() => {
+    loadKeyStatus();
+  }, [loadKeyStatus]);
+
+  const handleTestAndSaveKey = async () => {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) {
+      toast.error('Please enter an API key or Connect Key to test and save.');
+      return;
+    }
+    setIsTestingKey(true);
+    try {
+      const session = await getSession();
+      // 1. Test key live with upstream provider
+      const testRes = await fetch('/api/admin/test-provider-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ provider: selectedProvider, key: trimmed })
+      });
+      const testData = await testRes.json();
+      if (!testRes.ok || !testData.success) {
+        throw new Error(testData.error || 'Provider rejected the key.');
+      }
+
+      // 2. Key is verified! Save it permanently to server memory & Supabase
+      setIsSavingKey(true);
+      const identifier = selectedProvider === 'nifex' ? 'nifex_api_key' : 'mozosubz_api_key';
+      const saveRes = await fetch('/api/admin/provider-secrets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ identifier, secret: trimmed })
+      });
+      if (!saveRes.ok) {
+        const saveErr = await saveRes.json().catch(() => ({}));
+        throw new Error(saveErr.error || 'Failed to save key');
+      }
+
+      toast.success(`🎉 ${testData.message || 'Key verified and saved permanently!'}`);
+      setApiKeyInput('');
+      await loadKeyStatus();
+      setShowKeyConfig(false);
+      // Auto-trigger plan sync now that the key is valid
+      fetchPlans();
+    } catch (err: any) {
+      toast.error(`❌ Verification failed: ${err.message || err}`);
+    } finally {
+      setIsTestingKey(false);
+      setIsSavingKey(false);
+    }
+  };
 
   // ── Load existing DB prices ────────────────────────────────────────────────
   const loadExistingPrices = useCallback(async () => {
@@ -508,21 +579,84 @@ export default function AdminPricingManager() {
               </select>
             </div>
 
+            {/* API Key Status / Config Toggle */}
+            <button
+              onClick={() => setShowKeyConfig(prev => !prev)}
+              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition cursor-pointer ${
+                keyStatus[selectedProvider]?.configured
+                  ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/40'
+                  : 'bg-amber-950/40 text-amber-300 border-amber-800/40 hover:bg-amber-900/40 animate-pulse'
+              }`}>
+              <Key size={13} />
+              <span>
+                {selectedProvider === 'nifex' ? 'Nifex Token' : 'Mozosubz Connect Key'}:{' '}
+                {keyStatus[selectedProvider]?.configured ? (keyStatus[selectedProvider]?.masked || 'Active') : 'Configure Key'}
+              </span>
+              {showKeyConfig ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+
             <button onClick={fetchPlans} disabled={loading}
-              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
               {loading ? 'Fetching…' : fetched ? 'Sync Live Plans' : `Fetch from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`}
             </button>
 
             {fetched && pendingCount > 0 && (
               <button onClick={publishAll} disabled={publishing}
-                className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
+                className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
                 {publishing ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
                 {publishing ? 'Publishing…' : `Publish ${pendingCount} to Store`}
               </button>
             )}
           </div>
         </div>
+
+        {/* Live Provider API Key Configurator Drawer */}
+        {(showKeyConfig || (keyStatus[selectedProvider] && !keyStatus[selectedProvider].configured)) && (
+          <div className="mt-4 pt-4 border-t border-slate-800/80 rounded-2xl bg-slate-900/90 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key size={15} className="text-indigo-400" />
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Live {selectedProvider === 'nifex' ? 'Nifex Data Token' : 'Mozosubz Connect Key'} Setup
+                </h4>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                  keyStatus[selectedProvider]?.configured ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                }`}>
+                  {keyStatus[selectedProvider]?.configured ? 'Connected' : 'Key Missing'}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowKeyConfig(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-1">
+                ✕
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              {selectedProvider === 'nifex'
+                ? 'Enter your API token from nifexdataapp.com.ng (Profile / API Settings). Live validation will check your live account balance.'
+                : 'Enter your Connect Key from mozosubz.xyz (starts with "connect_..."). We test it live with Mozosubz and save it permanently.'}
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                placeholder={selectedProvider === 'nifex' ? 'Paste your Nifex API token…' : 'Paste your Mozosubz Connect Key (e.g. connect_030660babf29...)'}
+                className="flex-1 rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2 text-xs text-white font-mono placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+              <button
+                onClick={handleTestAndSaveKey}
+                disabled={isTestingKey || isSavingKey || !apiKeyInput.trim()}
+                className="flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+                {isTestingKey || isSavingKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+                {isTestingKey ? 'Testing with Provider…' : isSavingKey ? 'Saving…' : 'Test & Save Key'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stat cards */}
