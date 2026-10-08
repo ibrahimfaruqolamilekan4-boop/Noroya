@@ -515,11 +515,20 @@ async function startServer() {
   // Dynamic runtime injection of Supabase properties from the Cloud Run host container
   app.get("/config/supabase.js", (req, res) => {
     res.type("application/javascript");
+    const defaultUrl = "https://sdbfuuxdquzvtcwryimh.supabase.co";
+    const defaultAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkYmZ1dXhkcXV6dnRjd3J5aW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0ODYzMTUsImV4cCI6MjA5MzA2MjMxNX0.AZMl623EBoNm3I-_2BskkIGkZ0d272uhgsRaoClhB9c";
+    const supUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim() || defaultUrl;
+    const supKey = (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "").trim() || defaultAnonKey;
     res.send(`
       window.SUPABASE_CONFIG = {
-        supabaseUrl: ${JSON.stringify(process.env.SUPABASE_URL || "")},
-        supabaseAnonKey: ${JSON.stringify(process.env.SUPABASE_ANON_KEY || "")}
+        supabaseUrl: ${JSON.stringify(supUrl)},
+        supabaseAnonKey: ${JSON.stringify(supKey)}
       };
+      try {
+        localStorage.removeItem("DYNAMIC_SUPABASE_URL");
+        localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
+        localStorage.removeItem("DYNAMIC_SUPABASE_SERVICE_ROLE_KEY");
+      } catch (_) {}
     `);
   });
 // JWT configuration and utilities
@@ -1852,13 +1861,19 @@ async function startServer() {
   app.post("/api/admin/fetch-mozosubz-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const { balanceOnly } = req.body;
-      const CONNECT_KEY = await resolveMozosubzApiKey();
+      const { balanceOnly, apiKey: requestApiKey, connectKey: requestConnectKey } = req.body;
+      const CONNECT_KEY = (requestApiKey || requestConnectKey || "").trim() || await resolveMozosubzApiKey();
       const MOZO_BASE   = "https://mozosubz.xyz/api/v1";
 
       if (balanceOnly) {
         // Not exposed in Mozosubz v1 API — return null gracefully
         return res.json({ balance: null });
+      }
+
+      if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes('PASTE_YOUR')) {
+        return res.status(400).json({
+          error: "Mozosubz Connect Key is not configured. Please enter your active Mozosubz Connect Key in the Price Manager above and click 'Save Key'."
+        });
       }
 
       const SERVICES = [
@@ -1882,8 +1897,10 @@ async function startServer() {
             headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
             signal: AbortSignal.timeout(12000),
           });
-          const data: any = await resp.json();
-          if (!data.success) return { svc, plans: [] };
+          const data: any = await resp.json().catch(() => ({}));
+          if (!data.success) {
+            return { svc, plans: [], error: data.error || data.message || `HTTP ${resp.status}` };
+          }
           const plans = (data.plans || []).map((p: any) => ({
             service:    svc.id,
             id:         String(p.id),
@@ -1892,15 +1909,27 @@ async function startServer() {
             network:    svc.network,
             plan_type:  svc.plan_type,
           }));
-          return { svc, plans };
+          return { svc, plans, error: null };
         })
       );
 
       // Flatten all plans
       const allPlans: any[] = [];
+      const errorsFound: string[] = [];
       for (const r of results) {
-        if (r.status === 'fulfilled') allPlans.push(...r.value.plans);
-        else console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
+        if (r.status === 'fulfilled') {
+          allPlans.push(...r.value.plans);
+          if ((r.value as any).error) errorsFound.push((r.value as any).error);
+        } else {
+          console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
+        }
+      }
+
+      if (allPlans.length === 0 && errorsFound.length > 0) {
+        const firstErr = errorsFound[0];
+        return res.status(401).json({
+          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager.`
+        });
       }
 
       // Load existing DB selling prices for comparison
@@ -5446,6 +5475,58 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Admin: Live test provider key (Mozosubz or Nifex) ────────────────────
+  app.post("/api/admin/test-provider-key", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { provider, key } = req.body;
+      const testKey = String(key || '').trim();
+      if (!testKey) {
+        return res.status(400).json({ success: false, error: "Please provide an API key or Connect Key to test." });
+      }
+
+      if (provider === 'nifex') {
+        const u = await fetchNifexUser(testKey);
+        if (u && (u.user || u.status === 'success')) {
+          const userObj = u.user || u;
+          return res.json({
+            success: true,
+            provider: 'nifex',
+            balance: Number(userObj.wallet_balance ?? 0),
+            username: userObj.username || '',
+            message: `Connected successfully to Nifex Data! Account balance: ₦${Number(userObj.wallet_balance ?? 0).toLocaleString()}`
+          });
+        }
+        return res.status(401).json({
+          success: false,
+          error: u?.msg || u?.message || "Nifex Data rejected the token: Unauthorized or invalid token."
+        });
+      }
+
+      // Default: Mozosubz
+      const testUrl = "https://mozosubz.xyz/api/v1/data/plans?service=mtn_sme";
+      const resp = await fetch(testUrl, {
+        headers: { "X-Connect-Key": testKey, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(10000)
+      });
+      const data: any = await resp.json().catch(() => ({}));
+      if (resp.ok && data.success !== false) {
+        return res.json({
+          success: true,
+          provider: 'mozosubz',
+          planCount: Array.isArray(data.plans) ? data.plans.length : 0,
+          message: `Connected successfully to Mozosubz API! Verified ${Array.isArray(data.plans) ? data.plans.length : 'active'} plans.`
+        });
+      }
+      return res.status(401).json({
+        success: false,
+        error: data.error || data.message || `Mozosubz returned HTTP ${resp.status}: Invalid API key`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: `Connection failed: ${err.message}` });
     }
   });
 

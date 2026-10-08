@@ -57,10 +57,13 @@ const getEnv = (key: string): string | null => {
 // Determine if we are running in a server-side environment
 const isServer = typeof window === "undefined" && typeof process !== "undefined";
 
+const DEFAULT_SUPABASE_URL = "https://sdbfuuxdquzvtcwryimh.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkYmZ1dXhkcXV6dnRjd3J5aW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0ODYzMTUsImV4cCI6MjA5MzA2MjMxNX0.AZMl623EBoNm3I-_2BskkIGkZ0d272uhgsRaoClhB9c";
+
 const supabaseUrl = getEnv("VITE_SUPABASE_URL") || 
                     getEnv("SUPABASE_URL") || 
                     (typeof process !== "undefined" && (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL)) || 
-                    "https://placeholder-project.supabase.co";
+                    DEFAULT_SUPABASE_URL;
 
 // On server-side, load SUPABASE_SERVICE_ROLE_KEY to bypass RLS and perform administrative operations securely.
 const serviceRoleKey = isServer ? (getEnv("SUPABASE_SERVICE_ROLE_KEY") || getEnv("VITE_SUPABASE_SERVICE_ROLE_KEY") || (typeof process !== "undefined" && process.env.SUPABASE_SERVICE_ROLE_KEY)) : null;
@@ -73,15 +76,11 @@ export const serverHasServiceRoleKey = Boolean(serviceRoleKey);
 const anonKey = getEnv("VITE_SUPABASE_ANON_KEY") || 
                 getEnv("SUPABASE_ANON_KEY") || 
                 (typeof process !== "undefined" && (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.REACT_APP_SUPABASE_ANON_KEY)) || 
-                "placeholder-anon-key";
+                DEFAULT_SUPABASE_ANON_KEY;
 
 // In the browser this MUST be the public anon key served by /config/supabase.js
 // (or the build-time value) — never a service-role key.
 const apiKey = isServer ? (serviceRoleKey || anonKey) : anonKey;
-
-if (!supabaseUrl || !apiKey || supabaseUrl.includes("placeholder-project") || apiKey.includes("placeholder-anon-key")) {
-  console.warn("WARNING: Supabase environment configuration keys are using default placeholders or are unconfigured. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY to link to your live database.");
-}
 
 if (isServer && serviceRoleKey) {
   console.log("Supabase Client initialized successfully with Service Role Key (Bypass RLS Enabled).");

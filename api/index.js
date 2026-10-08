@@ -18,17 +18,11 @@ var dataRoutes_default = router;
 import { createClient } from "@supabase/supabase-js";
 var getEnv = (key) => {
   if (typeof window !== "undefined") {
-    if (key === "VITE_SUPABASE_URL" || key === "SUPABASE_URL") {
-      const overridingUrl = localStorage.getItem("DYNAMIC_SUPABASE_URL");
-      if (overridingUrl && overridingUrl.trim() !== "" && !overridingUrl.includes("placeholder")) {
-        return overridingUrl.trim();
-      }
-    }
-    if (key === "VITE_SUPABASE_ANON_KEY" || key === "SUPABASE_ANON_KEY") {
-      const overridingKey = localStorage.getItem("DYNAMIC_SUPABASE_ANON_KEY");
-      if (overridingKey && overridingKey.trim() !== "" && !overridingKey.includes("placeholder")) {
-        return overridingKey.trim();
-      }
+    try {
+      localStorage.removeItem("DYNAMIC_SUPABASE_URL");
+      localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
+      localStorage.removeItem("DYNAMIC_SUPABASE_SERVICE_ROLE_KEY");
+    } catch (_) {
     }
     if (window.SUPABASE_CONFIG) {
       const u = window.SUPABASE_CONFIG.supabaseUrl;
@@ -48,13 +42,12 @@ var getEnv = (key) => {
   return null;
 };
 var isServer = typeof window === "undefined" && typeof process !== "undefined";
-var supabaseUrl = getEnv("VITE_SUPABASE_URL") || getEnv("SUPABASE_URL") || typeof process !== "undefined" && (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL) || "https://placeholder-project.supabase.co";
+var DEFAULT_SUPABASE_URL = "https://sdbfuuxdquzvtcwryimh.supabase.co";
+var DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkYmZ1dXhkcXV6dnRjd3J5aW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0ODYzMTUsImV4cCI6MjA5MzA2MjMxNX0.AZMl623EBoNm3I-_2BskkIGkZ0d272uhgsRaoClhB9c";
+var supabaseUrl = getEnv("VITE_SUPABASE_URL") || getEnv("SUPABASE_URL") || typeof process !== "undefined" && (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL) || DEFAULT_SUPABASE_URL;
 var serviceRoleKey = isServer ? getEnv("SUPABASE_SERVICE_ROLE_KEY") || getEnv("VITE_SUPABASE_SERVICE_ROLE_KEY") || typeof process !== "undefined" && process.env.SUPABASE_SERVICE_ROLE_KEY : null;
-var anonKey = getEnv("VITE_SUPABASE_ANON_KEY") || getEnv("SUPABASE_ANON_KEY") || typeof process !== "undefined" && (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.REACT_APP_SUPABASE_ANON_KEY) || "placeholder-anon-key";
+var anonKey = getEnv("VITE_SUPABASE_ANON_KEY") || getEnv("SUPABASE_ANON_KEY") || typeof process !== "undefined" && (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.REACT_APP_SUPABASE_ANON_KEY) || DEFAULT_SUPABASE_ANON_KEY;
 var apiKey = isServer ? serviceRoleKey || anonKey : anonKey;
-if (!supabaseUrl || !apiKey || supabaseUrl.includes("placeholder-project") || apiKey.includes("placeholder-anon-key")) {
-  console.warn("WARNING: Supabase environment configuration keys are using default placeholders or are unconfigured. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY to link to your live database.");
-}
 if (isServer && serviceRoleKey) {
   console.log("Supabase Client initialized successfully with Service Role Key (Bypass RLS Enabled).");
 } else if (isServer) {
@@ -668,11 +661,20 @@ async function startServer() {
   }
   app.get("/config/supabase.js", (req, res) => {
     res.type("application/javascript");
+    const defaultUrl = "https://sdbfuuxdquzvtcwryimh.supabase.co";
+    const defaultAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkYmZ1dXhkcXV6dnRjd3J5aW1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0ODYzMTUsImV4cCI6MjA5MzA2MjMxNX0.AZMl623EBoNm3I-_2BskkIGkZ0d272uhgsRaoClhB9c";
+    const supUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim() || defaultUrl;
+    const supKey = (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "").trim() || defaultAnonKey;
     res.send(`
       window.SUPABASE_CONFIG = {
-        supabaseUrl: ${JSON.stringify(process.env.SUPABASE_URL || "")},
-        supabaseAnonKey: ${JSON.stringify(process.env.SUPABASE_ANON_KEY || "")}
+        supabaseUrl: ${JSON.stringify(supUrl)},
+        supabaseAnonKey: ${JSON.stringify(supKey)}
       };
+      try {
+        localStorage.removeItem("DYNAMIC_SUPABASE_URL");
+        localStorage.removeItem("DYNAMIC_SUPABASE_ANON_KEY");
+        localStorage.removeItem("DYNAMIC_SUPABASE_SERVICE_ROLE_KEY");
+      } catch (_) {}
     `);
   });
   const JWT_SECRET = process.env.JWT_SECRET;
@@ -1656,11 +1658,16 @@ async function startServer() {
   app.post("/api/admin/fetch-mozosubz-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const { balanceOnly } = req.body;
-      const CONNECT_KEY = await resolveMozosubzApiKey();
+      const { balanceOnly, apiKey: requestApiKey, connectKey: requestConnectKey } = req.body;
+      const CONNECT_KEY = (requestApiKey || requestConnectKey || "").trim() || await resolveMozosubzApiKey();
       const MOZO_BASE = "https://mozosubz.xyz/api/v1";
       if (balanceOnly) {
         return res.json({ balance: null });
+      }
+      if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes("PASTE_YOUR")) {
+        return res.status(400).json({
+          error: "Mozosubz Connect Key is not configured. Please enter your active Mozosubz Connect Key in the Price Manager above and click 'Save Key'."
+        });
       }
       const SERVICES = [
         { id: "mtn_sme", network: "MTN", plan_type: "SME" },
@@ -1681,8 +1688,10 @@ async function startServer() {
             headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
             signal: AbortSignal.timeout(12e3)
           });
-          const data = await resp.json();
-          if (!data.success) return { svc, plans: [] };
+          const data = await resp.json().catch(() => ({}));
+          if (!data.success) {
+            return { svc, plans: [], error: data.error || data.message || `HTTP ${resp.status}` };
+          }
           const plans = (data.plans || []).map((p) => ({
             service: svc.id,
             id: String(p.id),
@@ -1691,13 +1700,24 @@ async function startServer() {
             network: svc.network,
             plan_type: svc.plan_type
           }));
-          return { svc, plans };
+          return { svc, plans, error: null };
         })
       );
       const allPlans = [];
+      const errorsFound = [];
       for (const r of results) {
-        if (r.status === "fulfilled") allPlans.push(...r.value.plans);
-        else console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
+        if (r.status === "fulfilled") {
+          allPlans.push(...r.value.plans);
+          if (r.value.error) errorsFound.push(r.value.error);
+        } else {
+          console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
+        }
+      }
+      if (allPlans.length === 0 && errorsFound.length > 0) {
+        const firstErr = errorsFound[0];
+        return res.status(401).json({
+          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager.`
+        });
       }
       const { data: dbRows } = await supabase.from("services_config").select("mozosubz_plan_id, bigisub_identifier_id, selling_price");
       const priceMap = {};
@@ -4469,6 +4489,53 @@ AI:`;
       });
     } catch (err) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/admin/test-provider-key", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { provider, key } = req.body;
+      const testKey = String(key || "").trim();
+      if (!testKey) {
+        return res.status(400).json({ success: false, error: "Please provide an API key or Connect Key to test." });
+      }
+      if (provider === "nifex") {
+        const u = await fetchNifexUser(testKey);
+        if (u && (u.user || u.status === "success")) {
+          const userObj = u.user || u;
+          return res.json({
+            success: true,
+            provider: "nifex",
+            balance: Number(userObj.wallet_balance ?? 0),
+            username: userObj.username || "",
+            message: `Connected successfully to Nifex Data! Account balance: \u20A6${Number(userObj.wallet_balance ?? 0).toLocaleString()}`
+          });
+        }
+        return res.status(401).json({
+          success: false,
+          error: u?.msg || u?.message || "Nifex Data rejected the token: Unauthorized or invalid token."
+        });
+      }
+      const testUrl = "https://mozosubz.xyz/api/v1/data/plans?service=mtn_sme";
+      const resp = await fetch(testUrl, {
+        headers: { "X-Connect-Key": testKey, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(1e4)
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.success !== false) {
+        return res.json({
+          success: true,
+          provider: "mozosubz",
+          planCount: Array.isArray(data.plans) ? data.plans.length : 0,
+          message: `Connected successfully to Mozosubz API! Verified ${Array.isArray(data.plans) ? data.plans.length : "active"} plans.`
+        });
+      }
+      return res.status(401).json({
+        success: false,
+        error: data.error || data.message || `Mozosubz returned HTTP ${resp.status}: Invalid API key`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: `Connection failed: ${err.message}` });
     }
   });
   app.get("/api/admin/dashboard-summary", async (req, res) => {
