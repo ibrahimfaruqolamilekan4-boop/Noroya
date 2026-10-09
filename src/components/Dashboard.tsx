@@ -48,6 +48,7 @@ import {
   Eye,
   EyeOff,
   ChevronDown,
+  ShoppingBag,
 } from 'lucide-react';
 import { Scan } from "lucide-react";
 import { cn, formatCurrency } from '../lib/utils';
@@ -68,6 +69,7 @@ import BettingSection from './BettingSection';
 import CableTvSection from './CableTvSection';
 import ResellerPortal from './ResellerPortal';
 import TransactionHistory from './TransactionHistory';
+import { MarketplaceHome } from './Marketplace/MarketplaceHome';
 
 // Admin WhatsApp contacts — edit labels/numbers here any time.
 const ADMIN_CONTACTS = [
@@ -165,6 +167,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    { id: 'marketplace', label: 'Marketplace', icon: <ShoppingBag size={18} /> },
     { id: 'buy-data', label: 'Buy Data', icon: <Smartphone size={18} /> },
     { id: 'buy-airtime', label: 'Buy Airtime', icon: <Zap size={18} /> },
     { id: 'electricity', label: 'Electricity', icon: <Zap size={18} /> },
@@ -189,6 +192,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
   // Page title per tab
   const pageTitles: Record<string, { title: string; sub: string }> = {
     dashboard: { title: `Good morning, ${user.fullName?.split(' ')[0] || 'there'} ✦`, sub: 'Everything you need, in one calm place.' },
+    marketplace: { title: 'Digital Marketplace 🛍️', sub: 'Buy & sell foreign numbers (US, UK, Canada) & social media accounts.' },
     'buy-data': { title: 'Buy data', sub: 'Simple, secure and ready when you are.' },
     'buy-airtime': { title: 'Buy airtime', sub: 'Top up instantly across all networks.' },
     electricity: { title: 'Pay electricity', sub: 'Prepaid and postpaid tokens.' },
@@ -435,6 +439,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               onSelectTx={setSelectedReceiptTx}
             />
           )}
+          {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
           {activeTab === 'buy-data' && <ServicePurchase type="data" />}
           {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
           {activeTab === 'electricity' && <ElectricitySection />}
@@ -873,6 +878,7 @@ function DashboardOverview({
 
   // Quick service grid
   const quickServices = [
+    { id: 'marketplace', icon: '🛍️', label: 'Marketplace', sub: 'Numbers & accounts', color: '#EAF8ED' },
     { id: 'buy-data', icon: '📶', label: 'Buy data', sub: 'From ₦50', color: '#E8F0E8' },
     { id: 'buy-airtime', icon: '⚡', label: 'Buy airtime', sub: 'All networks', color: '#E8ECFF' },
     { id: 'electricity', icon: '🔆', label: 'Pay electricity', sub: 'Instant delivery', color: '#FFF4E0' },
