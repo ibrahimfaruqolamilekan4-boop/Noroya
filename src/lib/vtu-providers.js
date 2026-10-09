@@ -9,16 +9,36 @@ export function initProviders(supabaseClient) {
 }
 
 async function resolveKeyFromEnvOrDb(envVar, dbIdentifier) {
-  if (process.env[envVar] && !process.env[envVar].includes('PASTE_YOUR')) return process.env[envVar];
+  // 1. Check provider_secrets table in Supabase
   if (_supabase) {
+    try {
+      const { data } = await _supabase
+        .from('provider_secrets')
+        .select('secret')
+        .eq('identifier', dbIdentifier)
+        .maybeSingle();
+      if (data?.secret && !data.secret.includes('PASTE_YOUR') && !data.secret.includes('dummy') && data.secret.trim().length > 5) {
+        return data.secret.trim();
+      }
+    } catch (_) {}
+
+    // 2. Check services_config table in Supabase
     try {
       const { data } = await _supabase
         .from('services_config')
         .select('item_name')
         .or(`bigisub_identifier_id.eq.${dbIdentifier},mozosubz_plan_id.eq.${dbIdentifier}`)
         .maybeSingle();
-      if (data?.item_name && !data.item_name.includes('PASTE_YOUR')) return data.item_name;
+      if (data?.item_name && !data.item_name.includes('PASTE_YOUR') && !data.item_name.includes('dummy') && data.item_name.trim().length > 5) {
+        return data.item_name.trim();
+      }
     } catch (_) {}
+  }
+
+  // 3. Fallback to environment variable
+  const val = process.env[envVar];
+  if (val && !val.includes('PASTE_YOUR') && !val.includes('dummy') && val.trim().length > 5) {
+    return val.trim();
   }
   return '';
 }
@@ -52,12 +72,12 @@ function nifexNetworkId(network) {
 const mozosubzProvider = {
   name: 'mozosubz',
   resolveApiKey: async () => {
-    return process.env.MOZOSUBS_CONNECT_KEY
-        || process.env.MOZOSUBZ_CONNECT_KEY
-        || process.env.MOZOSUBZ_API_KEY
-        || process.env.MOZOSUBS_API_KEY
-        || await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_api_key')
-        || await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_connect_key')
+    return await resolveKeyFromEnvOrDb('MOZOSUBZ_API_KEY', 'mozosubz_api_key')
+        || await resolveKeyFromEnvOrDb('MOZOSUBS_CONNECT_KEY', 'mozosubz_connect_key')
+        || (process.env.MOZOSUBS_CONNECT_KEY && !process.env.MOZOSUBS_CONNECT_KEY.includes('PASTE_YOUR') && !process.env.MOZOSUBS_CONNECT_KEY.includes('connect_030660') ? process.env.MOZOSUBS_CONNECT_KEY.trim() : '')
+        || (process.env.MOZOSUBZ_CONNECT_KEY && !process.env.MOZOSUBZ_CONNECT_KEY.includes('PASTE_YOUR') ? process.env.MOZOSUBZ_CONNECT_KEY.trim() : '')
+        || (process.env.MOZOSUBZ_API_KEY && !process.env.MOZOSUBZ_API_KEY.includes('PASTE_YOUR') ? process.env.MOZOSUBZ_API_KEY.trim() : '')
+        || (process.env.MOZOSUBS_API_KEY && !process.env.MOZOSUBS_API_KEY.includes('PASTE_YOUR') ? process.env.MOZOSUBS_API_KEY.trim() : '')
         || '';
   },
   async purchase(p) {

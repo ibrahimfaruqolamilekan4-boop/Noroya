@@ -68,13 +68,25 @@ function initProviders(supabaseClient) {
   _supabase = supabaseClient;
 }
 async function resolveKeyFromEnvOrDb(envVar, dbIdentifier) {
-  if (process.env[envVar] && !process.env[envVar].includes("PASTE_YOUR")) return process.env[envVar];
   if (_supabase) {
     try {
-      const { data } = await _supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${dbIdentifier},mozosubz_plan_id.eq.${dbIdentifier}`).maybeSingle();
-      if (data?.item_name && !data.item_name.includes("PASTE_YOUR")) return data.item_name;
+      const { data } = await _supabase.from("provider_secrets").select("secret").eq("identifier", dbIdentifier).maybeSingle();
+      if (data?.secret && !data.secret.includes("PASTE_YOUR") && !data.secret.includes("dummy") && data.secret.trim().length > 5) {
+        return data.secret.trim();
+      }
     } catch (_) {
     }
+    try {
+      const { data } = await _supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${dbIdentifier},mozosubz_plan_id.eq.${dbIdentifier}`).maybeSingle();
+      if (data?.item_name && !data.item_name.includes("PASTE_YOUR") && !data.item_name.includes("dummy") && data.item_name.trim().length > 5) {
+        return data.item_name.trim();
+      }
+    } catch (_) {
+    }
+  }
+  const val = process.env[envVar];
+  if (val && !val.includes("PASTE_YOUR") && !val.includes("dummy") && val.trim().length > 5) {
+    return val.trim();
   }
   return "";
 }
@@ -104,7 +116,7 @@ function nifexNetworkId(network) {
 var mozosubzProvider = {
   name: "mozosubz",
   resolveApiKey: async () => {
-    return process.env.MOZOSUBS_CONNECT_KEY || process.env.MOZOSUBZ_CONNECT_KEY || process.env.MOZOSUBZ_API_KEY || process.env.MOZOSUBS_API_KEY || await resolveKeyFromEnvOrDb("MOZOSUBZ_API_KEY", "mozosubz_api_key") || await resolveKeyFromEnvOrDb("MOZOSUBZ_API_KEY", "mozosubz_connect_key") || "";
+    return await resolveKeyFromEnvOrDb("MOZOSUBZ_API_KEY", "mozosubz_api_key") || await resolveKeyFromEnvOrDb("MOZOSUBS_CONNECT_KEY", "mozosubz_connect_key") || (process.env.MOZOSUBS_CONNECT_KEY && !process.env.MOZOSUBS_CONNECT_KEY.includes("PASTE_YOUR") && !process.env.MOZOSUBS_CONNECT_KEY.includes("connect_030660") ? process.env.MOZOSUBS_CONNECT_KEY.trim() : "") || (process.env.MOZOSUBZ_CONNECT_KEY && !process.env.MOZOSUBZ_CONNECT_KEY.includes("PASTE_YOUR") ? process.env.MOZOSUBZ_CONNECT_KEY.trim() : "") || (process.env.MOZOSUBZ_API_KEY && !process.env.MOZOSUBZ_API_KEY.includes("PASTE_YOUR") ? process.env.MOZOSUBZ_API_KEY.trim() : "") || (process.env.MOZOSUBS_API_KEY && !process.env.MOZOSUBS_API_KEY.includes("PASTE_YOUR") ? process.env.MOZOSUBS_API_KEY.trim() : "") || "";
   },
   async purchase(p) {
     const base = process.env.MOZOSUBZ_BASE_URL || "https://mozosubz.xyz/api/v1";
@@ -369,29 +381,31 @@ var ensureUUID = (strId) => {
 };
 var providerSecretsCache = /* @__PURE__ */ new Map();
 var resolveProviderSecret = async (identifier, envKeys) => {
-  for (const envKey of envKeys) {
-    const val = (process.env[envKey] || "").trim();
-    if (val) return val;
-  }
   if (providerSecretsCache.has(identifier)) {
     const cached = providerSecretsCache.get(identifier);
-    if (cached) return cached;
+    if (cached && !cached.includes("PASTE_YOUR") && !cached.includes("dummy") && cached.length > 5) return cached;
   }
   try {
     const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", identifier).maybeSingle();
-    if (data?.secret) {
-      providerSecretsCache.set(identifier, data.secret);
-      return data.secret;
+    if (data?.secret && !data.secret.includes("PASTE_YOUR") && !data.secret.includes("dummy") && data.secret.trim().length > 5) {
+      providerSecretsCache.set(identifier, data.secret.trim());
+      return data.secret.trim();
     }
   } catch (_) {
   }
   try {
-    const { data: legacy } = await supabase.from("services_config").select("item_name").eq("bigisub_identifier_id", identifier).maybeSingle();
-    if (legacy?.item_name) {
-      providerSecretsCache.set(identifier, legacy.item_name);
-      return legacy.item_name;
+    const { data: legacy } = await supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`).maybeSingle();
+    if (legacy?.item_name && !legacy.item_name.includes("PASTE_YOUR") && !legacy.item_name.includes("dummy") && legacy.item_name.trim().length > 5) {
+      providerSecretsCache.set(identifier, legacy.item_name.trim());
+      return legacy.item_name.trim();
     }
   } catch (_) {
+  }
+  for (const envKey of envKeys) {
+    const val = (process.env[envKey] || "").trim();
+    if (val && !val.includes("PASTE_YOUR") && !val.includes("dummy") && !val.includes("connect_030660") && val.length > 5) {
+      return val;
+    }
   }
   return "";
 };
@@ -400,12 +414,13 @@ var setProviderSecret = async (identifier, secretValue) => {
   providerSecretsCache.set(identifier, clean);
   try {
     await supabase.from("provider_secrets").upsert({ identifier, secret: clean, updated_at: (/* @__PURE__ */ new Date()).toISOString() });
-  } catch (_) {
+  } catch (err) {
+    console.warn("[setProviderSecret provider_secrets warning]:", err?.message || err);
   }
   try {
     await supabase.from("services_config").upsert({
       service_type: "airtime",
-      network_or_provider: "SYSTEM_CONFIG",
+      provider_or_network: "SYSTEM_CONFIG",
       item_name: clean,
       bigisub_identifier_id: identifier,
       cost_price: 0,
@@ -413,7 +428,8 @@ var setProviderSecret = async (identifier, secretValue) => {
       is_active: true,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     }, { onConflict: "bigisub_identifier_id" });
-  } catch (_) {
+  } catch (err) {
+    console.warn("[setProviderSecret services_config warning]:", err?.message || err);
   }
   return true;
 };
@@ -441,7 +457,7 @@ var logVtuFailure = async (opts) => {
     console.warn("[VTU FAILURE] Could not write to vtu_failure_log:", e?.message || e);
   }
 };
-var resolveMozosubzApiKey = async () => resolveProviderSecret("mozosubz_api_key", ["MOZOSUBS_CONNECT_KEY", "MOZOSUBZ_CONNECT_KEY", "MOZOSUBZ_API_KEY"]);
+var resolveMozosubzApiKey = async () => resolveProviderSecret("mozosubz_api_key", ["MOZOSUBS_CONNECT_KEY", "MOZOSUBZ_CONNECT_KEY", "MOZOSUBZ_API_KEY", "MOZOSUBS_API_KEY"]);
 var resolveNifexApiKey = async () => resolveProviderSecret("nifex_api_key", ["NIFEX_API_KEY", "NIFEXDATA_API_KEY", "NIFEX_TOKEN"]);
 dotenv.config();
 var RESELLER_DISCOUNT_PERCENT = 20;
@@ -1715,10 +1731,30 @@ async function startServer() {
           console.warn("[fetch-mozosubz-plans] A service fetch failed:", r.reason?.message || r.reason);
         }
       }
-      if (allPlans.length === 0 && errorsFound.length > 0) {
-        const firstErr = errorsFound[0];
+      if (allPlans.length === 0) {
+        const { data: cachedDbPlans } = await supabase.from("services_config").select("id, item_name, name, plan_name, cost_price, selling_price, retail_price, provider_or_network, network, mozosubz_plan_id, bigisub_identifier_id, mozosubz_service").eq("service_type", "data");
+        if (cachedDbPlans && cachedDbPlans.length > 0) {
+          const fallbackPlans = cachedDbPlans.map((row) => ({
+            id: String(row.mozosubz_plan_id || row.bigisub_identifier_id || row.id),
+            name: row.item_name || row.plan_name || row.name || "Data Plan",
+            price: Number(row.cost_price || 0),
+            selling_price: Number(row.selling_price || row.retail_price || 0),
+            network: row.network || row.provider_or_network || "MTN",
+            service: row.mozosubz_service || `${String(row.network || "mtn").toLowerCase()}_sme`,
+            provider: "mozosubz",
+            isCached: true
+          }));
+          const firstErr2 = errorsFound[0] || "Invalid or missing API key";
+          console.warn(`[fetch-mozosubz-plans] Returning ${fallbackPlans.length} cached database plans due to upstream error: ${firstErr2}`);
+          return res.json({
+            success: true,
+            warning: `Mozosubz reported: "${firstErr2}". Loaded ${fallbackPlans.length} plans from saved database. Please configure your active Connect Key in the Key Configuration box above.`,
+            plans: fallbackPlans
+          });
+        }
+        const firstErr = errorsFound[0] || "Invalid or missing API key";
         return res.status(401).json({
-          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager.`
+          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager above and click 'Save Key'.`
         });
       }
       const { data: dbRows } = await supabase.from("services_config").select("mozosubz_plan_id, bigisub_identifier_id, selling_price");
@@ -4519,8 +4555,13 @@ AI:`;
         });
       }
       const testUrl = "https://mozosubz.xyz/api/v1/data/plans?service=mtn_sme";
+      const cleanToken = testKey.replace(/^Token\s+/i, "").trim();
       const resp = await fetch(testUrl, {
-        headers: { "X-Connect-Key": testKey, "Content-Type": "application/json" },
+        headers: {
+          "X-Connect-Key": cleanToken,
+          "Authorization": `Token ${cleanToken}`,
+          "Content-Type": "application/json"
+        },
         signal: AbortSignal.timeout(1e4)
       });
       const data = await resp.json().catch(() => ({}));

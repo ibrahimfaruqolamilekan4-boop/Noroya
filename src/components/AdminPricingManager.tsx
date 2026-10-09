@@ -165,6 +165,7 @@ export default function AdminPricingManager() {
   const [isSavingKey,     setIsSavingKey]     = useState(false);
   const [keyStatus,       setKeyStatus]       = useState<Record<string, { configured: boolean; masked: string | null }>>({});
   const [showKeyConfig,   setShowKeyConfig]   = useState(false);
+  const [fetchWarning,    setFetchWarning]    = useState<string | null>(null);
 
   const loadKeyStatus = useCallback(async () => {
     try {
@@ -183,6 +184,39 @@ export default function AdminPricingManager() {
     loadKeyStatus();
   }, [loadKeyStatus]);
 
+  const handleDirectSaveKey = async (overrideKey?: string) => {
+    const keyToSave = (overrideKey || apiKeyInput).trim();
+    if (!keyToSave) {
+      toast.error('Please enter an API key or Connect Key to save.');
+      return;
+    }
+    setIsSavingKey(true);
+    try {
+      const session = await getSession();
+      const identifier = selectedProvider === 'nifex' ? 'nifex_api_key' : 'mozosubz_api_key';
+      const saveRes = await fetch('/api/admin/provider-secrets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ identifier, secret: keyToSave })
+      });
+      if (!saveRes.ok) {
+        const saveErr = await saveRes.json().catch(() => ({}));
+        throw new Error(saveErr.error || 'Failed to save key');
+      }
+
+      toast.success(`🎉 Key for ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} saved and activated permanently!`);
+      setApiKeyInput('');
+      setFetchWarning(null);
+      await loadKeyStatus();
+      setShowKeyConfig(false);
+      fetchPlans();
+    } catch (err: any) {
+      toast.error(`❌ Failed to save key: ${err.message || err}`);
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
+
   const handleTestAndSaveKey = async () => {
     const trimmed = apiKeyInput.trim();
     if (!trimmed) {
@@ -200,33 +234,16 @@ export default function AdminPricingManager() {
       });
       const testData = await testRes.json();
       if (!testRes.ok || !testData.success) {
-        throw new Error(testData.error || 'Provider rejected the key.');
+        toast.error(`❌ Provider rejected key: ${testData.error || 'Invalid API key'}. You can still use 'Save Key' to store it.`);
+        return;
       }
 
-      // 2. Key is verified! Save it permanently to server memory & Supabase
-      setIsSavingKey(true);
-      const identifier = selectedProvider === 'nifex' ? 'nifex_api_key' : 'mozosubz_api_key';
-      const saveRes = await fetch('/api/admin/provider-secrets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({ identifier, secret: trimmed })
-      });
-      if (!saveRes.ok) {
-        const saveErr = await saveRes.json().catch(() => ({}));
-        throw new Error(saveErr.error || 'Failed to save key');
-      }
-
-      toast.success(`🎉 ${testData.message || 'Key verified and saved permanently!'}`);
-      setApiKeyInput('');
-      await loadKeyStatus();
-      setShowKeyConfig(false);
-      // Auto-trigger plan sync now that the key is valid
-      fetchPlans();
+      // 2. Key is verified live! Save it permanently to server memory & Supabase
+      await handleDirectSaveKey(trimmed);
     } catch (err: any) {
       toast.error(`❌ Verification failed: ${err.message || err}`);
     } finally {
       setIsTestingKey(false);
-      setIsSavingKey(false);
     }
   };
 
@@ -286,6 +303,12 @@ export default function AdminPricingManager() {
       }
 
       const data = await res.json();
+      if (data.warning) {
+        setFetchWarning(data.warning);
+        toast(data.warning, { icon: '⚠️', duration: 7000 });
+      } else {
+        setFetchWarning(null);
+      }
       if (data.balance !== undefined && data.balance !== null) {
         setProviderBalance(Number(data.balance));
       }
@@ -644,17 +667,38 @@ export default function AdminPricingManager() {
                 type="text"
                 value={apiKeyInput}
                 onChange={e => setApiKeyInput(e.target.value)}
-                placeholder={selectedProvider === 'nifex' ? 'Paste your Nifex API token…' : 'Paste your Mozosubz Connect Key (e.g. connect_030660babf29...)'}
+                placeholder={selectedProvider === 'nifex' ? 'Paste your Nifex API token…' : 'Paste your Mozosubz Connect Key (e.g. connect_...)'}
                 className="flex-1 rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2 text-xs text-white font-mono placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
               />
               <button
+                onClick={() => handleDirectSaveKey()}
+                disabled={isSavingKey || isTestingKey || !apiKeyInput.trim()}
+                className="flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+                {isSavingKey ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                {isSavingKey ? 'Saving…' : 'Save Key'}
+              </button>
+              <button
                 onClick={handleTestAndSaveKey}
                 disabled={isTestingKey || isSavingKey || !apiKeyInput.trim()}
-                className="flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
-                {isTestingKey || isSavingKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-                {isTestingKey ? 'Testing with Provider…' : isSavingKey ? 'Saving…' : 'Test & Save Key'}
+                className="flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+                {isTestingKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+                {isTestingKey ? 'Testing…' : 'Test Live'}
               </button>
             </div>
+          </div>
+        )}
+
+        {fetchWarning && (
+          <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start justify-between gap-3 text-xs text-amber-200">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+              <span>{fetchWarning}</span>
+            </div>
+            <button
+              onClick={() => setShowKeyConfig(true)}
+              className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline shrink-0 cursor-pointer">
+              Configure Key
+            </button>
           </div>
         )}
       </div>
