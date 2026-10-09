@@ -43,36 +43,42 @@ const ensureUUID = (strId: string): string => {
 const providerSecretsCache = new Map<string, string>();
 
 const resolveProviderSecret = async (identifier: string, envKeys: string[]): Promise<string> => {
-  for (const envKey of envKeys) {
-    const val = (process.env[envKey] || "").trim();
-    if (val) return val;
-  }
+  // 1. Check in-memory cache first (populated by dynamic admin saves in this session)
   if (providerSecretsCache.has(identifier)) {
     const cached = providerSecretsCache.get(identifier);
-    if (cached) return cached;
+    if (cached && !cached.includes('PASTE_YOUR') && !cached.includes('dummy') && cached.length > 5) return cached;
   }
+  // 2. Check provider_secrets table in database (authoritative persisted store)
   try {
     const { data } = await supabase
       .from('provider_secrets')
       .select('secret')
       .eq('identifier', identifier)
       .maybeSingle();
-    if (data?.secret) {
-      providerSecretsCache.set(identifier, data.secret);
-      return data.secret;
+    if (data?.secret && !data.secret.includes('PASTE_YOUR') && !data.secret.includes('dummy') && data.secret.trim().length > 5) {
+      providerSecretsCache.set(identifier, data.secret.trim());
+      return data.secret.trim();
     }
   } catch (_) { /* provider_secrets may not exist until the hardening migration runs */ }
+  // 3. Check services_config table in database
   try {
     const { data: legacy } = await supabase
       .from('services_config')
       .select('item_name')
-      .eq('bigisub_identifier_id', identifier)
+      .or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`)
       .maybeSingle();
-    if (legacy?.item_name) {
-      providerSecretsCache.set(identifier, legacy.item_name);
-      return legacy.item_name;
+    if (legacy?.item_name && !legacy.item_name.includes('PASTE_YOUR') && !legacy.item_name.includes('dummy') && legacy.item_name.trim().length > 5) {
+      providerSecretsCache.set(identifier, legacy.item_name.trim());
+      return legacy.item_name.trim();
     }
   } catch (_) {}
+  // 4. Fallback to environment variables
+  for (const envKey of envKeys) {
+    const val = (process.env[envKey] || "").trim();
+    if (val && !val.includes('PASTE_YOUR') && !val.includes('dummy') && !val.includes('connect_030660') && val.length > 5) {
+      return val;
+    }
+  }
   return "";
 };
 
@@ -83,13 +89,15 @@ const setProviderSecret = async (identifier: string, secretValue: string): Promi
     await supabase
       .from('provider_secrets')
       .upsert({ identifier, secret: clean, updated_at: new Date().toISOString() });
-  } catch (_) {}
+  } catch (err: any) {
+    console.warn('[setProviderSecret provider_secrets warning]:', err?.message || err);
+  }
   try {
     await supabase
       .from('services_config')
       .upsert({
         service_type: 'airtime',
-        network_or_provider: 'SYSTEM_CONFIG',
+        provider_or_network: 'SYSTEM_CONFIG',
         item_name: clean,
         bigisub_identifier_id: identifier,
         cost_price: 0,
@@ -97,7 +105,9 @@ const setProviderSecret = async (identifier: string, secretValue: string): Promi
         is_active: true,
         updated_at: new Date().toISOString()
       }, { onConflict: 'bigisub_identifier_id' });
-  } catch (_) {}
+  } catch (err: any) {
+    console.warn('[setProviderSecret services_config warning]:', err?.message || err);
+  }
   return true;
 };
 
@@ -150,7 +160,7 @@ const logVtuFailure = async (opts: {
 };
 
 const resolveMozosubzApiKey = async (): Promise<string> =>
-  resolveProviderSecret('mozosubz_api_key', ['MOZOSUBS_CONNECT_KEY', 'MOZOSUBZ_CONNECT_KEY', 'MOZOSUBZ_API_KEY']);
+  resolveProviderSecret('mozosubz_api_key', ['MOZOSUBS_CONNECT_KEY', 'MOZOSUBZ_CONNECT_KEY', 'MOZOSUBZ_API_KEY', 'MOZOSUBS_API_KEY']);
 
 const resolveNifexApiKey = async (): Promise<string> =>
   resolveProviderSecret('nifex_api_key', ['NIFEX_API_KEY', 'NIFEXDATA_API_KEY', 'NIFEX_TOKEN']);
@@ -1925,10 +1935,37 @@ async function startServer() {
         }
       }
 
-      if (allPlans.length === 0 && errorsFound.length > 0) {
-        const firstErr = errorsFound[0];
+      if (allPlans.length === 0) {
+        // Fallback: load existing data plans configured in services_config
+        const { data: cachedDbPlans } = await supabase
+          .from('services_config')
+          .select('id, item_name, name, plan_name, cost_price, selling_price, retail_price, provider_or_network, network, mozosubz_plan_id, bigisub_identifier_id, mozosubz_service')
+          .eq('service_type', 'data');
+
+        if (cachedDbPlans && cachedDbPlans.length > 0) {
+          const fallbackPlans = cachedDbPlans.map((row: any) => ({
+            id: String(row.mozosubz_plan_id || row.bigisub_identifier_id || row.id),
+            name: row.item_name || row.plan_name || row.name || 'Data Plan',
+            price: Number(row.cost_price || 0),
+            selling_price: Number(row.selling_price || row.retail_price || 0),
+            network: row.network || row.provider_or_network || 'MTN',
+            service: row.mozosubz_service || `${String(row.network || 'mtn').toLowerCase()}_sme`,
+            provider: 'mozosubz',
+            isCached: true
+          }));
+
+          const firstErr = errorsFound[0] || 'Invalid or missing API key';
+          console.warn(`[fetch-mozosubz-plans] Returning ${fallbackPlans.length} cached database plans due to upstream error: ${firstErr}`);
+          return res.json({
+            success: true,
+            warning: `Mozosubz reported: "${firstErr}". Loaded ${fallbackPlans.length} plans from saved database. Please configure your active Connect Key in the Key Configuration box above.`,
+            plans: fallbackPlans
+          });
+        }
+
+        const firstErr = errorsFound[0] || 'Invalid or missing API key';
         return res.status(401).json({
-          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager.`
+          error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager above and click 'Save Key'.`
         });
       }
 
@@ -5508,8 +5545,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
       // Default: Mozosubz
       const testUrl = "https://mozosubz.xyz/api/v1/data/plans?service=mtn_sme";
+      const cleanToken = testKey.replace(/^Token\s+/i, '').trim();
       const resp = await fetch(testUrl, {
-        headers: { "X-Connect-Key": testKey, "Content-Type": "application/json" },
+        headers: {
+          "X-Connect-Key": cleanToken,
+          "Authorization": `Token ${cleanToken}`,
+          "Content-Type": "application/json"
+        },
         signal: AbortSignal.timeout(10000)
       });
       const data: any = await resp.json().catch(() => ({}));
