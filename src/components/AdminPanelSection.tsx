@@ -84,7 +84,8 @@ export const ensureUUID = (strId: string): string => {
 
 export default function AdminPanelSection() {
   const { user } = useAuth();
-  const isRestrictedAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
+  const isAccountantAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
+  const isRestrictedAdmin = isAccountantAdmin;
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
@@ -112,98 +113,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'mozosubz-plans' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>(isRestrictedAdmin ? 'user-mgmt' : 'dashboard');
-
-  // Mozosubz Data Plans States & Functions
-  const [mozoPlans, setMozoPlans] = React.useState<any[]>([]);
-  const [mozoLoading, setMozoLoading] = React.useState(false);
-  const [mozoSyncing, setMozoSyncing] = React.useState(false);
-  const [mozoSearch, setMozoSearch] = React.useState('');
-  const [mozoNetworkFilter, setMozoNetworkFilter] = React.useState('All');
-
-  const fetchMozoPlans = async () => {
-    setMozoLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('data_plans')
-        .select('*')
-        .order('network', { ascending: true })
-        .order('id', { ascending: true });
-      if (error) throw error;
-      setMozoPlans(data || []);
-    } catch (err: any) {
-      console.error("Error fetching Mozosubz plans:", err);
-      toast.error(`Failed to load Mozosubz plans: ${err.message}`);
-    } finally {
-      setMozoLoading(false);
-    }
-  };
-
-  const handleSyncMozoPlans = async () => {
-    setMozoSyncing(true);
-    toast.loading("Synchronizing plans from Mozosubz API...", { id: 'mozo-sync' });
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch('/api/admin/data-plans', {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        let errorMessage = "Failed to sync plans from Mozosubs.";
-        try {
-          const resData = JSON.parse(text);
-          errorMessage = resData.error || errorMessage;
-        } catch (e) {
-          errorMessage = text || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
-      const resData = await response.json();
-      toast.success(`Successfully synchronized ${resData.count || 0} plans!`, { id: 'mozo-sync' });
-      await fetchMozoPlans();
-    } catch (err: any) {
-      console.error("Error syncing Mozosubz plans:", err);
-      toast.error(`Sync failed: ${err.message}`, { id: 'mozo-sync' });
-    } finally {
-      setMozoSyncing(false);
-    }
-  };
-
-  const handleUpdateMozoPrice = async (id: any, newPrice: number) => {
-    try {
-      const { error } = await supabase
-        .from('data_plans')
-        .update({ custom_price: newPrice, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
-      toast.success("Plan price updated successfully!");
-      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, custom_price: newPrice } : p));
-    } catch (err: any) {
-      console.error("Error updating Mozosubz custom price:", err);
-      toast.error(`Failed to save price: ${err.message}`);
-    }
-  };
-
-  const handleToggleMozoActive = async (id: any, currentActive: boolean) => {
-    try {
-      const { error } = await supabase
-        .from('data_plans')
-        .update({ is_active: !currentActive, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
-      toast.success(`Plan ${!currentActive ? 'activated' : 'deactivated'} successfully!`);
-      setMozoPlans(prev => prev.map(p => p.id === id ? { ...p, is_active: !currentActive } : p));
-    } catch (err: any) {
-      console.error("Error toggling plan active status:", err);
-      toast.error(`Failed to toggle status: ${err.message}`);
-    }
-  };
-
-  React.useEffect(() => {
-    if (adminSubTab === 'mozosubz-plans') {
-      fetchMozoPlans();
-    }
-  }, [adminSubTab]);
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>(isAccountantAdmin ? 'transactions' : 'dashboard');
 
   // Add Service Form State
   const [newServiceType, setNewServiceType] = React.useState<'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('data');
@@ -469,15 +379,27 @@ export default function AdminPanelSection() {
     if (!window.confirm("Are you sure you want to delete this service configuration?")) return;
 
     try {
-      const { error } = await supabase
-        .from('services_config')
-        .delete()
-        .eq('id', id);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/delete-plan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({ id, collectionName: 'services_config' })
+      });
 
-      if (error) throw error;
+      if (!res.ok) {
+        // Fallback direct delete
+        const { error } = await supabase
+          .from('services_config')
+          .delete()
+          .eq('id', id);
+        if (error) throw error;
+      }
 
       toast.success("Service configuration removed successfully!");
-      setServicesConfig(prev => prev.filter(item => item.id !== id));
+      setServicesConfig(prev => prev.filter(item => item.id !== id && item.bigisub_identifier_id !== id && item.mozosubz_plan_id !== id));
     } catch (err: any) {
       console.error("[handleDeleteServiceConfig Error]:", err);
       toast.error(`Failed to delete configuration: ${err.message || err}`);
@@ -652,7 +574,14 @@ export default function AdminPanelSection() {
         if (response.ok) {
           const apiData = await response.json();
           if (Array.isArray(apiData)) {
-            setServicesConfig(apiData);
+            const seen = new Set<string>();
+            const deduped = apiData.filter((item: any) => {
+              const k = (item.bigisub_identifier_id || item.mozosubz_plan_id || item.id || `${item.provider_or_network}_${item.item_name}`).toLowerCase().trim();
+              if (seen.has(k)) return false;
+              seen.add(k);
+              return true;
+            });
+            setServicesConfig(deduped);
             return;
           }
         }
@@ -665,7 +594,14 @@ export default function AdminPanelSection() {
           .order('provider_or_network', { ascending: true });
         if (error) throw error;
         if (data) {
-          setServicesConfig(data);
+          const seen = new Set<string>();
+          const deduped = data.filter((item: any) => {
+            const k = (item.bigisub_identifier_id || item.mozosubz_plan_id || item.id || `${item.provider_or_network}_${item.item_name}`).toLowerCase().trim();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+          setServicesConfig(deduped);
         }
       } catch (err: any) {
         console.warn("Could not load services_config from API or database:", err);
@@ -884,87 +820,75 @@ export default function AdminPanelSection() {
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-3xl select-none font-bold">
+      <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-4xl select-none font-bold">
         {!isRestrictedAdmin && (
           <>
-        <button
-          type="button"
-          onClick={() => setAdminSubTab('service-plans')}
-          className={cn(
-            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
-            adminSubTab === 'service-plans'
-              ? "bg-white text-slate-900 shadow-md font-extrabold"
-              : "text-slate-500 hover:text-slate-850"
-          )}
-        >
-          Service Plans Manager
-        </button>
-        <button
-          type="button"
-          onClick={() => setAdminSubTab('mozosubz-plans')}
-          className={cn(
-            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
-            adminSubTab === 'mozosubz-plans'
-              ? "bg-white text-slate-900 shadow-md font-extrabold"
-              : "text-slate-500 hover:text-slate-850"
-          )}
-        >
-          Mozosubz Plans
-        </button>
-        <button
-          type="button"
-          onClick={() => setAdminSubTab('opay-receipts')}
-          className={cn(
-            "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
-            adminSubTab === 'opay-receipts'
-              ? "bg-white text-slate-900 shadow-md font-extrabold"
-              : "text-slate-500 hover:text-slate-850"
-          )}
-        >
-          Bank Deposits Audit
-        </button>
-          <button
-            onClick={() => setAdminSubTab('pricing-manager')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-              adminSubTab === 'pricing-manager'
-                ? 'bg-emerald-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            💰 Pricing Manager
-          </button>
-          <button
-            onClick={() => setAdminSubTab('dashboard')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-              adminSubTab === 'dashboard'
-                ? 'bg-indigo-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            📊 Dashboard
-          </button>
-          <button
-            onClick={() => setAdminSubTab('transactions')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-              adminSubTab === 'transactions'
-                ? 'bg-indigo-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            🧾 Transactions
-          </button>
+            <button
+              type="button"
+              onClick={() => setAdminSubTab('service-plans')}
+              className={cn(
+                "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                adminSubTab === 'service-plans'
+                  ? "bg-white text-slate-900 shadow-md font-extrabold"
+                  : "text-slate-500 hover:text-slate-850"
+              )}
+            >
+              Service Plans Manager
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminSubTab('opay-receipts')}
+              className={cn(
+                "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                adminSubTab === 'opay-receipts'
+                  ? "bg-white text-slate-900 shadow-md font-extrabold"
+                  : "text-slate-500 hover:text-slate-850"
+              )}
+            >
+              Bank Deposits Audit
+            </button>
+            <button
+              onClick={() => setAdminSubTab('pricing-manager')}
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+                adminSubTab === 'pricing-manager'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              💰 Pricing Manager
+            </button>
+            <button
+              onClick={() => setAdminSubTab('dashboard')}
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+                adminSubTab === 'dashboard'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              📊 Dashboard
+            </button>
           </>
         )}
-          <button
-            onClick={() => setAdminSubTab('user-mgmt')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-              adminSubTab === 'user-mgmt'
-                ? 'bg-indigo-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-            }`}
-          >
-            👤 User Management
-          </button>
+        <button
+          onClick={() => setAdminSubTab('transactions')}
+          className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+            adminSubTab === 'transactions'
+              ? 'bg-indigo-600 text-white shadow'
+              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+          }`}
+        >
+          🧾 Transactions
+        </button>
+        <button
+          onClick={() => setAdminSubTab('user-mgmt')}
+          className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+            adminSubTab === 'user-mgmt'
+              ? 'bg-indigo-600 text-white shadow'
+              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+          }`}
+        >
+          👤 User Management
+        </button>
         {!isRestrictedAdmin && (
           <button
             onClick={() => setAdminSubTab('provider-status')}
@@ -981,7 +905,7 @@ export default function AdminPanelSection() {
       </div>
 
       {!isRestrictedAdmin && adminSubTab === 'dashboard' && <DashboardOverviewTab />}
-      {!isRestrictedAdmin && adminSubTab === 'transactions' && <TransactionsTab />}
+      {adminSubTab === 'transactions' && <TransactionsTab />}
       {adminSubTab === 'user-mgmt' && <UserManagementTab />}
       {!isRestrictedAdmin && adminSubTab === 'provider-status' && <ProviderStatusTab />}
 
@@ -1765,196 +1689,6 @@ export default function AdminPanelSection() {
         </div>
       )}
 
-      {!isRestrictedAdmin && adminSubTab === 'mozosubz-plans' && (
-        <div className="space-y-6 pb-12">
-          {/* Header Action Dashboard */}
-          <div className="bg-blue-50 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-blue-600 animate-pulse"></span>
-                <span className="text-[10px] uppercase font-black tracking-wider text-blue-800 font-sans">Premium Mozosubz Sync Console</span>
-              </div>
-              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Manage Mozosubz Data Plans</h4>
-              <p className="text-xs text-slate-650 font-semibold max-w-2xl font-sans">
-                Sync live data packages from Mozosubz VTU API. Customize user-facing prices and toggle package active/inactive status.
-              </p>
-            </div>
-            <button
-              onClick={handleSyncMozoPlans}
-              disabled={mozoSyncing}
-              className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-xs px-6 py-3.5 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center gap-2"
-            >
-              {mozoSyncing ? (
-                <>
-                  <Loader2 size={14} className="animate-spin text-white" />
-                  Syncing from Provider...
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={14} className="text-white" />
-                  Sync Plans from Mozosubz
-                </>
-              )}
-            </button>
-          </div>
-
-          <div className="bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b-2 border-black text-left">
-              <div>
-                <h5 className="font-extrabold text-lg text-black font-sans uppercase tracking-tight">📶 Sync & Rate Matrix</h5>
-                <p className="text-[11px] text-slate-500 font-bold font-sans">
-                  Instantly publish or update pricing for automated network recharges.
-                </p>
-              </div>
-
-              {/* Network Filter Buttons */}
-              <div className="flex flex-wrap gap-1.5 font-sans">
-                {([
-                  { id: 'All', label: 'All Networks' },
-                  { id: '1', label: 'MTN (1)' },
-                  { id: '2', label: 'Glo (2)' },
-                  { id: '3', label: 'Airtel (3)' },
-                  { id: '4', label: '9mobile (4)' }
-                ] as const).map((net) => (
-                  <button
-                    key={net.id}
-                    type="button"
-                    onClick={() => setMozoNetworkFilter(net.id)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
-                      mozoNetworkFilter === net.id
-                        ? "bg-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
-                        : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
-                    )}
-                  >
-                    {net.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Search Input */}
-            <div className="relative text-left">
-              <input
-                type="text"
-                placeholder="Search Mozosubz plans (e.g. SME 1GB, GLO 1.35GB)..."
-                value={mozoSearch}
-                onChange={(e) => setMozoSearch(e.target.value)}
-                className="w-full bg-slate-50 text-slate-800 border-2 border-black rounded-xl p-3 text-xs font-bold focus:outline-none placeholder-slate-400 font-sans"
-              />
-            </div>
-
-            {/* Table / Grid list of plans */}
-            {mozoLoading ? (
-              <div className="py-24 text-center space-y-4">
-                <Loader2 className="animate-spin mx-auto text-blue-600" size={40} />
-                <p className="text-slate-500 font-extrabold font-sans text-xs">Fetching Sync Records from PostgreSQL...</p>
-              </div>
-            ) : (
-              <div className="grid gap-4 max-h-[600px] overflow-y-auto pr-2">
-                {(() => {
-                  const filtered = mozoPlans.filter(plan => {
-                    const matchesNetwork = mozoNetworkFilter === 'All' || String(plan.network || '') === mozoNetworkFilter;
-                    const matchesSearch = !mozoSearch.trim() ||
-                      String(plan.plan_name || '').toLowerCase().includes(mozoSearch.toLowerCase()) ||
-                      String(plan.mozosubz_plan_id || '').toLowerCase().includes(mozoSearch.toLowerCase());
-                    return matchesNetwork && matchesSearch;
-                  });
-
-                  if (filtered.length === 0) {
-                    return (
-                      <div className="py-16 text-center text-xs font-bold text-slate-400 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 font-sans">
-                        No Mozosubz data plans found in local cache. Click the Sync button to fetch latest rates.
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      {filtered.map((plan) => {
-                        const netLabel = plan.network === '1' ? 'MTN' : plan.network === '2' ? 'GLO' : plan.network === '3' ? 'Airtel' : plan.network === '4' ? '9mobile' : `Net ${plan.network}`;
-                        return (
-                          <div
-                            key={plan.id}
-                            className={cn(
-                              "bg-slate-50 border-2 border-black rounded-2xl p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all space-y-3 text-left relative",
-                              !plan.is_active && "opacity-75 grayscale"
-                            )}
-                          >
-                            <div className="flex justify-between items-start gap-2">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className={cn(
-                                    "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
-                                    plan.network === '1' ? "bg-yellow-400 text-black" :
-                                    plan.network === '2' ? "bg-green-500 text-white" :
-                                    plan.network === '3' ? "bg-red-500 text-white" :
-                                    plan.network === '4' ? "bg-emerald-600 text-white" :
-                                    "bg-slate-900 text-white"
-                                  )}>
-                                    {netLabel}
-                                  </span>
-                                  <span className="text-[9px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase font-mono">
-                                    ID: {plan.mozosubz_plan_id}
-                                  </span>
-                                </div>
-                                <h6 className="font-extrabold text-slate-950 text-sm tracking-tight pt-1">
-                                  {plan.plan_name}
-                                </h6>
-                              </div>
-
-                              {/* Active Status Checkbox */}
-                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                                <input
-                                  type="checkbox"
-                                  checked={plan.is_active !== false}
-                                  onChange={() => handleToggleMozoActive(plan.id, plan.is_active !== false)}
-                                  className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
-                                />
-                                <span className="text-[10px] font-black uppercase font-sans">
-                                  {plan.is_active !== false ? "🟢 On" : "🔴 Off"}
-                                </span>
-                              </label>
-                            </div>
-
-                            <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-4">
-                              <div className="text-[10px] font-sans">
-                                <span className="block text-slate-400 font-bold">Cost Price</span>
-                                <span className="font-bold text-xs text-slate-700 font-mono">₦{plan.original_price}</span>
-                              </div>
-
-                              <div className="text-[10px] font-sans">
-                                <span className="block text-slate-400 font-bold">Validity</span>
-                                <span className="font-bold text-xs text-slate-700 uppercase font-mono">{plan.validity}</span>
-                              </div>
-
-                              {/* Custom Selling Price Input */}
-                              <div className="flex flex-col items-end w-32 font-sans">
-                                <span className="text-[9px] text-slate-500 font-black uppercase pb-1 leading-none">Your Selling Price (₦)</span>
-                                <input
-                                  type="number"
-                                  defaultValue={plan.custom_price || plan.original_price}
-                                  onBlur={(e) => {
-                                    const val = Number(e.target.value);
-                                    if (val > 0 && val !== plan.custom_price) {
-                                      handleUpdateMozoPrice(plan.id, val);
-                                    }
-                                  }}
-                                  className="w-full bg-white border-2 border-black text-black font-extrabold text-xs rounded-xl py-1.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-mono"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {!isRestrictedAdmin && adminSubTab === 'opay-receipts' && (
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">

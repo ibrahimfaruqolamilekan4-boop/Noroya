@@ -9,6 +9,7 @@ import { marketplaceService, MarketplaceListing, MarketplaceCategory, Marketplac
 import { CreateListingModal } from './CreateListingModal';
 import { ListingDetailsModal } from './ListingDetailsModal';
 import { MarketplaceOrderChatModal } from './MarketplaceOrderChatModal';
+import { EsimChatModal } from './EsimChatModal';
 
 interface MarketplaceHomeProps {
   user: any;
@@ -19,7 +20,7 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedType, setSelectedType] = useState<'all' | 'foreign_number' | 'social_account'>('all');
+  const [selectedType, setSelectedType] = useState<'all' | 'foreign_number' | 'social_account' | 'esim'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'browse' | 'purchases' | 'my-listings'>('browse');
@@ -28,6 +29,8 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
   const [myPurchases, setMyPurchases] = useState<MarketplaceOrder[]>([]);
   const [myListings, setMyListings] = useState<MarketplaceListing[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEsimModalOpen, setIsEsimModalOpen] = useState(false);
+  const [selectedEsimPackage, setSelectedEsimPackage] = useState<string>('us-5gb');
   const [selectedListing, setSelectedListing] = useState<MarketplaceListing | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
@@ -203,6 +206,20 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
               >
                 <span>🌐</span> Social Accounts
               </button>
+              <button
+                onClick={() => {
+                  setSelectedType('esim');
+                  setSelectedCategory('all');
+                  setIsEsimModalOpen(true);
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  selectedType === 'esim'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>📶</span> eSIM (Live Admin Chat)
+              </button>
             </div>
 
             {/* Search Input */}
@@ -248,6 +265,35 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
               ))}
           </div>
 
+          {/* eSIM Instant Admin Desk Banner */}
+          <div className="bg-gradient-to-r from-teal-900 via-emerald-800 to-slate-900 rounded-3xl p-5 sm:p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-5 border border-emerald-500/30 shadow-lg relative overflow-hidden">
+            <div className="flex items-center gap-4 relative z-10">
+              <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-2xl border border-white/20 shrink-0 shadow-inner">
+                📶
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-black text-base sm:text-lg tracking-tight">Need an eSIM for Travel or Global Roaming?</h4>
+                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-400 text-slate-950">Active</span>
+                </div>
+                <p className="text-xs text-emerald-100/80 font-medium max-w-xl leading-relaxed">
+                  Instant USA, UK, Europe (33 countries) & 150+ country eSIM data profiles. Click to open live chat with Admin for instant provisioning & QR code setup.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedEsimPackage('us-5gb');
+                setIsEsimModalOpen(true);
+              }}
+              className="px-6 py-3 rounded-2xl bg-white hover:bg-emerald-50 text-emerald-950 font-black text-xs uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-95 relative z-10"
+            >
+              <span>💬 Open eSIM Admin Chat</span>
+            </button>
+          </div>
+
           {/* Listings Grid */}
           {loading ? (
             <div className="py-20 text-center">
@@ -277,6 +323,7 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
               {listings.map((item) => {
                 const cat = item.marketplace_categories;
                 const isPhone = cat?.type === 'foreign_number';
+                const isEsim = cat?.type === 'esim' || item.id.startsWith('esim-');
                 const sellerName = item.profiles?.full_name || item.profiles?.name || 'Verified Seller';
                 const rating = item.profiles?.marketplace_seller_rating || 5.0;
 
@@ -286,16 +333,21 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
                     whileHover={{ y: -4 }}
                     className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-xl hover:border-emerald-200/60 transition-all flex flex-col justify-between cursor-pointer group"
                     onClick={() => {
-                      setSelectedListing(item);
-                      onOpenListing?.(item.id);
+                      if (isEsim) {
+                        setSelectedEsimPackage(item.id.replace('esim-', ''));
+                        setIsEsimModalOpen(true);
+                      } else {
+                        setSelectedListing(item);
+                        onOpenListing?.(item.id);
+                      }
                     }}
                   >
                     <div>
                       {/* Category Badge & Icon */}
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 text-[11px] font-bold">
-                          <span>{cat?.icon || (isPhone ? '📱' : '🌐')}</span>
-                          <span>{cat?.name || (isPhone ? 'Phone Number' : 'Social Account')}</span>
+                          <span>{cat?.icon || (isEsim ? '📶' : isPhone ? '📱' : '🌐')}</span>
+                          <span>{cat?.name || (isEsim ? 'eSIM Profile' : isPhone ? 'Phone Number' : 'Social Account')}</span>
                         </span>
                         <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
                           <Eye size={13} />
@@ -347,11 +399,18 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          onOpenListing(item.id);
+                          if (isEsim) {
+                            setSelectedEsimPackage(item.id.replace('esim-', ''));
+                            setIsEsimModalOpen(true);
+                          } else if (onOpenListing) {
+                            onOpenListing(item.id);
+                          } else {
+                            setSelectedListing(item);
+                          }
                         }}
-                        className="w-full py-2.5 rounded-2xl bg-slate-900 group-hover:bg-emerald-600 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5"
+                        className="w-full py-2.5 rounded-2xl bg-slate-900 group-hover:bg-emerald-600 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                       >
-                        <span>Chat & Buy</span>
+                        <span>{isEsim ? '💬 Chat Admin & Buy eSIM' : 'Chat & Buy'}</span>
                         <ExternalLink size={13} />
                       </button>
                     </div>
@@ -540,6 +599,14 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
           }}
         />
       )}
+
+      {/* ── Direct eSIM Live Admin Chat Modal ─── */}
+      <EsimChatModal
+        isOpen={isEsimModalOpen}
+        currentUser={user}
+        initialPackage={selectedEsimPackage}
+        onClose={() => setIsEsimModalOpen(false)}
+      />
     </div>
   );
 }

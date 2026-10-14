@@ -29,6 +29,7 @@ import {
   Zap as ZapIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { MarketplaceSection } from './Home/MarketplaceSection';
 
 export default function LandingPage({ onAuth }: { onAuth: () => void }) {
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
@@ -161,6 +162,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-600"
             >
               <a href="#services" className="hover:text-emerald-600 transition-colors">Services</a>
+              <button onClick={onAuth} className="hover:text-emerald-600 transition-colors cursor-pointer flex items-center gap-1 font-semibold">🛍️ Marketplace</button>
               <a href="#prices" className="hover:text-emerald-600 transition-colors">Prices</a>
               <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
               <a href="#faq" className="hover:text-emerald-600 transition-colors">FAQ</a>
@@ -215,6 +217,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           >
             <div className="flex flex-col gap-6 text-lg font-bold text-slate-800">
               <a href="#services" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Services</a>
+              <button onClick={() => { onAuth(); setIsMenuOpen(false); }} className="text-left hover:text-emerald-600 py-1 transition-colors cursor-pointer flex items-center gap-2">🛍️ Marketplace</button>
               <a href="#prices" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Prices</a>
               <a href="#features" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Features</a>
               <a href="#faq" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">FAQ</a>
@@ -963,6 +966,9 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           </div>
         </div>
       </section>
+
+      {/* MARKETPLACE PROMOTION */}
+      <MarketplaceSection onAuth={onAuth} />
 
       {/* FEATURES */}
       <section id="features" className="py-28 px-4 bg-white">

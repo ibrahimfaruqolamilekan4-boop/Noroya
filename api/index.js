@@ -1781,7 +1781,15 @@ async function startServer() {
         console.warn("[Supabase GET All Services Warning]:", queryErr.message);
         return res.json([]);
       }
-      return res.json(sanitizePublicPlans(services || []));
+      const sanitized = sanitizePublicPlans(services || []);
+      const seenAll = /* @__PURE__ */ new Set();
+      const dedupedAll = sanitized.filter((r) => {
+        const k = (r.bigisub_identifier_id || r.mozosubz_plan_id || r.id || `${r.provider_or_network}_${r.item_name}`).toLowerCase().trim();
+        if (seenAll.has(k)) return false;
+        seenAll.add(k);
+        return true;
+      });
+      return res.json(dedupedAll);
     } catch (err) {
       console.error("[GET /api/services/all Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
@@ -1795,7 +1803,14 @@ async function startServer() {
         return res.json([]);
       }
       const items = (services || []).filter((r) => !isProviderSecretRow(r));
-      const formattedPlans = items.map((item) => {
+      const seenPlanKeys = /* @__PURE__ */ new Set();
+      const dedupedItems = items.filter((r) => {
+        const k = (r.bigisub_identifier_id || r.mozosubz_plan_id || r.id || `${r.provider_or_network}_${r.item_name}`).toLowerCase().trim();
+        if (seenPlanKeys.has(k)) return false;
+        seenPlanKeys.add(k);
+        return true;
+      });
+      const formattedPlans = dedupedItems.map((item) => {
         const pPrice = Number(item.selling_price || 0);
         const rawName = String(item.item_name || "");
         let planCategory = "GIFTING";
@@ -2614,20 +2629,32 @@ async function startServer() {
     if (!await requireAdmin(req, res)) return;
     const { id, ids } = req.body;
     try {
+      const isUUID = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim());
+      const deleteOnePlan = async (targetId) => {
+        const cleanId = String(targetId).trim();
+        if (!cleanId) return;
+        if (isUUID(cleanId)) {
+          await supabase.from("services_config").delete().eq("id", cleanId);
+        }
+        await supabase.from("services_config").delete().or(`mozosubz_plan_id.eq.${cleanId},mozosubs_plan_id.eq.${cleanId},bigisub_identifier_id.eq.${cleanId},bigisub_plan_id.eq.${cleanId}`);
+        try {
+          if (isUUID(cleanId)) {
+            await supabase.from("data_plans").delete().eq("id", cleanId);
+          }
+          await supabase.from("data_plans").delete().or(`plan_id.eq.${cleanId},id.eq.${cleanId}`);
+        } catch (_) {
+        }
+      };
       if (Array.isArray(ids) && ids.length > 0) {
         for (const planId of ids) {
-          await supabase.from("services_config").delete().or(`id.eq.${planId},mozosubz_plan_id.eq.${planId},mozosubs_plan_id.eq.${planId},bigisub_identifier_id.eq.${planId},bigisub_plan_id.eq.${planId}`);
+          await deleteOnePlan(planId);
         }
         return res.json({ success: true, message: `Successfully deleted ${ids.length} service plans!` });
       }
       if (!id) {
         return res.status(400).json({ error: "Missing plan id to delete." });
       }
-      await supabase.from("services_config").delete().or(`id.eq.${id},mozosubz_plan_id.eq.${id},mozosubs_plan_id.eq.${id},bigisub_identifier_id.eq.${id},bigisub_plan_id.eq.${id}`);
-      try {
-        await supabase.from("data_plans").delete().or(`id.eq.${id},plan_id.eq.${id}`);
-      } catch (_) {
-      }
+      await deleteOnePlan(id);
       return res.json({ success: true, message: "Successfully deleted service plan!" });
     } catch (err) {
       console.error("Error deleting plan:", err);
@@ -4286,7 +4313,7 @@ AI:`;
     }
   });
   app.get("/api/admin/transactions", async (req, res) => {
-    if (!await requireAdmin(req, res)) return;
+    if (!await requireAdmin(req, res, true)) return;
     try {
       const limit = Math.min(Number(req.query.limit) || 25, 100);
       const offset = Number(req.query.offset) || 0;

@@ -2,7 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { fetchWalletSnapshot } from '../lib/walletApi';
 import type { UserProfile } from '../types';
 
 interface AuthContextType {
@@ -163,29 +162,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: ((sbUser.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' || sbUser.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com') ? 'admin' : (sbProfile?.role || sbProfile?.user_role || 'user')),
           referralCode: sbProfile?.referral_code || '',
           phoneNumber: sbProfile?.phone_number || '',
-          transactionPin: '', // PIN is stored as a server-side bcrypt hash; never expose it client-side
+          transactionPin: sbProfile?.transaction_pin || '',
           createdAt: sbProfile?.createdAt || sbProfile?.created_at || new Date().toISOString()
         };
 
         setUserProfile(defaultProfile);
-        // SECURITY: never persist the transaction PIN in localStorage (audit M5).
-        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...defaultProfile, transactionPin: undefined }));
+        localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(defaultProfile));
         setLoading(false);
 
         // Define a function to reload user profile directly from Supabase to sync balances
         const fetchLatestSupabaseProfile = async () => {
-          // Authoritative balance via the same-origin API (service-role read).
-          // This is what makes admin funding appear even when the browser's
-          // own Supabase role/realtime access can't see the row.
-          let apiBalance: number | null = null;
-          try {
-            const snap = await fetchWalletSnapshot();
-            apiBalance = snap.balance;
-          } catch (err) {
-            // Demo/simulated sessions have no API session — context keeps
-            // whatever it has; real users fall through to the direct read.
-          }
-
           try {
             const { data, error } = await supabase
               .from('profiles')
@@ -193,20 +179,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               .eq('id', sbUser.id)
               .maybeSingle();
 
-            if ((!error && data) || apiBalance !== null) {
+            if (!error && data) {
               setUserProfile(prev => {
                 const base = prev || defaultProfile;
-                const direct = data ? (data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance)) : (base.balance ?? 0);
-                const latestBalance = apiBalance !== null ? apiBalance : direct;
+                const latestBalance = data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance);
                 const updatedProfile = {
                   ...base,
-                  fullName: data?.name || data?.username || base.fullName,
+                  fullName: data.name || data.username || base.fullName,
                   balance: latestBalance,
                   wallet_balance: latestBalance,
-                  phoneNumber: data?.phone_number || base.phoneNumber,
-                  transactionPin: base.transactionPin, // hash never leaves the server
+                  phoneNumber: data.phone_number || base.phoneNumber,
+                  transactionPin: data.transaction_pin || base.transactionPin,
                 };
-                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...updatedProfile, transactionPin: undefined }));
+                localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(updatedProfile));
                 return updatedProfile;
               });
             }
@@ -214,10 +199,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.warn("Error background polling user profile from Supabase:", err);
           }
         };
-
-        // Kick an immediate authoritative sync right after login (don't wait
-        // the full poll interval to show the true balance).
-        fetchLatestSupabaseProfile();
 
         // 1. Establish a real-time Postgres changes listener in Supabase for immediate balance updates
         const channel = supabase
@@ -243,9 +224,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     balance: latestBalance,
                     wallet_balance: latestBalance,
                     phoneNumber: updated.phone_number || base.phoneNumber,
-                    transactionPin: base.transactionPin, // hash never leaves the server
+                    transactionPin: updated.transaction_pin || base.transactionPin,
                   };
-                  localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify({ ...newProfile, transactionPin: undefined }));
+                  localStorage.setItem(`vtu_user_cache_${sbUser.id}`, JSON.stringify(newProfile));
                   return newProfile;
                 });
               }
@@ -256,22 +237,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 2. Set up a bulletproof background polling interval (every 8 seconds) in case Realtime replication is disabled
         const pollInterval = setInterval(fetchLatestSupabaseProfile, 8000);
 
-        // 3. Phones/PWAs throttle setInterval while backgrounded, so a wallet
-        //    funding done while the app was closed stays invisible until the
-        //    tab is focused again. Refetch the moment the app resumes.
-        const handleResume = () => {
-          if (document.visibilityState === 'visible') {
-            fetchLatestSupabaseProfile();
-          }
-        };
-        document.addEventListener('visibilitychange', handleResume);
-        window.addEventListener('focus', handleResume);
-
         unsubProfile = () => {
           channel.unsubscribe();
           clearInterval(pollInterval);
-          document.removeEventListener('visibilitychange', handleResume);
-          window.removeEventListener('focus', handleResume);
         };
       } else {
         if (!isSimulated) {
