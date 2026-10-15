@@ -2627,22 +2627,59 @@ async function startServer() {
   });
   app.post("/api/admin/delete-plan", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
-    const { id, ids } = req.body;
+    const { id, ids, name } = req.body;
     try {
       const isUUID = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim());
-      const deleteOnePlan = async (targetId) => {
-        const cleanId = String(targetId).trim();
-        if (!cleanId) return;
-        if (isUUID(cleanId)) {
-          await supabase.from("services_config").delete().eq("id", cleanId);
-        }
-        await supabase.from("services_config").delete().or(`mozosubz_plan_id.eq.${cleanId},mozosubs_plan_id.eq.${cleanId},bigisub_identifier_id.eq.${cleanId},bigisub_plan_id.eq.${cleanId}`);
-        try {
-          if (isUUID(cleanId)) {
-            await supabase.from("data_plans").delete().eq("id", cleanId);
+      const deleteOnePlan = async (targetId, targetName) => {
+        const cleanId = String(targetId || "").trim();
+        const cleanName = String(targetName || "").trim();
+        if (!cleanId && !cleanName) return;
+        if (cleanId && isUUID(cleanId)) {
+          try {
+            await supabase.from("services_config").delete().eq("id", cleanId);
+          } catch (_) {
           }
-          await supabase.from("data_plans").delete().or(`plan_id.eq.${cleanId},id.eq.${cleanId}`);
-        } catch (_) {
+          try {
+            await supabase.from("data_plans").delete().eq("id", cleanId);
+          } catch (_) {
+          }
+        }
+        if (cleanId) {
+          try {
+            await supabase.from("services_config").delete().eq("bigisub_identifier_id", cleanId);
+          } catch (_) {
+          }
+          try {
+            await supabase.from("services_config").delete().eq("mozosubz_plan_id", cleanId);
+          } catch (_) {
+          }
+          try {
+            await supabase.from("services_config").delete().eq("mozosubs_plan_id", cleanId);
+          } catch (_) {
+          }
+          try {
+            await supabase.from("data_plans").delete().eq("plan_id", cleanId);
+          } catch (_) {
+          }
+          try {
+            await supabase.from("data_plans").delete().eq("id", cleanId);
+          } catch (_) {
+          }
+        }
+        if (cleanName) {
+          try {
+            await supabase.from("services_config").delete().eq("item_name", cleanName);
+          } catch (_) {
+          }
+          try {
+            await supabase.from("data_plans").delete().eq("name", cleanName);
+          } catch (_) {
+          }
+        } else if (cleanId && !isUUID(cleanId) && cleanId.length > 3) {
+          try {
+            await supabase.from("services_config").delete().eq("item_name", cleanId);
+          } catch (_) {
+          }
         }
       };
       if (Array.isArray(ids) && ids.length > 0) {
@@ -2651,14 +2688,42 @@ async function startServer() {
         }
         return res.json({ success: true, message: `Successfully deleted ${ids.length} service plans!` });
       }
-      if (!id) {
-        return res.status(400).json({ error: "Missing plan id to delete." });
+      if (!id && !name) {
+        return res.status(400).json({ error: "Missing plan id or name to delete." });
       }
-      await deleteOnePlan(id);
+      await deleteOnePlan(id, name);
       return res.json({ success: true, message: "Successfully deleted service plan!" });
     } catch (err) {
       console.error("Error deleting plan:", err);
       return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/admin/delete-all-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { serviceType = "data" } = req.body;
+      console.log(`[Admin] Purging ALL data plans (service_type: ${serviceType})...`);
+      const { error: scErr, count: scCount } = await supabase.from("services_config").delete({ count: "exact" }).eq("service_type", serviceType);
+      if (scErr) {
+        console.warn("[delete-all-plans] services_config eq delete warning:", scErr.message);
+      }
+      try {
+        await supabase.from("services_config").delete().or("provider.eq.mozosubz,provider.eq.nifex");
+      } catch (_) {
+      }
+      try {
+        await supabase.from("data_plans").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      } catch (_) {
+      }
+      console.log(`[Admin] Successfully purged all data plans. Deleted count: ${scCount || 0}`);
+      return res.json({
+        success: true,
+        message: "All data plans have been completely deleted from your database.",
+        deletedCount: scCount || 0
+      });
+    } catch (err) {
+      console.error("[delete-all-plans Error]:", err);
+      return res.status(500).json({ error: err.message || "Failed to delete all plans." });
     }
   });
   app.post("/api/v1/payment-webhook", async (req, res) => {
@@ -4513,6 +4578,151 @@ AI:`;
       return res.json({ success: true, balance: userBalance, plans: enriched });
     } catch (err) {
       console.error("[POST /api/admin/fetch-nifex-plans Exception]:", err);
+      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+  app.post("/api/admin/fetch-all-providers-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { autoPublish = false, defaultMarkup = 10 } = req.body;
+      console.log("[Admin] Force-fetching data plans from ALL providers (Mozosubz & Nifex Data)...");
+      const allCombinedPlans = [];
+      const providerStats = {
+        mozosubz: { count: 0 },
+        nifex: { count: 0 }
+      };
+      try {
+        const CONNECT_KEY = await resolveMozosubzApiKey();
+        const MOZO_BASE = "https://mozosubz.xyz/api/v1";
+        const MOZO_SERVICES = [
+          { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+          { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
+          { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
+          { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+          { id: "glo_sme", network: "GLO", plan_type: "SME" },
+          { id: "glo_data", network: "GLO", plan_type: "DATA" },
+          { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+          { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+          { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
+        ];
+        if (CONNECT_KEY && CONNECT_KEY.length > 5 && !CONNECT_KEY.includes("PASTE_YOUR")) {
+          const results = await Promise.allSettled(
+            MOZO_SERVICES.map(async (svc) => {
+              const url = `${MOZO_BASE}/data/plans?service=${svc.id}`;
+              const resp = await fetch(url, {
+                headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(8e3)
+              });
+              const data = await resp.json().catch(() => ({}));
+              if (!data.success || !Array.isArray(data.plans)) return [];
+              return data.plans.map((p) => ({
+                id: String(p.id),
+                plan_id: String(p.id),
+                service: svc.id,
+                name: p.name,
+                price: Number(p.price),
+                network: svc.network,
+                plan_type: svc.plan_type,
+                provider: "mozosubz"
+              }));
+            })
+          );
+          for (const r of results) {
+            if (r.status === "fulfilled" && Array.isArray(r.value)) {
+              allCombinedPlans.push(...r.value);
+              providerStats.mozosubz.count += r.value.length;
+            }
+          }
+        }
+      } catch (mozoErr) {
+        console.warn("[fetch-all-providers-plans] Mozosubz fetch error:", mozoErr.message);
+        providerStats.mozosubz.error = mozoErr.message;
+      }
+      try {
+        const NIFEX_CATALOG = [
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_1gb", plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_2gb", plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_3gb", plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_5gb", plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
+          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_10gb", plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
+          { network: "MTN", plan_type: "CG", id: "nifex_mtn_cg_1gb", plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
+          { network: "MTN", plan_type: "CG", id: "nifex_mtn_cg_2gb", plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
+          { network: "MTN", plan_type: "CG", id: "nifex_mtn_cg_5gb", plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
+          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_1gb", plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
+          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_2gb", plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
+          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_3gb", plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
+          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_5gb", plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
+          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_10gb", plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
+          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
+          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
+          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
+          { network: "AIRTEL", plan_type: "CG", id: "nifex_airtel_cg_1gb", plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
+          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
+          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
+          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
+        ];
+        const nifexPlans = NIFEX_CATALOG.map((p) => ({
+          ...p,
+          service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
+          provider: "nifex"
+        }));
+        allCombinedPlans.push(...nifexPlans);
+        providerStats.nifex.count += nifexPlans.length;
+      } catch (nifexErr) {
+        console.warn("[fetch-all-providers-plans] Nifex fetch error:", nifexErr.message);
+        providerStats.nifex.error = nifexErr.message;
+      }
+      const seen = /* @__PURE__ */ new Set();
+      const deduplicatedPlans = allCombinedPlans.filter((p) => {
+        const key = `${p.network}_${p.name}_${p.provider}`.toLowerCase().replace(/\s+/g, "");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      let publishedCount = 0;
+      if (autoPublish) {
+        const markup = Number(defaultMarkup) || 10;
+        const rowsToUpsert = deduplicatedPlans.map((p) => {
+          const cost = Number(p.price || 0);
+          const selling = Math.ceil(cost * (1 + markup / 100));
+          return {
+            service_type: "data",
+            network_or_provider: p.network,
+            provider_or_network: p.network,
+            item_name: p.name,
+            cost_price: cost,
+            selling_price: selling,
+            retail_price: selling,
+            agent_price: Math.ceil(cost * 1.02),
+            reseller_price: Math.ceil(cost * 1.05),
+            bigisub_identifier_id: p.id,
+            mozosubz_plan_id: p.id,
+            mozosubz_service: p.service,
+            provider: p.provider,
+            validity_days: "30 Days",
+            is_active: true,
+            updated_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+        });
+        for (let i = 0; i < rowsToUpsert.length; i += 50) {
+          const chunk = rowsToUpsert.slice(i, i + 50);
+          const { error } = await supabase.from("services_config").upsert(chunk, { onConflict: "bigisub_identifier_id" });
+          if (!error) publishedCount += chunk.length;
+        }
+      }
+      return res.json({
+        success: true,
+        message: `Successfully force-fetched ${deduplicatedPlans.length} plans across all providers.`,
+        total: deduplicatedPlans.length,
+        plans: deduplicatedPlans,
+        providerStats,
+        autoPublished: autoPublish,
+        publishedCount
+      });
+    } catch (err) {
+      console.error("[fetch-all-providers-plans Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
     }
   });

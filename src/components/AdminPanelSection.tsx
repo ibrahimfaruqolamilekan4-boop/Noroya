@@ -391,11 +391,12 @@ export default function AdminPanelSection() {
 
       if (!res.ok) {
         // Fallback direct delete
-        const { error } = await supabase
-          .from('services_config')
-          .delete()
-          .eq('id', id);
-        if (error) throw error;
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id).trim());
+        if (isUUID) {
+          await supabase.from('services_config').delete().eq('id', id);
+        }
+        await supabase.from('services_config').delete().eq('bigisub_identifier_id', id);
+        await supabase.from('services_config').delete().eq('mozosubz_plan_id', id);
       }
 
       toast.success("Service configuration removed successfully!");
