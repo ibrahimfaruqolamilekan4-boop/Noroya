@@ -15,7 +15,7 @@ import {
   RefreshCw, Save, DollarSign, CheckCircle, AlertTriangle,
   Loader2, Search, Eye, EyeOff, TrendingUp, Zap,
   BarChart2, Globe, Percent, ToggleLeft, ToggleRight, Filter,
-  Trash2, Layers, Key, ShieldCheck, Check, ChevronDown, ChevronUp
+  Trash2, Layers, Key, ShieldCheck, Check, ChevronDown, ChevronUp, Sparkles
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
@@ -158,6 +158,8 @@ export default function AdminPricingManager() {
   const [batchProvider,   setBatchProvider]   = useState<ProviderSlug>('mozosubz');
   const [lastFetched,     setLastFetched]     = useState<Date | null>(null);
   const [providerBalance, setProviderBalance] = useState<number | null>(null);
+  const [isDeletingAll,   setIsDeletingAll]   = useState(false);
+  const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
 
   // ── Provider API Key Management ───────────────────────────────────────────
   const [apiKeyInput,     setApiKeyInput]     = useState('');
@@ -404,7 +406,7 @@ export default function AdminPricingManager() {
       const res = await fetch('/api/admin/delete-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({ id: planId, collectionName: 'services_config' }),
+        body: JSON.stringify({ id: planId, name: row.name, collectionName: 'services_config' }),
       });
 
       if (!res.ok) {
@@ -416,10 +418,137 @@ export default function AdminPricingManager() {
       setRows(prev => prev.filter(r => r.planId !== planId));
       toast.success(`🗑️ Deleted "${row.name}" successfully`);
     } catch (err: any) {
+      // Direct Supabase fallback to guarantee deletion
+      try {
+        await supabase.from('services_config').delete().eq('item_name', row.name);
+        await supabase.from('services_config').delete().eq('bigisub_identifier_id', planId);
+        setRows(prev => prev.filter(r => r.planId !== planId));
+        toast.success(`🗑️ Deleted "${row.name}" via direct fallback`);
+        return;
+      } catch (_) {}
+
       setRows(prev => prev.map(r => r.planId === planId ? { ...r, deleting: false } : r));
       toast.error(err.message || 'Failed to delete plan');
     }
   }, [rows]);
+
+  // ── Delete ALL Data Plans from Store and Database ──────────────────────────
+  const deleteAllPlans = useCallback(async () => {
+    if (!window.confirm("⚠️ DANGER: Are you sure you want to delete ALL data plans from your database?\n\nThis will permanently delete all data plans currently configured, allowing you to fetch fresh, clean plans from all providers without any duplicates or errors.\n\nClick OK to confirm.")) {
+      return;
+    }
+
+    setIsDeletingAll(true);
+    try {
+      const session = await getSession();
+      const res = await fetch('/api/admin/delete-all-plans', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ serviceType: 'data' })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete all plans');
+      }
+
+      setRows([]);
+      setFetched(false);
+      toast.success('🗑️ All data plans successfully deleted from database! You can now fetch fresh plans.');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete all plans');
+    } finally {
+      setIsDeletingAll(false);
+    }
+  }, []);
+
+  // ── Force Fetch All Plans from ALL Providers (Mozosubz + Nifex) ─────────────
+  const forceFetchAllProviders = useCallback(async (autoPublish = false) => {
+    setIsForceFetchingAll(true);
+    setLoading(true);
+    try {
+      const session = await getSession();
+      const [res, existingPrices] = await Promise.all([
+        fetch('/api/admin/fetch-all-providers-plans', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            autoPublish,
+            defaultMarkup: parseFloat(globalMarkup) || 10
+          })
+        }),
+        loadExistingPrices(),
+      ]);
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to force fetch from providers');
+      }
+
+      const plans: any[] = (data.plans || []).filter((p: any) => (p.id || p.plan_id) && p.name && p.price > 0);
+      if (!plans.length) {
+        toast('No active plans returned across providers — check your provider keys.', { icon: '⚠️' });
+        setFetched(true);
+        return;
+      }
+
+      const defaultMarkup = parseFloat(globalMarkup) || 10;
+      const newRows: PricingRow[] = plans.map((p: any) => {
+        const planKey = String(p.id || p.plan_id);
+        const existing = existingPrices[planKey] || existingPrices[String(p.plan_id)] || existingPrices[`${p.service}_${p.id}`];
+        const cost     = Number(p.price);
+        let markup     = defaultMarkup;
+        if (existing && existing.selling > 0 && existing.cost > 0) {
+          markup = ((existing.selling - existing.cost) / existing.cost) * 100;
+        }
+        const svc = SERVICE_MAP[p.service] || {
+          id: p.service || 'custom',
+          label: `${p.network} ${p.plan_type || 'Data'}`,
+          network: p.network,
+          color: '#818CF8',
+          bg: 'rgba(129,140,248,0.10)',
+          border: 'rgba(129,140,248,0.30)',
+        };
+
+        return {
+          planId:        planKey,
+          serviceId:     p.service as ServiceID,
+          network:       p.network || svc.network,
+          name:          String(p.name),
+          costPrice:     cost,
+          markupPct:     Math.round(markup * 10) / 10,
+          sellingPrice:  existing?.selling || calcSelling(cost, markup),
+          saved:         autoPublish || !!existing?.selling,
+          saving:        false,
+          dirty:         false,
+          provider:      (p.provider || existing?.provider || 'mozosubz') as ProviderSlug,
+          bigisubPlanId: existing?.bigisub_id || planKey,
+          isActive:      existing?.active !== false,
+        };
+      });
+
+      setRows(newRows);
+      setFetched(true);
+      setLastFetched(new Date());
+
+      if (autoPublish) {
+        toast.success(`🎉 Force-fetched & published ${data.publishedCount || newRows.length} plans directly to store!`);
+      } else {
+        toast.success(`🚀 Force-fetched ${newRows.length} live plans from ALL providers (Mozosubz & Nifex)!`);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to force fetch plans');
+    } finally {
+      setIsForceFetchingAll(false);
+      setLoading(false);
+    }
+  }, [globalMarkup, loadExistingPrices]);
 
   // ── Apply global markup ────────────────────────────────────────────────────
   const applyGlobalMarkup = useCallback(() => {
@@ -687,6 +816,56 @@ export default function AdminPricingManager() {
             </div>
           </div>
         )}
+
+        {/* Plan Maintenance & Danger Zone Panel */}
+        <div className="mt-4 pt-4 border-t border-slate-800/80 rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+                <Sparkles size={14} className="text-indigo-400" />
+                Multi-Provider Synchronization & Plan Maintenance
+              </h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Force fetch all data plans from both Mozosubz and Nifex Data at once, or wipe all plans to re-sync cleanly without duplicates.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+              {/* Force Fetch Both Providers */}
+              <button
+                type="button"
+                onClick={() => forceFetchAllProviders(false)}
+                disabled={isForceFetchingAll || loading}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md disabled:opacity-50 transition cursor-pointer border border-indigo-400/30"
+              >
+                {isForceFetchingAll ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                <span>{isForceFetchingAll ? "Force Fetching..." : "Force Fetch All Providers"}</span>
+              </button>
+
+              {/* Force Sync & Publish Directly */}
+              <button
+                type="button"
+                onClick={() => forceFetchAllProviders(true)}
+                disabled={isForceFetchingAll || loading}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md disabled:opacity-50 transition cursor-pointer border border-emerald-400/30"
+              >
+                {isForceFetchingAll ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+                <span>Force Sync & Publish Live</span>
+              </button>
+
+              {/* Delete All Data Plans */}
+              <button
+                type="button"
+                onClick={deleteAllPlans}
+                disabled={isDeletingAll}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 hover:border-red-600 shadow-md disabled:opacity-50 transition cursor-pointer"
+              >
+                {isDeletingAll ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                <span>{isDeletingAll ? "Deleting All..." : "Delete All Plans"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
 
         {fetchWarning && (
           <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start justify-between gap-3 text-xs text-amber-200">
