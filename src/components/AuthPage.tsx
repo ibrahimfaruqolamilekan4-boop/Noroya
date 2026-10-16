@@ -141,7 +141,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
     userUsername?: string
   ) => {
     try {
-      const isAdminEmail = email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
+      const isAdminEmail = ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(email.toLowerCase().trim());
       const generatedCode = `NORODATA-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
       const { data: existing } = await supabase
@@ -640,9 +640,7 @@ export default function AuthPage({ onBack }: { onBack: () => void }) {
                       email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com' ? 'text-emerald-600 animate-pulse' : 'text-slate-600'
                     )}>
                       <Lock size={12} />
-                      {email.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com'
-                        ? '👑 Admin Account'
-                        : 'Password'}
+                      {email.toLowerCase() === 'jeffholland299@gmail.com' ? '📶 eSIM Admin Account' : ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com'].includes(email.toLowerCase().trim()) ? '👑 Admin Account' : 'Password'}
                     </label>
                     {mode === 'login' && (
                       <button

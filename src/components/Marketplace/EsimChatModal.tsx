@@ -60,6 +60,105 @@ export function EsimChatModal({
 
   const currentPkgObj = PRESET_PACKAGES.find(p => p.id === selectedPkg) || PRESET_PACKAGES[0];
 
+  const syncInquiryWithBackend = async (text: string, currentPackage: typeof PRESET_PACKAGES[0]) => {
+    const payload = {
+      user_id: currentUser?.uid || currentUser?.id || 'visitor',
+      user_name: currentUser?.fullName || currentUser?.name || 'Customer',
+      user_email: currentUser?.email || '',
+      user_phone: currentUser?.phoneNumber || '',
+      package_id: currentPackage.id,
+      package_label: currentPackage.label,
+      package_price: currentPackage.price,
+      destination_country: currentPackage.country,
+      device_model: deviceModel || 'Smartphone',
+      message: text
+    };
+
+    try {
+      const raw = localStorage.getItem('noroya_esim_inquiries');
+      const list = raw ? JSON.parse(raw) : [];
+      const newMsgObj = {
+        id: `msg-${Date.now()}`,
+        sender: 'user',
+        text,
+        created_at: new Date().toISOString()
+      };
+
+      const existingIdx = list.findIndex((i: any) => 
+        (payload.user_email && i.user_email === payload.user_email) ||
+        (payload.user_id !== 'visitor' && i.user_id === payload.user_id)
+      );
+
+      if (existingIdx >= 0) {
+        list[existingIdx].messages.push(newMsgObj);
+        list[existingIdx].last_message = text;
+        list[existingIdx].updated_at = new Date().toISOString();
+        list[existingIdx].device_model = deviceModel || list[existingIdx].device_model;
+        list[existingIdx].package_label = currentPackage.label;
+      } else {
+        list.unshift({
+          id: `inq-${Date.now()}`,
+          ...payload,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          last_message: text,
+          messages: [newMsgObj]
+        });
+      }
+      localStorage.setItem('noroya_esim_inquiries', JSON.stringify(list));
+    } catch (_) {}
+
+    try {
+      await fetch('/api/esim/inquiries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (_) {}
+  };
+
+  // Poll for real-time replies from Admin (jeffholland299@gmail.com or other admins)
+  useEffect(() => {
+    if (!isOpen) return;
+    const checkAdminReplies = () => {
+      try {
+        const raw = localStorage.getItem('noroya_esim_inquiries');
+        if (!raw) return;
+        const list = JSON.parse(raw);
+        const myInquiry = list.find((i: any) => 
+          (currentUser?.email && i.user_email === currentUser.email) ||
+          (currentUser?.uid && i.user_id === currentUser.uid)
+        );
+        if (myInquiry && Array.isArray(myInquiry.messages)) {
+          const adminMsgs = myInquiry.messages.filter((m: any) => m.sender === 'admin');
+          if (adminMsgs.length > 0) {
+            setMessages(prev => {
+              const existingIds = new Set(prev.map(p => p.id));
+              const newReplies: ChatMsg[] = [];
+              for (const adm of adminMsgs) {
+                if (!existingIds.has(adm.id)) {
+                  newReplies.push({
+                    id: adm.id,
+                    sender: 'admin',
+                    text: adm.text,
+                    time: new Date(adm.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    hasQr: Boolean(adm.activation_code || adm.has_qr)
+                  });
+                }
+              }
+              return newReplies.length > 0 ? [...prev, ...newReplies] : prev;
+            });
+          }
+        }
+      } catch (_) {}
+    };
+
+    checkAdminReplies();
+    const interval = setInterval(checkAdminReplies, 4000);
+    return () => clearInterval(interval);
+  }, [isOpen, currentUser]);
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
@@ -75,10 +174,13 @@ export function EsimChatModal({
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
 
-    // Simulate smart Admin interactive response
+    // Sync directly to Admin Desk
+    syncInquiryWithBackend(trimmed, currentPkgObj);
+
+    // Provide friendly instant assistance
     setTimeout(() => {
       const lower = trimmed.toLowerCase();
-      let replyText = `Thanks for your inquiry! I have logged your request for ${currentPkgObj.label} on device "${deviceModel || 'your smartphone'}".`;
+      let replyText = `Thanks for your inquiry! Your request has been logged with the eSIM Admin Desk for ${currentPkgObj.label} on device "${deviceModel || 'your smartphone'}".`;
       let hasQr = false;
 
       if (lower.includes('price') || lower.includes('cost') || lower.includes('how much')) {
@@ -89,7 +191,7 @@ export function EsimChatModal({
         replyText = `Great! Here is the eSIM QR preview profile for ${currentPkgObj.label}. You can scan it directly in your device Cellular Settings, or click the WhatsApp button to chat directly with me for bespoke provisioning!`;
         hasQr = true;
       } else {
-        replyText = `Got it! I am reviewing your request. For fastest instant activation and QR code dispatch, you can also ping me on our WhatsApp eSIM direct desk (+2348143889102).`;
+        replyText = `Got it! The eSIM desk is reviewing your request. For fastest instant activation and QR code dispatch, you can also ping me on our WhatsApp eSIM direct desk (+2348143889102).`;
       }
 
       const adminReply: ChatMsg = {
@@ -106,19 +208,22 @@ export function EsimChatModal({
 
   const handleSendPresetInquiry = (pkg: typeof PRESET_PACKAGES[0]) => {
     setSelectedPkg(pkg.id);
+    const msgText = `Hello Admin, I want to purchase and activate: ${pkg.label} (${pkg.price}). My device is ${deviceModel || 'iPhone / Android'}. Please guide me on activation.`;
     const userMsg: ChatMsg = {
       id: `usr-${Date.now()}`,
       sender: 'user',
-      text: `Hello Admin, I want to purchase and activate: ${pkg.label} (${pkg.price}). My device is ${deviceModel || 'iPhone / Android'}. Please guide me on activation.`,
+      text: msgText,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     setMessages(prev => [...prev, userMsg]);
+
+    syncInquiryWithBackend(msgText, pkg);
 
     setTimeout(() => {
       const adminReply: ChatMsg = {
         id: `adm-${Date.now()}`,
         sender: 'admin',
-        text: `Received! ${pkg.label} is available right now for ${pkg.price}. It connects to top tier networks with fast 5G speeds. Would you like to proceed with instant wallet deduction, or would you like me to send you the direct QR code on WhatsApp?`,
+        text: `Received! ${pkg.label} is available right now for ${pkg.price}. It connects to top tier networks with fast 5G speeds. Our eSIM desk will issue your digital QR code.`,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         hasQr: true
       };
