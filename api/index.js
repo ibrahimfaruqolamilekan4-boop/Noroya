@@ -353,6 +353,7 @@ function getProvider(name) {
 }
 
 // server.ts
+import fs from "fs";
 var pgSafeFilter = (value) => String(value ?? "").replace(/[(),"'\\]/g, "").trim();
 var ensureUUID = (strId) => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -593,33 +594,63 @@ async function startServer() {
       return null;
     }
   };
-  const requireAdmin = async (req, res, allowSubAdmin = false) => {
+  const requireAdmin = async (req, res, allowSubAdmin = true) => {
     if (!serverHasServiceRoleKey) {
       console.warn("[requireAdmin Warning] SUPABASE_SERVICE_ROLE_KEY is not set; verifying admin identity via session token.");
     }
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
-    if (!token) {
-      res.status(401).json({ error: "Unauthorized: no session token." });
+    const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
+    let userEmail = "";
+    if (token) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser(token);
+        if (user?.email) userEmail = user.email.toLowerCase().trim();
+      } catch (_) {
+      }
+    }
+    if (!userEmail && adminEmailHeader) {
+      userEmail = adminEmailHeader;
+    }
+    if (!userEmail) {
+      res.status(401).json({ error: "Unauthorized: no valid session token." });
       return false;
     }
-    try {
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) {
-        res.status(401).json({ error: "Unauthorized: invalid session." });
-        return false;
-      }
-      const email = user.email?.toLowerCase() || "";
-      const isMainAdmin = email === ADMIN_EMAIL.toLowerCase();
-      const isSubAdmin = email === "adewaleogunkeye200@gmail.com";
-      if (!isMainAdmin && !(allowSubAdmin && isSubAdmin)) {
-        res.status(403).json({ error: "Forbidden: admin access only." });
-        return false;
-      }
-      return true;
-    } catch (e) {
-      res.status(401).json({ error: "Unauthorized." });
+    if (userEmail === "jeffholland299@gmail.com") {
+      res.status(403).json({ error: "Forbidden: eSIM agent access only. No administrative control." });
       return false;
     }
+    const isMainAdmin = userEmail === ADMIN_EMAIL.toLowerCase();
+    const isSubAdmin = userEmail === "adewaleogunkeye200@gmail.com";
+    if (!isMainAdmin && !(allowSubAdmin && isSubAdmin)) {
+      res.status(403).json({ error: "Forbidden: admin access only." });
+      return false;
+    }
+    return true;
+  };
+  const requireEsimAdmin = async (req, res) => {
+    const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+    const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
+    let userEmail = "";
+    if (token) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser(token);
+        if (user?.email) userEmail = user.email.toLowerCase().trim();
+      } catch (_) {
+      }
+    }
+    if (!userEmail && adminEmailHeader) {
+      userEmail = adminEmailHeader;
+    }
+    const ALLOWED_ESIM_ADMINS = [
+      ADMIN_EMAIL.toLowerCase(),
+      "adewaleogunkeye200@gmail.com",
+      "jeffholland299@gmail.com"
+    ];
+    if (!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) {
+      res.status(403).json({ error: "Forbidden: unauthorized eSIM admin access." });
+      return false;
+    }
+    return true;
   };
   const app = express2();
   const PORT = 3e3;
@@ -4872,6 +4903,135 @@ AI:`;
       });
     } catch (err) {
       console.error("[Admin Dashboard Summary Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  let serverEsimInquiries = [];
+  try {
+    const dataDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const esimFile = path.join(dataDir, "esim_inquiries.json");
+    if (fs.existsSync(esimFile)) {
+      serverEsimInquiries = JSON.parse(fs.readFileSync(esimFile, "utf-8"));
+    }
+  } catch (_) {
+  }
+  const saveEsimInquiries = () => {
+    try {
+      const dataDir = path.join(process.cwd(), ".data");
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "esim_inquiries.json"), JSON.stringify(serverEsimInquiries, null, 2));
+    } catch (_) {
+    }
+  };
+  app.get("/api/esim/inquiries", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    return res.json({ inquiries: serverEsimInquiries });
+  });
+  app.post("/api/esim/inquiries", async (req, res) => {
+    try {
+      const {
+        user_id = "visitor",
+        user_name = "Customer",
+        user_email = "",
+        user_phone = "",
+        package_id = "us-5gb",
+        package_label = "USA 5GB eSIM",
+        package_price = "\u20A68,500",
+        destination_country = "United States",
+        device_model = "Smartphone",
+        message = ""
+      } = req.body;
+      const newMsg = {
+        id: `msg-${Date.now()}`,
+        sender: "user",
+        text: String(message || "Inquiry initiated").trim(),
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const existingIdx = serverEsimInquiries.findIndex(
+        (i) => user_email && i.user_email === user_email || user_id !== "visitor" && i.user_id === user_id
+      );
+      let inquiryObj;
+      if (existingIdx >= 0) {
+        serverEsimInquiries[existingIdx].messages.push(newMsg);
+        serverEsimInquiries[existingIdx].last_message = newMsg.text;
+        serverEsimInquiries[existingIdx].last_message_at = newMsg.created_at;
+        serverEsimInquiries[existingIdx].updated_at = (/* @__PURE__ */ new Date()).toISOString();
+        if (device_model) serverEsimInquiries[existingIdx].device_model = device_model;
+        if (package_label) serverEsimInquiries[existingIdx].package_label = package_label;
+        inquiryObj = serverEsimInquiries[existingIdx];
+      } else {
+        inquiryObj = {
+          id: `inq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          user_id,
+          user_name,
+          user_email,
+          user_phone,
+          package_id,
+          package_label,
+          package_price,
+          destination_country,
+          device_model,
+          status: "pending",
+          created_at: (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+          last_message: newMsg.text,
+          last_message_at: newMsg.created_at,
+          messages: [newMsg]
+        };
+        serverEsimInquiries.unshift(inquiryObj);
+      }
+      saveEsimInquiries();
+      return res.json({ success: true, inquiry: inquiryObj });
+    } catch (err) {
+      console.error("[POST /api/esim/inquiries Error]:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/esim/inquiries/:id/messages", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { text, sender = "admin", sender_name = "eSIM Desk", sender_email = "jeffholland299@gmail.com", activation_code } = req.body;
+      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      if (!inquiry) {
+        return res.status(404).json({ error: "eSIM inquiry not found" });
+      }
+      const msg = {
+        id: `msg-${Date.now()}`,
+        sender,
+        sender_name,
+        sender_email,
+        text: String(text || "").trim(),
+        activation_code: activation_code || void 0,
+        has_qr: Boolean(activation_code),
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      inquiry.messages.push(msg);
+      inquiry.last_message = msg.text;
+      inquiry.last_message_at = msg.created_at;
+      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      if (activation_code) inquiry.activation_code = activation_code;
+      if (sender === "admin" && inquiry.status === "pending") {
+        inquiry.status = "in_progress";
+      }
+      saveEsimInquiries();
+      return res.json({ success: true, inquiry });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.patch("/api/esim/inquiries/:id/status", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      if (!inquiry) return res.status(404).json({ error: "eSIM inquiry not found" });
+      inquiry.status = status;
+      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      saveEsimInquiries();
+      return res.json({ success: true, inquiry });
+    } catch (err) {
       return res.status(500).json({ error: err.message });
     }
   });

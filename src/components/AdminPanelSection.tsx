@@ -1,3 +1,5 @@
+import { AdminEsimMessages } from './AdminEsimMessages';
+import { MessageSquare } from 'lucide-react';
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -84,8 +86,10 @@ export const ensureUUID = (strId: string): string => {
 
 export default function AdminPanelSection() {
   const { user } = useAuth();
+  const isSuperAdmin = user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
   const isAccountantAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
-  const isRestrictedAdmin = isAccountantAdmin;
+  const isEsimAdmin = user?.email?.toLowerCase() === 'jeffholland299@gmail.com';
+  const isRestrictedAdmin = isAccountantAdmin || isEsimAdmin;
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
@@ -113,7 +117,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status'>(isAccountantAdmin ? 'transactions' : 'dashboard');
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status' | 'esim-messages'>(isEsimAdmin ? 'esim-messages' : isAccountantAdmin ? 'transactions' : 'dashboard');
 
   // Add Service Form State
   const [newServiceType, setNewServiceType] = React.useState<'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('data');
@@ -805,30 +809,68 @@ export default function AdminPanelSection() {
     <div className="space-y-10 font-sans pb-16">
       
       {/* 1. ADMIN HEADINGS */}
-      <div className="flex justify-between items-center bg-white p-6 border border-slate-100 rounded-3xl">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 border border-slate-100 rounded-3xl shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600">
             <ShieldCheck size={22} />
           </div>
           <div>
-            <h4 className="font-extrabold text-slate-800 text-lg">Platform Admin Control</h4>
-            <p className="text-xs text-slate-400 font-semibold font-sans uppercase">Continuous Whitelisted Bypass Mode</p>
+            <h4 className="font-extrabold text-slate-800 text-lg">
+              {isEsimAdmin ? "eSIM Operator Desk" : "Platform Admin Control"}
+            </h4>
+            <p className="text-xs text-slate-400 font-semibold font-sans uppercase">
+              {isEsimAdmin 
+                ? "Logged in as jeffholland299@gmail.com · Restricted to eSIM Messages & Fulfillment"
+                : "Continuous Whitelisted Bypass Mode"}
+            </p>
           </div>
         </div>
-        <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" /> Connection secure
-        </span>
+
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Dedicated eSIM Messages quick button available on ALL THREE admin accounts */}
+          <button
+            type="button"
+            onClick={() => setAdminSubTab('esim-messages')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95 border",
+              adminSubTab === 'esim-messages'
+                ? "bg-teal-600 text-white border-teal-500 ring-2 ring-teal-400/40"
+                : "bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-300"
+            )}
+          >
+            <MessageSquare size={14} />
+            <span>📶 eSIM Messages</span>
+          </button>
+
+          <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" /> Connection secure
+          </span>
+        </div>
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex flex-wrap gap-1 md:flex-nowrap bg-slate-100 p-1.5 rounded-2xl max-w-4xl select-none font-bold">
-        {!isRestrictedAdmin && (
+      <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1.5 rounded-2xl max-w-5xl select-none font-bold">
+        {/* On all 3 accounts, eSIM Messages button is always available */}
+        <button
+          type="button"
+          onClick={() => setAdminSubTab('esim-messages')}
+          className={cn(
+            "px-4 py-2.5 text-xs md:text-sm font-black rounded-xl transition flex items-center gap-1.5 cursor-pointer",
+            adminSubTab === 'esim-messages'
+              ? "bg-teal-600 text-white shadow-md font-extrabold"
+              : "text-teal-700 hover:text-teal-900 hover:bg-teal-50"
+          )}
+        >
+          <span>📶 eSIM Messages</span>
+        </button>
+
+        {!isEsimAdmin && !isRestrictedAdmin && (
           <>
             <button
               type="button"
               onClick={() => setAdminSubTab('service-plans')}
               className={cn(
-                "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
                 adminSubTab === 'service-plans'
                   ? "bg-white text-slate-900 shadow-md font-extrabold"
                   : "text-slate-500 hover:text-slate-850"
@@ -840,7 +882,7 @@ export default function AdminPanelSection() {
               type="button"
               onClick={() => setAdminSubTab('opay-receipts')}
               className={cn(
-                "flex-1 py-3 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
                 adminSubTab === 'opay-receipts'
                   ? "bg-white text-slate-900 shadow-md font-extrabold"
                   : "text-slate-500 hover:text-slate-850"
@@ -850,7 +892,7 @@ export default function AdminPanelSection() {
             </button>
             <button
               onClick={() => setAdminSubTab('pricing-manager')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
                 adminSubTab === 'pricing-manager'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
@@ -860,7 +902,7 @@ export default function AdminPanelSection() {
             </button>
             <button
               onClick={() => setAdminSubTab('dashboard')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
                 adminSubTab === 'dashboard'
                   ? 'bg-indigo-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
@@ -870,30 +912,34 @@ export default function AdminPanelSection() {
             </button>
           </>
         )}
-        <button
-          onClick={() => setAdminSubTab('transactions')}
-          className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-            adminSubTab === 'transactions'
-              ? 'bg-indigo-600 text-white shadow'
-              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-          }`}
-        >
-          🧾 Transactions
-        </button>
-        <button
-          onClick={() => setAdminSubTab('user-mgmt')}
-          className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
-            adminSubTab === 'user-mgmt'
-              ? 'bg-indigo-600 text-white shadow'
-              : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
-          }`}
-        >
-          👤 User Management
-        </button>
-        {!isRestrictedAdmin && (
+        {!isEsimAdmin && (
+          <>
+            <button
+              onClick={() => setAdminSubTab('transactions')}
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
+                adminSubTab === 'transactions'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              🧾 Transactions
+            </button>
+            <button
+              onClick={() => setAdminSubTab('user-mgmt')}
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
+                adminSubTab === 'user-mgmt'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              👤 User Management
+            </button>
+          </>
+        )}
+        {!isEsimAdmin && !isRestrictedAdmin && (
           <button
             onClick={() => setAdminSubTab('provider-status')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition ${
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
               adminSubTab === 'provider-status'
                 ? 'bg-indigo-600 text-white shadow'
                 : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
@@ -902,15 +948,16 @@ export default function AdminPanelSection() {
             🛰️ Provider Status
           </button>
         )}
-        {/* Monnify config option completely deleted */}
       </div>
 
-      {!isRestrictedAdmin && adminSubTab === 'dashboard' && <DashboardOverviewTab />}
-      {adminSubTab === 'transactions' && <TransactionsTab />}
-      {adminSubTab === 'user-mgmt' && <UserManagementTab />}
-      {!isRestrictedAdmin && adminSubTab === 'provider-status' && <ProviderStatusTab />}
+      {/* Tab Contents */}
+      {adminSubTab === 'esim-messages' && <AdminEsimMessages />}
+      {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'dashboard' && <DashboardOverviewTab />}
+      {!isEsimAdmin && adminSubTab === 'transactions' && <TransactionsTab />}
+      {!isEsimAdmin && adminSubTab === 'user-mgmt' && <UserManagementTab />}
+      {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'provider-status' && <ProviderStatusTab />}
 
-      {!isRestrictedAdmin && adminSubTab === 'service-plans' && (
+      {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'service-plans' && (
         /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
         <div className="space-y-6 pb-12">
           {/* Header Action Dashboard with Option C Neo-Brutalis styling */}

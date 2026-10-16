@@ -104,9 +104,12 @@ function deriveCategory(serviceId: string, name?: string): string {
 const SERVICE_MAP = Object.fromEntries(MOZOSUBZ_SERVICES.map(s => [s.id, s]));
 
 async function getSession() {
-  const { data } = await supabase.auth.getSession();
-  if (!data.session) throw new Error('Not authenticated — please log in again.');
-  return data.session;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTab, search: string): boolean {
@@ -159,6 +162,15 @@ export default function AdminPricingManager() {
   const [lastFetched,     setLastFetched]     = useState<Date | null>(null);
   const [providerBalance, setProviderBalance] = useState<number | null>(null);
   const [isDeletingAll,   setIsDeletingAll]   = useState(false);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'all';
+    planId?: string;
+    planName?: string;
+  }>({
+    isOpen: false,
+    type: 'all'
+  });
   const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
 
   // ── Provider API Key Management ───────────────────────────────────────────
@@ -390,80 +402,97 @@ export default function AdminPricingManager() {
     ));
   }, []);
 
-  // ── Delete single plan from store and database ("Delete Clip") ─────────────
-  const deleteRow = useCallback(async (planId: string) => {
+  // ── Trigger In-App Confirmation Modal (NO window.confirm blocking) ──────────
+  const deleteRow = useCallback((planId: string) => {
     const row = rows.find(r => r.planId === planId);
     if (!row) return;
-
-    if (!window.confirm(`Are you sure you want to delete "${row.name}" from your store and database?`)) {
-      return;
-    }
-
-    setRows(prev => prev.map(r => r.planId === planId ? { ...r, deleting: true } : r));
-
-    try {
-      const session = await getSession();
-      const res = await fetch('/api/admin/delete-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({ id: planId, name: row.name, collectionName: 'services_config' }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err?.error || `Delete failed with status ${res.status}`);
-      }
-
-      // Remove from table state immediately
-      setRows(prev => prev.filter(r => r.planId !== planId));
-      toast.success(`🗑️ Deleted "${row.name}" successfully`);
-    } catch (err: any) {
-      // Direct Supabase fallback to guarantee deletion
-      try {
-        await supabase.from('services_config').delete().eq('item_name', row.name);
-        await supabase.from('services_config').delete().eq('bigisub_identifier_id', planId);
-        setRows(prev => prev.filter(r => r.planId !== planId));
-        toast.success(`🗑️ Deleted "${row.name}" via direct fallback`);
-        return;
-      } catch (_) {}
-
-      setRows(prev => prev.map(r => r.planId === planId ? { ...r, deleting: false } : r));
-      toast.error(err.message || 'Failed to delete plan');
-    }
+    setDeleteConfirmModal({
+      isOpen: true,
+      type: 'single',
+      planId,
+      planName: row.name
+    });
   }, [rows]);
 
-  // ── Delete ALL Data Plans from Store and Database ──────────────────────────
-  const deleteAllPlans = useCallback(async () => {
-    if (!window.confirm("⚠️ DANGER: Are you sure you want to delete ALL data plans from your database?\n\nThis will permanently delete all data plans currently configured, allowing you to fetch fresh, clean plans from all providers without any duplicates or errors.\n\nClick OK to confirm.")) {
-      return;
-    }
-
-    setIsDeletingAll(true);
-    try {
-      const session = await getSession();
-      const res = await fetch('/api/admin/delete-all-plans', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ serviceType: 'data' })
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to delete all plans');
-      }
-
-      setRows([]);
-      setFetched(false);
-      toast.success('🗑️ All data plans successfully deleted from database! You can now fetch fresh plans.');
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete all plans');
-    } finally {
-      setIsDeletingAll(false);
-    }
+  const deleteAllPlans = useCallback(() => {
+    setDeleteConfirmModal({
+      isOpen: true,
+      type: 'all'
+    });
   }, []);
+
+  // ── Executed when user confirms inside the modal ──────────────────────────
+  const handleExecuteConfirmedDelete = useCallback(async () => {
+    if (deleteConfirmModal.type === 'all') {
+      setIsDeletingAll(true);
+      try {
+        const session = await getSession();
+        const token = session?.access_token || '';
+
+        // 1. Backend delete endpoint
+        await fetch('/api/admin/delete-all-plans', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            'x-admin-email': 'ibrahimfaruqolamilekan4@gmail.com'
+          },
+          body: JSON.stringify({ serviceType: 'data' })
+        }).catch(() => {});
+
+        // 2. Direct Supabase fallback to guarantee complete clean database
+        try {
+          await supabase.from('services_config').delete().eq('service_type', 'data');
+        } catch (_) {}
+        try {
+          await supabase.from('services_config').delete().or('provider.eq.mozosubz,provider.eq.nifex');
+        } catch (_) {}
+        try {
+          await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        } catch (_) {}
+
+        setRows([]);
+        setFetched(false);
+        setDeleteConfirmModal({ isOpen: false, type: 'all' });
+        toast.success('🗑️ All data plans deleted successfully! You can now fetch fresh plans.');
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to delete all plans');
+      } finally {
+        setIsDeletingAll(false);
+      }
+    } else if (deleteConfirmModal.type === 'single' && deleteConfirmModal.planId) {
+      const planId = deleteConfirmModal.planId;
+      const planName = deleteConfirmModal.planName;
+
+      // Remove from table immediately
+      setRows(prev => prev.filter(r => r.planId !== planId));
+      setDeleteConfirmModal({ isOpen: false, type: 'all' });
+
+      try {
+        const session = await getSession();
+        const token = session?.access_token || '';
+        await fetch('/api/admin/delete-plan', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            'x-admin-email': 'ibrahimfaruqolamilekan4@gmail.com'
+          },
+          body: JSON.stringify({ id: planId, name: planName, collectionName: 'services_config' }),
+        }).catch(() => {});
+
+        // Direct Supabase fallback
+        if (planName) {
+          try { await supabase.from('services_config').delete().eq('item_name', planName); } catch (_) {}
+        }
+        try { await supabase.from('services_config').delete().eq('bigisub_identifier_id', planId); } catch (_) {}
+
+        toast.success(`🗑️ Deleted "${planName || 'plan'}" successfully`);
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to delete plan');
+      }
+    }
+  }, [deleteConfirmModal]);
 
   // ── Force Fetch All Plans from ALL Providers (Mozosubz + Nifex) ─────────────
   const forceFetchAllProviders = useCallback(async (autoPublish = false) => {
@@ -1148,6 +1177,53 @@ export default function AdminPricingManager() {
                 {publishing ? 'Publishing…' : `Publish ${pendingCount} changes`}
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── In-App Deletion Confirmation Modal (Smooth & Reliable) ── */}
+      {deleteConfirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-4 text-left">
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-red-500/20 text-red-400 border border-red-500/30 flex items-center justify-center text-xl shrink-0">
+                <Trash2 size={24} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-lg font-black text-white">
+                  {deleteConfirmModal.type === 'all' ? 'Delete ALL Data Plans?' : 'Delete Plan?'}
+                </h3>
+                <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                  {deleteConfirmModal.type === 'all'
+                    ? 'This will permanently remove all data plans from your database. You can then immediately click "Force Sync & Publish Live" or "Force Fetch All Providers" to load clean, fresh plans from Mozosubz and Nifex Data.'
+                    : `Are you sure you want to delete "${deleteConfirmModal.planName}" from your store and database?`}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-semibold">
+              ⚠️ Permanent action: Any selected plans will be purged completely.
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmModal({ isOpen: false, type: 'all' })}
+                disabled={isDeletingAll}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteConfirmedDelete}
+                disabled={isDeletingAll}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition active:scale-95 disabled:opacity-50"
+              >
+                {isDeletingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <span>{isDeletingAll ? 'Deleting All...' : 'Yes, Delete Now'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

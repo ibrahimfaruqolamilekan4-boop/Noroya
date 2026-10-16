@@ -81,54 +81,9 @@ const DEFAULT_CATEGORIES: MarketplaceCategory[] = [
   { id: 'cat-x-acc', name: 'Twitter/X Accounts', description: 'Twitter/X verified accounts and pages', icon: '𝕏', type: 'social_account' },
   { id: 'cat-snap-acc', name: 'Snapchat Accounts', description: 'Snapchat accounts with high score and active contacts', icon: '👻', type: 'social_account' },
   { id: 'cat-fb-acc', name: 'Facebook Accounts', description: 'Facebook pages, groups, and aged accounts', icon: '👍', type: 'social_account' },
-  { id: 'cat-esim-us', name: 'USA High-Speed eSIMs', description: 'Instant QR code eSIM with 5G data & calling plans', icon: '🇺🇸', type: 'esim' },
-  { id: 'cat-esim-uk', name: 'UK & Europe eSIMs', description: 'Instant UK and Europe 33-country travel eSIM profiles', icon: '🇬🇧', type: 'esim' },
-  { id: 'cat-esim-global', name: 'Global Roaming eSIM (150+ Countries)', description: 'International travel eSIM profiles with zero roaming charges', icon: '🌐', type: 'esim' },
 ];
 
 export const DEFAULT_FALLBACK_LISTINGS: any[] = [
-  {
-    id: 'esim-us-5gb',
-    seller_id: 'admin',
-    category_id: 'cat-esim-us',
-    title: '🇺🇸 USA T-Mobile 5GB High-Speed 30-Day eSIM Profile',
-    description: 'Instant QR code digital eSIM for all unlocked iPhone, Samsung & Pixel devices. 5GB fast 5G data across USA.',
-    price: 8500,
-    product_details: { country: 'United States', data_allowance: '5GB', duration: '30 Days', type: 'esim' },
-    status: 'available',
-    views: 45,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'USA High-Speed eSIMs', icon: '🇺🇸', type: 'esim' },
-    profiles: { full_name: 'NORODATA Official eSIM Desk', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 98 }
-  },
-  {
-    id: 'esim-uk-10gb',
-    seller_id: 'admin',
-    category_id: 'cat-esim-uk',
-    title: '🇬🇧 UK Three 10GB 5G eSIM + UK Phone Number',
-    description: 'UK digital eSIM with 10GB high-speed roaming data plus incoming call capability for UK/Europe travel.',
-    price: 12500,
-    product_details: { country: 'United Kingdom', data_allowance: '10GB', duration: '30 Days', type: 'esim' },
-    status: 'available',
-    views: 38,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'UK & Europe eSIMs', icon: '🇬🇧', type: 'esim' },
-    profiles: { full_name: 'NORODATA Official eSIM Desk', marketplace_seller_rating: 4.9, marketplace_seller_reviews: 74 }
-  },
-  {
-    id: 'esim-global-roam',
-    seller_id: 'admin',
-    category_id: 'cat-esim-global',
-    title: '🌐 Global Roaming 150+ Countries 5GB Travel eSIM',
-    description: 'Connect instantly across 150+ countries. Zero roaming fees. Works seamlessly on iPhone, Samsung Galaxy, and Google Pixel.',
-    price: 16000,
-    product_details: { country: 'Global', data_allowance: '5GB', duration: '30 Days', type: 'esim' },
-    status: 'available',
-    views: 62,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'Global Roaming eSIM', icon: '🌐', type: 'esim' },
-    profiles: { full_name: 'NORODATA Official eSIM Desk', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 120 }
-  },
   {
     id: 'num-us-clean',
     seller_id: 'seller-1',
