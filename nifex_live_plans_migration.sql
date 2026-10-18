@@ -1,4 +1,4 @@
--- ============================================================================
+﻿-- ============================================================================
 -- NIFEX DATA LIVE PLANS MIGRATION SCRIPT
 -- Generated from live Nifex Data API (https://nifexdataapp.com.ng/api/data/)
 -- Total Live Plans: 89
