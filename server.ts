@@ -123,7 +123,7 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 // at './src/lib/vtu-providers.js' throws ERR_MODULE_NOT_FOUND at function load
 // time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser } from './src/lib/vtu-providers.ts';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser, fetchNifexPlans, fetchNifexNetworks } from './src/lib/vtu-providers.ts';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
@@ -2819,6 +2819,7 @@ if (Object.keys(updateData).length <= 1) {
         // Legacy / compat
         peyflex_variation_id: peyflex_variation_id || planId,
 
+        provider:             req.body.provider || (String(id || '').includes('nifex') ? 'nifex' : 'mozosubz'),
         is_active:            true,
         updated_at:           new Date().toISOString(),
       };
@@ -5557,62 +5558,64 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     if (!await requireAdmin(req, res)) return;
     try {
       const apiKey = await resolveNifexApiKey();
-      if (!apiKey) {
-        return res.status(503).json({ error: "Nifex Data API token not configured. Please set NIFEX_API_KEY." });
-      }
 
       let userBalance = 0;
-      try {
-        const u = await fetchNifexUser(apiKey);
-        if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
-      } catch (_) {}
+      if (apiKey) {
+        try {
+          const u = await fetchNifexUser(apiKey);
+          if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
+        } catch (_) {}
+      }
 
-      // Standard active Nifex Data packages across MTN, GLO, Airtel, 9mobile
-      const NIFEX_CATALOG = [
-        // MTN SME & CG
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_1gb",   plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_2gb",   plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_3gb",   plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_5gb",   plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_10gb",  plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_1gb",    plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_2gb",    plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_5gb",    plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
-        // GLO Data & SME
-        { network: "GLO", plan_type: "SME", id: "glo_sme_1gb",   plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_2gb",   plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_3gb",   plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_5gb",   plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_10gb",  plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
-        // Airtel SME & CG
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
-        { network: "AIRTEL", plan_type: "CG",  id: "airtel_cg_1gb",  plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
-        // 9mobile / Etisalat
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
-      ];
+      // Fetch LIVE plans directly from Nifex Data API (https://nifexdataapp.com.ng/api/data/)
+      const nifexRes = await fetchNifexPlans(apiKey);
+      if (!nifexRes.success || !Array.isArray(nifexRes.plans) || nifexRes.plans.length === 0) {
+        return res.status(502).json({
+          error: nifexRes.error || "Failed to retrieve live plans from Nifex Data API. Please check network or API token."
+        });
+      }
 
       const { data: dbRows } = await supabase
         .from("services_config")
         .select("mozosubz_plan_id, bigisub_identifier_id, selling_price, provider");
       const priceMap: Record<string, number> = {};
       (dbRows || []).forEach((r: any) => {
-        const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || "");
-        if (k) priceMap[k] = Number(r.selling_price || 0);
+        const k1 = String(r.mozosubz_plan_id || "");
+        const k2 = String(r.bigisub_identifier_id || "");
+        if (k1) priceMap[k1] = Number(r.selling_price || 0);
+        if (k2) priceMap[k2] = Number(r.selling_price || 0);
       });
 
-      const enriched = NIFEX_CATALOG.map(p => ({
-        ...p,
-        service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
-        selling_price: priceMap[p.id] || priceMap[String(p.plan_id)] || Math.ceil(p.price * 1.12),
-        provider: "nifex"
-      }));
+      const enriched = nifexRes.plans.map((p) => {
+        const netUpper = String(p.network || '').trim().toUpperCase();
+        const planType = String(p.type || 'SME').trim();
+        const planId = String(p.plan_id);
+        const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
+        const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+        const planKey = `nifex_${netUpper.toLowerCase()}_${planId}`;
 
-      return res.json({ success: true, balance: userBalance, plans: enriched });
+        return {
+          id: planKey,
+          plan_id: planId,
+          network: netUpper,
+          plan_type: planType,
+          name: fullName,
+          price: Number(p.price || 0),
+          validity: p.validity || '30 Days',
+          network_status: p.network_status || 'On',
+          service: serviceKey,
+          selling_price: priceMap[planKey] || priceMap[planId] || Math.ceil(Number(p.price || 0) * 1.10),
+          provider: "nifex"
+        };
+      });
+
+      return res.json({
+        success: true,
+        balance: userBalance,
+        account_type: nifexRes.account_type || 'Vendor',
+        count: enriched.length,
+        plans: enriched
+      });
     } catch (err: any) {
       console.error("[POST /api/admin/fetch-nifex-plans Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
@@ -5684,39 +5687,35 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         providerStats.mozosubz.error = mozoErr.message;
       }
 
-      // 2. Fetch Nifex Data catalog & live plans
+      // 2. Fetch Nifex Data live plans
       try {
-        const NIFEX_CATALOG = [
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_1gb",   plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_2gb",   plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_3gb",   plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_5gb",   plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_10gb",  plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_1gb",    plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_2gb",    plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_5gb",    plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_1gb",   plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_2gb",   plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_3gb",   plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_5gb",   plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_10gb",  plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
-          { network: "AIRTEL", plan_type: "CG",  id: "nifex_airtel_cg_1gb",  plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
-        ];
+        const nifexKey = await resolveNifexApiKey();
+        const liveNifex = await fetchNifexPlans(nifexKey);
+        if (liveNifex.success && Array.isArray(liveNifex.plans)) {
+          const nifexPlans = liveNifex.plans.map((p) => {
+            const netUpper = String(p.network || '').trim().toUpperCase();
+            const planType = String(p.type || 'SME').trim();
+            const planId = String(p.plan_id);
+            const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
+            const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-        const nifexPlans = NIFEX_CATALOG.map(p => ({
-          ...p,
-          service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
-          provider: "nifex",
-        }));
-        allCombinedPlans.push(...nifexPlans);
-        providerStats.nifex.count += nifexPlans.length;
+            return {
+              id: `nifex_${netUpper.toLowerCase()}_${planId}`,
+              plan_id: planId,
+              network: netUpper,
+              plan_type: planType,
+              name: fullName,
+              price: Number(p.price || 0),
+              validity: p.validity || '30 Days',
+              service: serviceKey,
+              provider: "nifex",
+            };
+          });
+          allCombinedPlans.push(...nifexPlans);
+          providerStats.nifex.count += nifexPlans.length;
+        } else if (liveNifex.error) {
+          providerStats.nifex.error = liveNifex.error;
+        }
       } catch (nifexErr: any) {
         console.warn("[fetch-all-providers-plans] Nifex fetch error:", nifexErr.message);
         providerStats.nifex.error = nifexErr.message;

@@ -131,8 +131,13 @@ async function getAdminHeaders(): Promise<Record<string, string>> {
 }
 
 function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTab, search: string): boolean {
-  if (networkTab !== 'all' && r.network !== networkTab) return false;
-  if (networkTab === 'MTN' && mtnSubTab !== 'all_mtn' && r.serviceId !== (mtnSubTab as string)) return false;
+  if (networkTab !== 'all' && r.network.toUpperCase() !== networkTab.toUpperCase()) return false;
+  if (networkTab.toUpperCase() === 'MTN' && mtnSubTab !== 'all_mtn') {
+    const sub = mtnSubTab.toLowerCase().replace(/^mtn_/, '');
+    const sId = String(r.serviceId || '').toLowerCase();
+    const name = String(r.name || '').toLowerCase();
+    if (!sId.includes(sub) && !name.includes(sub)) return false;
+  }
   if (search) {
     const q = search.toLowerCase();
     return r.name.toLowerCase().includes(q) || r.planId.toLowerCase().includes(q) || r.network.toLowerCase().includes(q);
@@ -716,14 +721,27 @@ export default function AdminPricingManager() {
 
   const netCounts = useMemo(() => {
     const c: Record<string, number> = { all: rows.length };
-    NETWORK_TABS.forEach(t => { if (t.id !== 'all') c[t.id] = rows.filter(r => r.network === t.id).length; });
+    NETWORK_TABS.forEach(t => {
+      if (t.id !== 'all') {
+        c[t.id] = rows.filter(r => r.network.toUpperCase() === t.id.toUpperCase()).length;
+      }
+    });
     return c;
   }, [rows]);
 
   const mtnSubCounts = useMemo(() => {
-    const mtnRows = rows.filter(r => r.network === 'MTN');
+    const mtnRows = rows.filter(r => r.network.toUpperCase() === 'MTN');
     const c: Record<string, number> = { all_mtn: mtnRows.length };
-    MTN_SUBTABS.forEach(t => { if (t.id !== 'all_mtn') c[t.id] = mtnRows.filter(r => r.serviceId === t.id).length; });
+    MTN_SUBTABS.forEach(t => {
+      if (t.id !== 'all_mtn') {
+        const sub = t.id.toLowerCase().replace(/^mtn_/, '');
+        c[t.id] = mtnRows.filter(r => {
+          const sId = String(r.serviceId || '').toLowerCase();
+          const name = String(r.name || '').toLowerCase();
+          return sId.includes(sub) || name.includes(sub);
+        }).length;
+      }
+    });
     return c;
   }, [rows]);
 

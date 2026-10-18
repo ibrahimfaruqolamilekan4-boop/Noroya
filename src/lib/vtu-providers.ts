@@ -176,7 +176,10 @@ const nifexProvider: VtuProvider = {
   async purchase(p: PurchaseParams): Promise<PurchaseResult> {
     const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
     const netId = nifexNetworkId(p.network);
-    const planCode = p.providerPlanId || p.planId;
+    const rawPlanCode = String(p.providerPlanId || p.planId || '').trim();
+    // Support prefixed IDs like 'nifex_mtn_226' or 'nifex_226' as well as pure numeric '226'
+    const planMatch = rawPlanCode.match(/\d+$/);
+    const planCode = planMatch ? planMatch[0] : rawPlanCode;
 
     const url = p.type === 'data' ? `${base}/data/` : `${base}/airtime/`;
     const payload: any = p.type === 'data'
@@ -393,6 +396,82 @@ export async function fetchNifexUser(apiKey: string) {
     timeout: 10000,
   });
   return resp.data;
+}
+
+// ─── Nifex Live Plans & Network Status Lookup ───────────────────────────────────
+
+export interface NifexLivePlan {
+  plan_id: number;
+  pId?: number;
+  network_id: number;
+  network: string;
+  plan_name: string;
+  type: string;
+  validity: string;
+  price: number;
+  network_status?: string;
+}
+
+export async function fetchNifexPlans(apiKey?: string): Promise<{
+  success: boolean;
+  plans: NifexLivePlan[];
+  account_type?: string;
+  count?: number;
+  raw?: any;
+  error?: string;
+}> {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const cleanKey = apiKey ? apiKey.replace(/^Token\s+/i, '').trim() : '';
+  if (cleanKey && cleanKey.length > 5 && !cleanKey.includes('PASTE_YOUR') && !cleanKey.includes('dummy')) {
+    headers['Authorization'] = `Token ${cleanKey}`;
+  }
+
+  try {
+    const resp = await axios.get(`${base}/data/`, {
+      headers,
+      timeout: 15000,
+    });
+    const d = resp.data;
+    if (d?.status === 'success' || Array.isArray(d?.plans)) {
+      return {
+        success: true,
+        plans: Array.isArray(d.plans) ? d.plans : [],
+        account_type: d.account_type || 'Vendor',
+        count: d.count || (Array.isArray(d.plans) ? d.plans.length : 0),
+        raw: d,
+      };
+    }
+    return {
+      success: false,
+      plans: [],
+      error: d?.message || 'Failed to retrieve plans from Nifex Data',
+      raw: d,
+    };
+  } catch (err: any) {
+    console.error('[fetchNifexPlans Exception]', err.response?.data || err.message);
+    return {
+      success: false,
+      plans: [],
+      error: err.response?.data?.message || err.response?.data?.msg || err.message,
+      raw: err.response?.data,
+    };
+  }
+}
+
+export async function fetchNifexNetworks(): Promise<any[]> {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  try {
+    const resp = await axios.get(`${base}/network/`, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    return resp.data?.networks || [];
+  } catch (_) {
+    return [];
+  }
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
