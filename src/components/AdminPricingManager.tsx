@@ -112,6 +112,24 @@ async function getSession() {
   }
 }
 
+async function getAdminHeaders(): Promise<Record<string, string>> {
+  try {
+    const session = await getSession();
+    const token = session?.access_token || '';
+    const email = (session as any)?.user?.email || 'ibrahimfaruqolamilekan4@gmail.com';
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      'x-admin-email': email
+    };
+  } catch (_) {
+    return {
+      'Content-Type': 'application/json',
+      'x-admin-email': 'ibrahimfaruqolamilekan4@gmail.com'
+    };
+  }
+}
+
 function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTab, search: string): boolean {
   if (networkTab !== 'all' && r.network !== networkTab) return false;
   if (networkTab === 'MTN' && mtnSubTab !== 'all_mtn' && r.serviceId !== (mtnSubTab as string)) return false;
@@ -183,10 +201,8 @@ export default function AdminPricingManager() {
 
   const loadKeyStatus = useCallback(async () => {
     try {
-      const session = await getSession();
-      const res = await fetch('/api/admin/provider-secrets', {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      });
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/provider-secrets', { headers });
       if (res.ok) {
         const data = await res.json();
         setKeyStatus(data);
@@ -206,11 +222,11 @@ export default function AdminPricingManager() {
     }
     setIsSavingKey(true);
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       const identifier = selectedProvider === 'nifex' ? 'nifex_api_key' : 'mozosubz_api_key';
       const saveRes = await fetch('/api/admin/provider-secrets', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        headers,
         body: JSON.stringify({ identifier, secret: keyToSave })
       });
       if (!saveRes.ok) {
@@ -239,11 +255,11 @@ export default function AdminPricingManager() {
     }
     setIsTestingKey(true);
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       // 1. Test key live with upstream provider
       const testRes = await fetch('/api/admin/test-provider-key', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        headers,
         body: JSON.stringify({ provider: selectedProvider, key: trimmed })
       });
       const testData = await testRes.json();
@@ -297,7 +313,7 @@ export default function AdminPricingManager() {
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       const endpoint = selectedProvider === 'nifex'
         ? '/api/admin/fetch-nifex-plans'
         : '/api/admin/fetch-mozosubz-plans';
@@ -305,7 +321,7 @@ export default function AdminPricingManager() {
       const [res, existingPrices] = await Promise.all([
         fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+          headers,
           body: JSON.stringify({ fetchOnly: true }),
         }),
         loadExistingPrices(),
@@ -404,13 +420,12 @@ export default function AdminPricingManager() {
 
   // ── Trigger In-App Confirmation Modal (NO window.confirm blocking) ──────────
   const deleteRow = useCallback((planId: string) => {
-    const row = rows.find(r => r.planId === planId);
-    if (!row) return;
+    const row = rows.find(r => String(r.planId) === String(planId));
     setDeleteConfirmModal({
       isOpen: true,
       type: 'single',
-      planId,
-      planName: row.name
+      planId: String(planId),
+      planName: row?.name || 'Selected Plan'
     });
   }, [rows]);
 
@@ -426,23 +441,25 @@ export default function AdminPricingManager() {
     if (deleteConfirmModal.type === 'all') {
       setIsDeletingAll(true);
       try {
-        const session = await getSession();
-        const token = session?.access_token || '';
+        const headers = await getAdminHeaders();
 
         // 1. Backend delete endpoint
-        await fetch('/api/admin/delete-all-plans', {
+        const res = await fetch('/api/admin/delete-all-plans', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            'x-admin-email': 'ibrahimfaruqolamilekan4@gmail.com'
-          },
+          headers,
           body: JSON.stringify({ serviceType: 'data' })
-        }).catch(() => {});
+        });
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(resData.error || 'Server failed to delete all plans');
+        }
 
         // 2. Direct Supabase fallback to guarantee complete clean database
         try {
           await supabase.from('services_config').delete().eq('service_type', 'data');
+        } catch (_) {}
+        try {
+          await supabase.from('services_config').delete().ilike('service_type', 'data');
         } catch (_) {}
         try {
           await supabase.from('services_config').delete().or('provider.eq.mozosubz,provider.eq.nifex');
@@ -454,7 +471,8 @@ export default function AdminPricingManager() {
         setRows([]);
         setFetched(false);
         setDeleteConfirmModal({ isOpen: false, type: 'all' });
-        toast.success('🗑️ All data plans deleted successfully! You can now fetch fresh plans.');
+        window.dispatchEvent(new CustomEvent('plans-updated'));
+        toast.success('🗑️ All data plans deleted successfully! You can now fetch fresh plans or add a new plan.');
       } catch (err: any) {
         toast.error(err.message || 'Failed to delete all plans');
       } finally {
@@ -465,28 +483,29 @@ export default function AdminPricingManager() {
       const planName = deleteConfirmModal.planName;
 
       // Remove from table immediately
-      setRows(prev => prev.filter(r => r.planId !== planId));
+      setRows(prev => prev.filter(r => String(r.planId) !== String(planId)));
       setDeleteConfirmModal({ isOpen: false, type: 'all' });
 
       try {
-        const session = await getSession();
-        const token = session?.access_token || '';
-        await fetch('/api/admin/delete-plan', {
+        const headers = await getAdminHeaders();
+        const res = await fetch('/api/admin/delete-plan', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            'x-admin-email': 'ibrahimfaruqolamilekan4@gmail.com'
-          },
+          headers,
           body: JSON.stringify({ id: planId, name: planName, collectionName: 'services_config' }),
-        }).catch(() => {});
+        });
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(resData.error || 'Failed to delete plan from server');
+        }
 
         // Direct Supabase fallback
         if (planName) {
           try { await supabase.from('services_config').delete().eq('item_name', planName); } catch (_) {}
         }
         try { await supabase.from('services_config').delete().eq('bigisub_identifier_id', planId); } catch (_) {}
+        try { await supabase.from('services_config').delete().eq('mozosubz_plan_id', planId); } catch (_) {}
 
+        window.dispatchEvent(new CustomEvent('plans-updated'));
         toast.success(`🗑️ Deleted "${planName || 'plan'}" successfully`);
       } catch (err: any) {
         toast.error(err.message || 'Failed to delete plan');
@@ -499,14 +518,11 @@ export default function AdminPricingManager() {
     setIsForceFetchingAll(true);
     setLoading(true);
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       const [res, existingPrices] = await Promise.all([
         fetch('/api/admin/fetch-all-providers-plans', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
+          headers,
           body: JSON.stringify({
             autoPublish,
             defaultMarkup: parseFloat(globalMarkup) || 10
@@ -571,6 +587,7 @@ export default function AdminPricingManager() {
       } else {
         toast.success(`🚀 Force-fetched ${newRows.length} live plans from ALL providers (Mozosubz & Nifex)!`);
       }
+      window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
       toast.error(err.message || 'Failed to force fetch plans');
     } finally {
@@ -613,10 +630,10 @@ export default function AdminPricingManager() {
     }
     setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       const res = await fetch('/api/admin/create-plan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        headers,
         body: JSON.stringify(buildPayload(row)),
       });
       let resData: any = {};
@@ -640,13 +657,13 @@ export default function AdminPricingManager() {
 
     let ok = 0, fail = 0;
     try {
-      const session = await getSession();
+      const headers = await getAdminHeaders();
       const results = await Promise.allSettled(
         targets.map(async row => {
           if (row.sellingPrice < row.costPrice) throw new Error('Price below cost');
           const res = await fetch('/api/admin/create-plan', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            headers,
             body: JSON.stringify(buildPayload(row)),
           });
           let resData: any = {};

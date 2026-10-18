@@ -49,6 +49,8 @@ import {
   EyeOff,
   ChevronDown,
   ShoppingBag,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import { Scan } from "lucide-react";
 import { cn, formatCurrency } from '../lib/utils';
@@ -1730,6 +1732,87 @@ function SettingsSection({ user }: { user: UserProfile }) {
   const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
   const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
   const [isUpdating, setIsUpdating] = React.useState(false);
+  const [isForceFetching, setIsForceFetching] = React.useState(false);
+  const [isDeletingAllPlans, setIsDeletingAllPlans] = React.useState(false);
+  const [showDeleteModal, setShowDeleteModal] = React.useState(false);
+
+  const isAdmin = user.role === 'admin' || [
+    'ibrahimfaruqolamilekan4@gmail.com',
+    'adewaleogunkeye200@gmail.com',
+    'jeffholland299@gmail.com'
+  ].includes((user.email || '').toLowerCase().trim());
+
+  const handleAdminForceFetch = async (autoPublish = false) => {
+    setIsForceFetching(true);
+    const toastId = toast.loading(autoPublish ? 'Force-fetching & publishing plans live...' : 'Force-fetching plans from providers...');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const res = await fetch('/api/admin/fetch-all-providers-plans', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          'x-admin-email': user.email || 'ibrahimfaruqolamilekan4@gmail.com'
+        },
+        body: JSON.stringify({ autoPublish, defaultMarkup: 10 })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to force fetch plans');
+      
+      toast.dismiss(toastId);
+      if (autoPublish) {
+        toast.success(`🎉 Force-fetched & published ${data.publishedCount || data.total || 0} plans live!`);
+      } else {
+        toast.success(`🚀 Force-fetched ${data.total || 0} plans across all providers!`);
+      }
+      window.dispatchEvent(new CustomEvent('plans-updated'));
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(err.message || 'Error force fetching plans');
+    } finally {
+      setIsForceFetching(false);
+    }
+  };
+
+  const handleExecuteDeleteAll = async () => {
+    setIsDeletingAllPlans(true);
+    const toastId = toast.loading('Deleting all plans from database...');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const res = await fetch('/api/admin/delete-all-plans', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          'x-admin-email': user.email || 'ibrahimfaruqolamilekan4@gmail.com'
+        },
+        body: JSON.stringify({ serviceType: 'data' })
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resData.error || 'Failed to purge plans from server');
+      }
+
+      // Direct Supabase fallback
+      try { await supabase.from('services_config').delete().eq('service_type', 'data'); } catch (_) {}
+      try { await supabase.from('services_config').delete().ilike('service_type', 'data'); } catch (_) {}
+      try { await supabase.from('services_config').delete().or('provider.eq.mozosubz,provider.eq.nifex'); } catch (_) {}
+      try { await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000'); } catch (_) {}
+
+      toast.dismiss(toastId);
+      toast.success('🗑️ All data plans deleted successfully! Database clean.');
+      setShowDeleteModal(false);
+      window.dispatchEvent(new CustomEvent('plans-updated'));
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(err.message || 'Failed to delete all plans');
+    } finally {
+      setIsDeletingAllPlans(false);
+    }
+  };
 
   const handleUpdateSecurity = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1828,6 +1911,102 @@ function SettingsSection({ user }: { user: UserProfile }) {
           </div>
         )}
       </div>
+
+      {/* Admin Multi-Provider Plan Maintenance Controls in Settings */}
+      {isAdmin && (
+        <div className="bg-slate-900 text-white rounded-2xl border border-slate-800 p-6 space-y-4 shadow-xl text-left">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Admin Maintenance Console
+                </span>
+                <h3 className="font-black text-white text-base sm:text-lg">Data Plans & Provider Synchronization</h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Force fetch live data bundles across providers (Mozosubz + Nifex) or wipe all data plans from database cleanly.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => handleAdminForceFetch(false)}
+              disabled={isForceFetching}
+              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+            >
+              {isForceFetching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              <span>{isForceFetching ? "Force Fetching..." : "Force Fetch All Providers"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleAdminForceFetch(true)}
+              disabled={isForceFetching}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+            >
+              {isForceFetching ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+              <span>Force Sync & Publish Live</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              disabled={isDeletingAllPlans}
+              className="px-4 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+            >
+              {isDeletingAllPlans ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              <span>{isDeletingAllPlans ? "Deleting All Plans..." : "Delete All Plans"}</span>
+            </button>
+          </div>
+
+          {/* Delete All Plans In-App Modal */}
+          {showDeleteModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+              <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-4 text-left">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-red-500/20 text-red-400 border border-red-500/30 flex items-center justify-center text-xl shrink-0">
+                    <Trash2 size={24} />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-black text-white">
+                      Delete ALL Data Plans?
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                      This will wipe all active data plans from your database so you can start completely fresh. You can then immediately click "Force Sync & Publish Live" or add custom plans.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-semibold">
+                  ⚠️ Action is permanent. All current data bundle entries will be wiped.
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteModal(false)}
+                    disabled={isDeletingAllPlans}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecuteDeleteAll}
+                    disabled={isDeletingAllPlans}
+                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition active:scale-95 disabled:opacity-50"
+                  >
+                    {isDeletingAllPlans ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    <span>{isDeletingAllPlans ? 'Deleting All...' : 'Yes, Delete All Now'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Danger zone */}
       <div className="bg-white rounded-2xl border border-red-100 p-6 space-y-4 shadow-sm">

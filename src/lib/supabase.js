@@ -50,3 +50,17 @@ if (isServer && serviceRoleKey) {
 
 export const serverHasServiceRoleKey = Boolean(isServer && serviceRoleKey);
 export const supabase = createClient(supabaseUrl, apiKey);
+
+export const getScopedSupabaseClient = (token) => {
+  if (isServer && serviceRoleKey) return supabase;
+  if (token) {
+    const cleanToken = String(token).replace(/^Bearer /i, '').trim();
+    if (cleanToken) {
+      return createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: `Bearer ${cleanToken}` } },
+        auth: { persistSession: false }
+      });
+    }
+  }
+  return supabase;
+};

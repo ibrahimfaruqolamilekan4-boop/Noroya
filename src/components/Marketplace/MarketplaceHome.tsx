@@ -290,8 +290,48 @@ export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
               }}
               className="px-6 py-3 rounded-2xl bg-white hover:bg-emerald-50 text-emerald-950 font-black text-xs uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-95 relative z-10"
             >
-              <span>💬 Open eSIM Admin Chat</span>
+              <span>💬 Message Admin for eSIM</span>
             </button>
+          </div>
+
+          {/* eSIM Quick Packages Rack */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+            {[
+              { id: 'us-5gb', label: 'USA 5GB High-Speed', flag: '🇺🇸', price: '₦8,500', days: '30 Days', desc: 'T-Mobile 5G nationwide coverage with instant QR setup' },
+              { id: 'us-10gb', label: 'USA 10GB High-Speed', flag: '🇺🇸', price: '₦14,000', days: '30 Days', desc: 'Heavy data streaming, maps & tethering across America' },
+              { id: 'uk-10gb', label: 'UK 10GB + UK Number', flag: '🇬🇧', price: '₦12,500', days: '30 Days', desc: 'High-speed 5G data across UK & Europe + phone number' },
+              { id: 'global-5gb', label: 'Global 150+ Countries', flag: '🌍', price: '₦16,000', days: '30 Days', desc: 'Seamless international roaming with zero excess fees' }
+            ].map(pkg => (
+              <div
+                key={pkg.id}
+                className="bg-white rounded-2xl p-4 border border-emerald-100 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all flex flex-col justify-between text-left group"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-2xl">{pkg.flag}</span>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      {pkg.days}
+                    </span>
+                  </div>
+                  <h4 className="font-black text-slate-900 text-sm">{pkg.label}</h4>
+                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">{pkg.desc}</p>
+                </div>
+
+                <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <span className="font-black text-emerald-700 text-sm">{pkg.price}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedEsimPackage(pkg.id);
+                      setIsEsimModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-sm transition active:scale-95 cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Message Admin</span>
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Listings Grid */}
