@@ -80,3 +80,17 @@ if (isServer && serviceRoleKey) {
 // bundlers substitute ws's `browser` field stub automatically, so this is
 // safe to import unconditionally in this isomorphic file.
 export const supabase = createClient(supabaseUrl, apiKey, isServer ? { realtime: { transport: ws as any } } : undefined);
+
+export const getScopedSupabaseClient = (token?: string) => {
+  if (isServer && serviceRoleKey) return supabase;
+  if (token) {
+    const cleanToken = token.replace(/^Bearer /i, '').trim();
+    if (cleanToken) {
+      return createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: `Bearer ${cleanToken}` } },
+        auth: { persistSession: false }
+      });
+    }
+  }
+  return supabase;
+};

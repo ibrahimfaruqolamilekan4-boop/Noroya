@@ -5,7 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
-import { supabase, serverHasServiceRoleKey } from "./src/lib/supabase.js";
+import { supabase, serverHasServiceRoleKey, getScopedSupabaseClient } from "./src/lib/supabase.js";
 import axios from "axios";
 
 // SECURITY: sanitize client-supplied values before interpolating them into
@@ -428,17 +428,25 @@ async function startServer() {
     const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
 
     let userEmail = '';
+    let isRoleAdmin = false;
     if (token) {
       try {
         const { data: { user } } = await supabase.auth.getUser(token);
-        if (user?.email) userEmail = user.email.toLowerCase().trim();
+        if (user) {
+          if (user.email) userEmail = user.email.toLowerCase().trim();
+          if ((user as any).user_metadata?.role === 'admin') isRoleAdmin = true;
+          try {
+            const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
+            if (prof?.role === 'admin') isRoleAdmin = true;
+          } catch (_) {}
+        }
       } catch (_) {}
     }
     if (!userEmail && adminEmailHeader) {
       userEmail = adminEmailHeader;
     }
 
-    if (!userEmail) {
+    if (!userEmail && !isRoleAdmin) {
       res.status(401).json({ error: "Unauthorized: no valid session token." });
       return false;
     }
@@ -449,9 +457,14 @@ async function startServer() {
       return false;
     }
 
-    const isMainAdmin = userEmail === ADMIN_EMAIL.toLowerCase();
-    const isSubAdmin = userEmail === 'adewaleogunkeye200@gmail.com';
-    if (!isMainAdmin && !(allowSubAdmin && isSubAdmin)) {
+    const ALLOWED_ADMINS = [
+      ADMIN_EMAIL.toLowerCase().trim(),
+      'ibrahimfaruqolamilekan4@gmail.com',
+      'adewaleogunkeye200@gmail.com',
+    ].filter(Boolean);
+
+    const isExplicitAdmin = ALLOWED_ADMINS.includes(userEmail);
+    if (!isExplicitAdmin && !isRoleAdmin) {
       res.status(403).json({ error: "Forbidden: admin access only." });
       return false;
     }
@@ -3108,6 +3121,7 @@ if (Object.keys(updateData).length <= 1) {
     const { id, ids, name } = req.body;
 
     try {
+      const db = getScopedSupabaseClient(req.headers.authorization);
       const isUUID = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim());
 
       const deleteOnePlan = async (targetId?: string, targetName?: string) => {
@@ -3117,25 +3131,25 @@ if (Object.keys(updateData).length <= 1) {
 
         // 1. Delete by UUID if valid UUID
         if (cleanId && isUUID(cleanId)) {
-          try { await supabase.from('services_config').delete().eq('id', cleanId); } catch (_) {}
-          try { await supabase.from('data_plans').delete().eq('id', cleanId); } catch (_) {}
+          try { await db.from('services_config').delete().eq('id', cleanId); } catch (_) {}
+          try { await db.from('data_plans').delete().eq('id', cleanId); } catch (_) {}
         }
 
         // 2. Delete by all possible provider columns in services_config
         if (cleanId) {
-          try { await supabase.from('services_config').delete().eq('bigisub_identifier_id', cleanId); } catch (_) {}
-          try { await supabase.from('services_config').delete().eq('mozosubz_plan_id', cleanId); } catch (_) {}
-          try { await supabase.from('services_config').delete().eq('mozosubs_plan_id', cleanId); } catch (_) {}
-          try { await supabase.from('data_plans').delete().eq('plan_id', cleanId); } catch (_) {}
-          try { await supabase.from('data_plans').delete().eq('id', cleanId); } catch (_) {}
+          try { await db.from('services_config').delete().eq('bigisub_identifier_id', cleanId); } catch (_) {}
+          try { await db.from('services_config').delete().eq('mozosubz_plan_id', cleanId); } catch (_) {}
+          try { await db.from('services_config').delete().eq('mozosubs_plan_id', cleanId); } catch (_) {}
+          try { await db.from('data_plans').delete().eq('plan_id', cleanId); } catch (_) {}
+          try { await db.from('data_plans').delete().eq('id', cleanId); } catch (_) {}
         }
 
         // 3. Delete by item_name if name provided or if cleanId could be a plan name
         if (cleanName) {
-          try { await supabase.from('services_config').delete().eq('item_name', cleanName); } catch (_) {}
-          try { await supabase.from('data_plans').delete().eq('name', cleanName); } catch (_) {}
+          try { await db.from('services_config').delete().eq('item_name', cleanName); } catch (_) {}
+          try { await db.from('data_plans').delete().eq('name', cleanName); } catch (_) {}
         } else if (cleanId && !isUUID(cleanId) && cleanId.length > 3) {
-          try { await supabase.from('services_config').delete().eq('item_name', cleanId); } catch (_) {}
+          try { await db.from('services_config').delete().eq('item_name', cleanId); } catch (_) {}
         }
       };
 
@@ -3166,8 +3180,10 @@ if (Object.keys(updateData).length <= 1) {
       const { serviceType = 'data' } = req.body;
       console.log(`[Admin] Purging ALL data plans (service_type: ${serviceType})...`);
 
+      const db = getScopedSupabaseClient(req.headers.authorization);
+
       // 1. Delete all rows in services_config where service_type = 'data'
-      const { error: scErr, count: scCount } = await supabase
+      const { error: scErr, count: scCount } = await db
         .from('services_config')
         .delete({ count: 'exact' })
         .eq('service_type', serviceType);
@@ -3176,9 +3192,14 @@ if (Object.keys(updateData).length <= 1) {
         console.warn("[delete-all-plans] services_config eq delete warning:", scErr.message);
       }
 
+      // Also delete any case-insensitive variants or data service types
+      try {
+        await db.from('services_config').delete().ilike('service_type', 'data');
+      } catch (_) {}
+
       // 2. Also delete any orphaned rows belonging to data providers in services_config
       try {
-        await supabase
+        await db
           .from('services_config')
           .delete()
           .or('provider.eq.mozosubz,provider.eq.nifex');
@@ -3186,7 +3207,7 @@ if (Object.keys(updateData).length <= 1) {
 
       // 3. Also clear data_plans table if present
       try {
-        await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await db.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       } catch (_) {}
 
       console.log(`[Admin] Successfully purged all data plans. Deleted count: ${scCount || 0}`);
@@ -5738,9 +5759,10 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         });
 
         // Batch upsert in chunks of 50
+        const db = getScopedSupabaseClient(req.headers.authorization);
         for (let i = 0; i < rowsToUpsert.length; i += 50) {
           const chunk = rowsToUpsert.slice(i, i + 50);
-          const { error } = await supabase
+          const { error } = await db
             .from('services_config')
             .upsert(chunk, { onConflict: 'bigisub_identifier_id' });
           if (!error) publishedCount += chunk.length;

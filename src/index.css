@@ -9,15 +9,3 @@
 /* Fintech UI/UX Redesign Polish */
 /* Fintech UI/UX Polish Final */
 /* NORODATA Fintech Ready */
-
-/*
- * Decorative gradient overlays are paint-only. Several admin panels
- * (notably the Plan Pricing Manager header card) render an absolutely
- * positioned `inset-0` gradient layer as a sibling of interactive
- * content. Because that layer has no z-index of its own and sits in the
- * same stacking level as the content, it intercepts pointer events and
- * makes the buttons look dead.
- */
-Aclass*="radial-gradient"] {
-  pointer-events: none;
-}

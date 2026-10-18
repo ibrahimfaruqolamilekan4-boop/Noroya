@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { 
   X, Send, ShieldCheck, QrCode, Smartphone, Globe, 
   CheckCircle2, Clock, MessageSquare, PhoneCall, Copy, Check, Sparkles, AlertCircle
@@ -30,7 +30,70 @@ const PRESET_PACKAGES = [
   { id: 'custom', label: '⚡ Custom Country / Plan', price: 'Ask Admin', data: 'Custom', country: 'Custom' },
 ];
 
-export function EsimChatModal({
+const safeFormatTime = (isoString?: string): string => {
+  if (!isoString) return 'Just now';
+  try {
+    const d = new Date(isoString);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+  } catch (_) {}
+  return 'Just now';
+};
+
+class EsimErrorBoundary extends React.Component<{ children: React.ReactNode; onClose: () => void }, { hasError: boolean }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: any) {
+    console.error('[EsimChatModal Error]:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto text-xl font-bold">
+              📶
+            </div>
+            <h3 className="font-black text-lg text-slate-900">eSIM Admin Desk Ready</h3>
+            <p className="text-xs text-slate-600">
+              For instant eSIM provisioning and setup assistance, chat directly with Admin on WhatsApp (+2348143889102) or call our desk.
+            </p>
+            <div className="flex gap-2 justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    navigator.clipboard.writeText('+2348143889102');
+                    toast.success('Admin WhatsApp (+2348143889102) copied!');
+                  } catch (_) {}
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs cursor-pointer"
+              >
+                Copy WhatsApp Number
+              </button>
+              <button
+                type="button"
+                onClick={this.props.onClose}
+                className="px-4 py-2 rounded-xl bg-slate-200 text-slate-800 font-bold text-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function EsimChatModalInner({
   isOpen,
   onClose,
   currentUser,
@@ -51,6 +114,12 @@ export function EsimChatModal({
   ]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (initialPackage) {
+      setSelectedPkg(initialPackage);
+    }
+  }, [initialPackage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -76,7 +145,13 @@ export function EsimChatModal({
 
     try {
       const raw = localStorage.getItem('noroya_esim_inquiries');
-      const list = raw ? JSON.parse(raw) : [];
+      let list: any[] = [];
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) list = parsed;
+        } catch (_) {}
+      }
       const newMsgObj = {
         id: `msg-${Date.now()}`,
         sender: 'user',
@@ -90,6 +165,7 @@ export function EsimChatModal({
       );
 
       if (existingIdx >= 0) {
+        if (!Array.isArray(list[existingIdx].messages)) list[existingIdx].messages = [];
         list[existingIdx].messages.push(newMsgObj);
         list[existingIdx].last_message = text;
         list[existingIdx].updated_at = new Date().toISOString();
@@ -125,24 +201,34 @@ export function EsimChatModal({
       try {
         const raw = localStorage.getItem('noroya_esim_inquiries');
         if (!raw) return;
-        const list = JSON.parse(raw);
+        let list: any[] = [];
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) list = parsed;
+        } catch (_) {}
+        if (!list.length) return;
+
+        const myEmail = (currentUser?.email || '').toLowerCase().trim();
+        const myId = String(currentUser?.uid || currentUser?.id || '');
         const myInquiry = list.find((i: any) => 
-          (currentUser?.email && i.user_email === currentUser.email) ||
-          (currentUser?.uid && i.user_id === currentUser.uid)
+          (myEmail && (i.user_email || '').toLowerCase().trim() === myEmail) ||
+          (myId && String(i.user_id) === myId)
         );
+
         if (myInquiry && Array.isArray(myInquiry.messages)) {
-          const adminMsgs = myInquiry.messages.filter((m: any) => m.sender === 'admin');
+          const adminMsgs = myInquiry.messages.filter((m: any) => m && m.sender === 'admin');
           if (adminMsgs.length > 0) {
             setMessages(prev => {
               const existingIds = new Set(prev.map(p => p.id));
               const newReplies: ChatMsg[] = [];
               for (const adm of adminMsgs) {
-                if (!existingIds.has(adm.id)) {
+                const msgId = String(adm.id || `adm-reply-${Date.now()}`);
+                if (!existingIds.has(msgId)) {
                   newReplies.push({
-                    id: adm.id,
+                    id: msgId,
                     sender: 'admin',
-                    text: adm.text,
-                    time: new Date(adm.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    text: String(adm.text || ''),
+                    time: safeFormatTime(adm.created_at),
                     hasQr: Boolean(adm.activation_code || adm.has_qr)
                   });
                 }
@@ -168,7 +254,7 @@ export function EsimChatModal({
       id: `usr-${Date.now()}`,
       sender: 'user',
       text: trimmed,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: safeFormatTime(new Date().toISOString())
     };
 
     setMessages(prev => [...prev, userMsg]);
@@ -184,21 +270,21 @@ export function EsimChatModal({
       let hasQr = false;
 
       if (lower.includes('price') || lower.includes('cost') || lower.includes('how much')) {
-        replyText = `Our current rate for ${currentPkgObj.label} is ${currentPkgObj.price}. It delivers instant high-speed 4G/5G data with zero roaming charges. You can fund your wallet to activate, or chat with me on WhatsApp for immediate QR code delivery!`;
+        replyText = `Our current rate for ${currentPkgObj.label} is ${currentPkgObj.price}. It delivers instant high-speed 4G/5G data with zero roaming charges. You can fund your wallet to activate, or copy our admin contact for immediate setup!`;
       } else if (lower.includes('iphone') || lower.includes('samsung') || lower.includes('pixel') || lower.includes('device')) {
         replyText = `Excellent! That device supports full digital eSIM profiles. We will send you an activation QR code. Once scanned under Settings > Cellular / SIMs, it activates in under 60 seconds!`;
       } else if (lower.includes('qr') || lower.includes('code') || lower.includes('buy') || lower.includes('setup') || lower.includes('pay')) {
-        replyText = `Great! Here is the eSIM QR preview profile for ${currentPkgObj.label}. You can scan it directly in your device Cellular Settings, or click the WhatsApp button to chat directly with me for bespoke provisioning!`;
+        replyText = `Great! Here is the eSIM QR preview profile for ${currentPkgObj.label}. You can scan it directly in your device Cellular Settings or enter the SM-DP+ code below.`;
         hasQr = true;
       } else {
-        replyText = `Got it! The eSIM desk is reviewing your request. For fastest instant activation and QR code dispatch, you can also ping me on our WhatsApp eSIM direct desk (+2348143889102).`;
+        replyText = `Got it! The eSIM desk is reviewing your request. For fastest instant activation and QR code dispatch, you can also reach our eSIM direct desk at +2348143889102.`;
       }
 
       const adminReply: ChatMsg = {
         id: `adm-${Date.now()}`,
         sender: 'admin',
         text: replyText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: safeFormatTime(new Date().toISOString()),
         hasQr
       };
 
@@ -213,7 +299,7 @@ export function EsimChatModal({
       id: `usr-${Date.now()}`,
       sender: 'user',
       text: msgText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: safeFormatTime(new Date().toISOString())
     };
     setMessages(prev => [...prev, userMsg]);
 
@@ -224,7 +310,7 @@ export function EsimChatModal({
         id: `adm-${Date.now()}`,
         sender: 'admin',
         text: `Received! ${pkg.label} is available right now for ${pkg.price}. It connects to top tier networks with fast 5G speeds. Our eSIM desk will issue your digital QR code.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: safeFormatTime(new Date().toISOString()),
         hasQr: true
       };
       setMessages(prev => [...prev, adminReply]);
@@ -232,15 +318,35 @@ export function EsimChatModal({
   };
 
   const copyIccid = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success('eSIM activation string copied!');
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      toast.success('eSIM activation string copied!');
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      toast.success('eSIM code copied!');
+    }
   };
 
-  const whatsappMessage = encodeURIComponent(
-    `Hello NORODATA Admin, I am inquiring about the ${currentPkgObj.label} eSIM (${currentPkgObj.price}) for my device (${deviceModel || 'Smartphone'}). Please provide activation details.`
-  );
+  const copyAdminContact = () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText('+2348143889102');
+      }
+      toast.success('eSIM Admin WhatsApp (+2348143889102) copied!');
+    } catch (_) {
+      toast.success('eSIM Admin contact: +2348143889102');
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
@@ -306,7 +412,7 @@ export function EsimChatModal({
                 }`}
               >
                 <span>{pkg.label}</span>
-                <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
                   selectedPkg === pkg.id ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-emerald-800'
                 }`}>
                   {pkg.price}
@@ -395,10 +501,10 @@ export function EsimChatModal({
                       <div className="space-y-1 text-left flex-1">
                         <div className="text-[11px] font-bold text-slate-600">SM-DP+ Address & Activation Code:</div>
                         <div className="bg-white p-1.5 rounded-lg border border-slate-200 font-mono text-[10px] text-slate-800 break-all select-all flex items-center justify-between gap-1">
-                          <span>LPA:1$smdp.norodata.com$US-NORO-{Date.now().toString().slice(-6)}</span>
+                          <span>LPA:1$smdp.norodata.com$US-NORO-948210</span>
                           <button
                             type="button"
-                            onClick={() => copyIccid(`LPA:1$smdp.norodata.com$US-NORO-${Date.now().toString().slice(-6)}`)}
+                            onClick={() => copyIccid(`LPA:1$smdp.norodata.com$US-NORO-948210`)}
                             className="p-1 hover:bg-slate-100 rounded text-slate-500 cursor-pointer"
                           >
                             {copied ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
@@ -437,28 +543,35 @@ export function EsimChatModal({
             </button>
           </form>
 
-          {/* Quick External Support Channels */}
+          {/* Quick Support Info & Copy Contact */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 text-[11px]">
             <div className="flex items-center gap-1.5 text-slate-500 font-bold">
               <ShieldCheck size={14} className="text-emerald-600" />
-              <span>Escrow protected • Admin verified</span>
+              <span>Escrow protected • Real-time Admin sync</span>
             </div>
 
             <div className="flex items-center gap-2">
-              <a
-                href={`https://wa.me/2348143889102?text=${whatsappMessage}`}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-1.5 rounded-xl bg-green-50 hover:bg-green-100 text-green-700 font-extrabold border border-green-200 transition-all flex items-center gap-1.5"
+              <button
+                type="button"
+                onClick={copyAdminContact}
+                className="px-3 py-1.5 rounded-xl bg-green-50 hover:bg-green-100 text-green-700 font-extrabold border border-green-200 transition-all flex items-center gap-1.5 cursor-pointer"
               >
-                <MessageSquare size={12} /> WhatsApp Admin
-              </a>
-              <a
-                href="tel:+2348143889102"
-                className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold border border-slate-200 transition-all flex items-center gap-1.5"
+                <MessageSquare size={12} /> Copy Admin WhatsApp
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText('+2348143889102');
+                    }
+                    toast.success('Admin phone (+2348143889102) copied!');
+                  } catch (_) {}
+                }}
+                className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold border border-slate-200 transition-all flex items-center gap-1.5 cursor-pointer"
               >
-                <PhoneCall size={12} /> Call Desk
-              </a>
+                <PhoneCall size={12} /> Call Desk (+2348143889102)
+              </button>
             </div>
           </div>
         </div>
@@ -466,3 +579,14 @@ export function EsimChatModal({
     </div>
   );
 }
+
+export function EsimChatModal(props: EsimChatModalProps) {
+  if (!props.isOpen) return null;
+  return (
+    <EsimErrorBoundary onClose={props.onClose}>
+      <EsimChatModalInner {...props} />
+    </EsimErrorBoundary>
+  );
+}
+
+export default EsimChatModal;
