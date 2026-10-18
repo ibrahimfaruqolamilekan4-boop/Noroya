@@ -114,7 +114,7 @@ const setProviderSecret = async (identifier: string, secretValue: string): Promi
 const resolveBigisubApiKey = async (): Promise<string> =>
   resolveProviderSecret('bigisub_api_key', ['BIGISUB_API_KEY', 'VTU_API_KEY']);
 
-// ─── VTU Provider Plugin System ─────────────────────────────────────────────
+// ??? VTU Provider Plugin System ?????????????????????????????????????????????
 // Providers live in src/lib/vtu-providers.ts
 // NOTE: the explicit `.ts` extension is required here. On Vercel, server.ts is
 // shipped as raw source and executed via Node's native TypeScript type-stripping
@@ -123,15 +123,15 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 // at './src/lib/vtu-providers.js' throws ERR_MODULE_NOT_FOUND at function load
 // time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser } from './src/lib/vtu-providers.ts';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser, fetchNifexPlans, fetchNifexNetworks } from './src/lib/vtu-providers.ts';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
-// file, before initProviders was even imported — if it threw for any reason,
+// file, before initProviders was even imported - if it threw for any reason,
 // the whole module would fail to load, taking down every route in the app).
 initProviders(supabase); // wire providers with Supabase client
 
-// ─── Failure logger ───────────────────────────────────────────────────────────
+// ??? Failure logger ???????????????????????????????????????????????????????????
 const logVtuFailure = async (opts: {
   provider: string; network: string; phone: string;
   planId: string; planName: string; amount: number;
@@ -140,7 +140,7 @@ const logVtuFailure = async (opts: {
   const entry = {
     provider:      opts.provider,
     network:       opts.network,
-    phone_last4:   String(opts.phone).slice(-4),        // privacy — store last 4 only
+    phone_last4:   String(opts.phone).slice(-4),        // privacy - store last 4 only
     plan_id:       opts.planId,
     plan_name:     opts.planName,
     amount:        opts.amount,
@@ -154,7 +154,7 @@ const logVtuFailure = async (opts: {
   try {
     await supabase.from('vtu_failure_log').insert(entry);
   } catch (e: any) {
-    // Table may not exist yet — failure log itself should never crash the app
+    // Table may not exist yet - failure log itself should never crash the app
     console.warn('[VTU FAILURE] Could not write to vtu_failure_log:', e?.message || e);
   }
 };
@@ -167,7 +167,7 @@ const resolveNifexApiKey = async (): Promise<string> =>
 
 dotenv.config();
 
-// ─── Reseller Program ───────────────────────────────────────────────────────
+// ??? Reseller Program ???????????????????????????????????????????????????????
 // Manual monthly renewal: users pay RESELLER_MONTHLY_FEE to extend
 // reseller_expires_at by 30 days. Status is always derived live from that
 // timestamp (never a stale flag) -- active if now() is before expiry, still
@@ -175,7 +175,7 @@ dotenv.config();
 // reverts to standard pricing automatically once the grace window passes.
 // No cron job is needed since this is checked at purchase time, not on a schedule.
 const RESELLER_DISCOUNT_PERCENT = 20;   // flat % off retail price, data purchases only
-const RESELLER_MONTHLY_FEE = 1000;      // ₦, manual renewal (not auto-charged)
+const RESELLER_MONTHLY_FEE = 1000;      // ?, manual renewal (not auto-charged)
 const RESELLER_GRACE_DAYS = 3;          // days after expiry before discount actually drops
 
 const isResellerActive = (profile: any): boolean => {
@@ -197,7 +197,7 @@ const applyResellerPricing = (basePrice: number, profile: any, serviceType: stri
 };
 
 // =========================================================================
-// 🗝️ VTU GATEWAY & MOZOSUBZ CONFIGURATION CONFIG KEYS (EXPOSED VARIABLES)
+// ??? VTU GATEWAY & MOZOSUBZ CONFIGURATION CONFIG KEYS (EXPOSED VARIABLES)
 // =========================================================================
 // You can configure your credentials via two flexible methods:
 // Method 1: Environment Variables in ".env" or Platform Secrets:
@@ -214,7 +214,7 @@ const applyResellerPricing = (basePrice: number, profile: any, serviceType: stri
 // SECURITY (C7 fix): provider API keys now live in the service-role-only
 // provider_secrets table (see supabase_security_hardening.sql). The legacy
 // services_config rows are only used as a fallback by the resolvers below.
-console.log("🔌 [VTU Config] Mozosubz API key source:", process.env.MOZOSUBZ_API_KEY ? "env" : "fallback/provider_secrets table");
+console.log("?? [VTU Config] Mozosubz API key source:", process.env.MOZOSUBZ_API_KEY ? "env" : "fallback/provider_secrets table");
 
 
 import fs from 'fs';
@@ -381,7 +381,7 @@ const getGeminiAi = (): GoogleGenAI | null => {
 
 async function startServer() {
 
-  // ── Environment config audit ──────────────────────────────────────────────
+  // ?? Environment config audit ??????????????????????????????????????????????
   // After an API-key rotation, a missing env var fails LOUD here instead of
   // surfacing later as confusing "Invalid API key" / permission-denied errors.
   const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
@@ -398,14 +398,14 @@ async function startServer() {
     console.log("CONFIG AUDIT - all configured environment variables present.");
   }
 
-  // ── Admin Identity Guard ──────────────────────────────────────────────────
+  // ?? Admin Identity Guard ??????????????????????????????????????????????????
   // Only the hardcoded owner email is recognised as admin.
   // No role field, no body flag, no JWT claim can override this.
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "ibrahimfaruqolamilekan4@gmail.com";
   // Verifies the caller's Supabase session and returns the auth user (or null
   // after sending the 401). Used by the wallet read endpoints: the user's
   // dashboard reads its money data through here (service-role, same source of
-  // truth the admin panel uses) instead of relying on direct browser→Supabase
+  // truth the admin panel uses) instead of relying on direct browser?Supabase
   // grants/realtime, which silently no-op when a table isn't published for
   // realtime or the authenticated role lacks SELECT privileges.
   const requireUser = async (req: any, res: any): Promise<any | null> => {
@@ -502,7 +502,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // ── Security headers + rate limiting (audit H7) ────────────────────────────
+  // ?? Security headers + rate limiting (audit H7) ????????????????????????????
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
@@ -562,7 +562,7 @@ async function startServer() {
         return clone;
       });
 
-  // ─── Legacy local-db helpers (compile-compat stubs; Supabase is source of truth) ─
+  // ??? Legacy local-db helpers (compile-compat stubs; Supabase is source of truth) ?
   function safeJsonStringify(obj: any, space?: string | number): string {
     const seen = new WeakSet();
     return JSON.stringify(obj, (key, value) => {
@@ -575,8 +575,8 @@ async function startServer() {
   }
   interface LocalStore { users: Record<string,any>; transactions: Record<string,any>; data_plans?: Record<string,any>; [k: string]: any; }
   function loadLocalDb(): LocalStore { return { users: {}, transactions: {}, data_plans: {} }; }
-  function saveLocalDb(_data: LocalStore): void { /* no-op — Supabase is source of truth */ }
-  // ───────────────────────────────────────────────────────────────────────────────────
+  function saveLocalDb(_data: LocalStore): void { /* no-op - Supabase is source of truth */ }
+  // ???????????????????????????????????????????????????????????????????????????????????
 
   // (express.json is installed above with a body-size limit.)
 
@@ -1224,7 +1224,7 @@ async function startServer() {
 
       // Enforce balance check with updated finalAmount
       if (currentBalance < finalAmount) {
-         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+         return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalAmount.toLocaleString()} but currently have ?${currentBalance.toLocaleString()}.` });
       }
 
       const chosenProvider = planConfig?.provider || 'mozosubz';
@@ -1264,7 +1264,7 @@ async function startServer() {
         return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
       }
       if (!lockOk) {
-        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalAmount.toLocaleString()} but currently have ?${currentBalance.toLocaleString()}.` });
       }
 
       // Record the pending transaction now that funds are locked.
@@ -1445,7 +1445,7 @@ async function startServer() {
   app.post(["/buy-data", "/api/vtu/buy-data", "/api/buy-data"], purchaseRateLimit, handleVtuPurchase);
 
   /**
-   * 🚀 ENDPOINT: BUY DATA (VENDOR API - DIRECT UUID LINKAGE)
+   * ?? ENDPOINT: BUY DATA (VENDOR API - DIRECT UUID LINKAGE)
    * Securely handles user balances and dispatches data purchase requests to Bigisub
    */
   app.post('/api/vendor/buy-data', purchaseRateLimit, async (req, res) => {
@@ -1614,7 +1614,7 @@ async function startServer() {
   });
 
   /**
-   * 🚀 ENDPOINT: BUY DATA & AIRTIME (VENDOR API)
+   * ?? ENDPOINT: BUY DATA & AIRTIME (VENDOR API)
    * Handles user balances, updates admin logs, and sends request to Bigisub
    */
   app.post('/api/vendor/recharge', purchaseRateLimit, async (req, res) => {
@@ -1714,7 +1714,7 @@ async function startServer() {
       }
 
       if (isNaN(deductAmount) || deductAmount <= 0 || currentBalance < deductAmount) {
-        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
+        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ?${currentBalance.toLocaleString()}.` });
       }
 
       // Step C: Fire the network payload to Mozosubz API
@@ -1751,7 +1751,7 @@ async function startServer() {
         return res.status(500).json({ success: false, message: "Could not lock funds for this purchase. Please try again." });
       }
       if (!lockOk) {
-        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ₦${currentBalance.toLocaleString()}.` });
+        return res.status(400).json({ success: false, message: `Insufficient balance for transaction. Your current balance is ?${currentBalance.toLocaleString()}.` });
       }
 
       const mozoPayload: any = {
@@ -1925,7 +1925,7 @@ async function startServer() {
     }
   });
 
-  // POST /api/admin/fetch-mozosubz-plans — Fetch all 9 service types from Mozosubz API in parallel
+  // POST /api/admin/fetch-mozosubz-plans - Fetch all 9 service types from Mozosubz API in parallel
   app.post("/api/admin/fetch-mozosubz-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -1934,7 +1934,7 @@ async function startServer() {
       const MOZO_BASE   = "https://mozosubz.xyz/api/v1";
 
       if (balanceOnly) {
-        // Not exposed in Mozosubz v1 API — return null gracefully
+        // Not exposed in Mozosubz v1 API - return null gracefully
         return res.json({ balance: null });
       }
 
@@ -2261,8 +2261,8 @@ async function startServer() {
     if (!await requireAdmin(req, res)) return;
     try {
       const rawId = req.params.id;
-      // Sanitize: Decode, then replace en-dash (–) with hyphen (-)
-      const id = decodeURIComponent(rawId).replace(/–/g, '-');
+      // Sanitize: Decode, then replace en-dash (-) with hyphen (-)
+      const id = decodeURIComponent(rawId).replace(/-/g, '-');
       const { cost_price, selling_price, is_active, mozosubz_plan_id, bigisub_plan_id, validity_days, item_name, plan_category } = req.body;
 
       const updateData: any = {};
@@ -2373,7 +2373,7 @@ if (Object.keys(updateData).length <= 1) {
 
       if (currentBalance < finalPrice) {
         return res.status(400).json({ 
-          error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` 
+          error: `Insufficient wallet balance. You need ?${finalPrice.toLocaleString()} but currently have ?${currentBalance.toLocaleString()}.` 
         });
       }
 
@@ -2514,7 +2514,7 @@ if (Object.keys(updateData).length <= 1) {
       if (apiSuccess) {
         const pgUuid = resolvedUserId ? ensureUUID(resolvedUserId) : null;
 
-        // Atomically deduct via the guarded RPC — never a raw UPDATE (the guard_balance
+        // Atomically deduct via the guarded RPC - never a raw UPDATE (the guard_balance
         // trigger silently reverts a raw UPDATE's 'balance' column, causing drift).
         const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
           user_uuid: pgUuid,
@@ -2609,10 +2609,10 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(400).json({ error: "Missing required fields: network, phone_number, amount." });
       }
       if (isNaN(parsedAmount) || parsedAmount < 50) {
-        return res.status(400).json({ error: "Amount must be a number and at least ₦50." });
+        return res.status(400).json({ error: "Amount must be a number and at least ?50." });
       }
 
-      // ── Auth: require a real verified session ──────────────────
+      // ?? Auth: require a real verified session ??????????????????
       let verifiedUserId: string;
       let currentBalance: number;
       let pgUuid: string;
@@ -2627,7 +2627,7 @@ if (Object.keys(updateData).length <= 1) {
 
       if (!pgUuid) return res.status(400).json({ error: "Invalid user ID." });
 
-      // ── Pricing: look up airtime config from services_config ──
+      // ?? Pricing: look up airtime config from services_config ??
       const { data: service } = await supabase
         .from('services_config')
         .select('selling_price, cost_price, provider')
@@ -2639,7 +2639,7 @@ if (Object.keys(updateData).length <= 1) {
       const sellingPct  = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
       const chargeAmount = parseFloat((parsedAmount * (sellingPct / 100)).toFixed(2));
 
-      // ── Pick provider (from services_config or fallback mozosubz) ──
+      // ?? Pick provider (from services_config or fallback mozosubz) ??
       const chosenProvider = service?.provider || 'mozosubz';
       const provider = getProvider(chosenProvider);
       if (!provider) {
@@ -2650,8 +2650,8 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured.` });
       }
 
-      // ── LOCK FUNDS FIRST: atomically deduct via deduct_balance() RPC before calling the
-      // provider (race-safe -- re-checks + decrements balance in one atomic statement). ──
+      // ?? LOCK FUNDS FIRST: atomically deduct via deduct_balance() RPC before calling the
+      // provider (race-safe -- re-checks + decrements balance in one atomic statement). ??
       const localRef = `TRX-AIRTIME-${Date.now()}`;
       const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
         user_uuid: pgUuid,
@@ -2664,31 +2664,31 @@ if (Object.keys(updateData).length <= 1) {
       }
       if (!lockOk) {
         return res.status(400).json({
-          error: `Insufficient wallet balance. You need ₦${chargeAmount.toFixed(2)} but have ₦${currentBalance.toFixed(2)}.`
+          error: `Insufficient wallet balance. You need ?${chargeAmount.toFixed(2)} but have ?${currentBalance.toFixed(2)}.`
         });
       }
 
-      // ── Log pending transaction, keep the real auto-generated bigint id for later updates ──
+      // ?? Log pending transaction, keep the real auto-generated bigint id for later updates ??
       let txDbId: number | null = null;
       try {
         const { data: pendingTx, error: pendingTxErr } = await supabase.from('transactions').insert({
           user_id: pgUuid,
           type: 'airtime', amount: chargeAmount, status: 'pending',
-          description: `Airtime VTU: ₦${parsedAmount} ${network} → ${finalPhone}`,
+          description: `Airtime VTU: ?${parsedAmount} ${network} ? ${finalPhone}`,
           reference: localRef, created_at: new Date().toISOString()
         }).select('id').maybeSingle();
         txDbId = pendingTx?.id ?? null;
         if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (_) { /* non-fatal */ }
 
-      // ── Call the provider now that funds are safely locked ────
+      // ?? Call the provider now that funds are safely locked ????
       let purchaseResult;
       try {
         purchaseResult = await provider.purchase({
           type: 'airtime',
           network,
           phone: finalPhone,
-          amount: parsedAmount,   // face value — provider charges what they charge
+          amount: parsedAmount,   // face value - provider charges what they charge
           planId: 'airtime',
           apiKey,
         });
@@ -2731,7 +2731,7 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
       }
 
-      // ── Success: funds already locked/deducted, just mark the transaction and reply ──
+      // ?? Success: funds already locked/deducted, just mark the transaction and reply ??
       const newBalance = parseFloat((currentBalance - chargeAmount).toFixed(2));
       const refCode = purchaseResult.reference || purchaseResult.raw?.transaction_id || localRef;
 
@@ -2746,7 +2746,7 @@ if (Object.keys(updateData).length <= 1) {
       return res.status(200).json({
         status:  "success",
         success: true,
-        message: `₦${parsedAmount} airtime sent to ${finalPhone} successfully.`,
+        message: `?${parsedAmount} airtime sent to ${finalPhone} successfully.`,
         provider:     chosenProvider,
         chargeAmount,
         newBalance,
@@ -2788,7 +2788,7 @@ if (Object.keys(updateData).length <= 1) {
       const planId       = String(mozosubz_plan_id || id || `plan_${Date.now()}`);
 
       const record: any = {
-        // Core identifiers — upsert on mozosubz_plan_id when available, else bigisub_identifier_id.
+        // Core identifiers - upsert on mozosubz_plan_id when available, else bigisub_identifier_id.
         // bigisub_plan_id is a separate legacy NOT NULL column on services_config (distinct from
         // bigisub_identifier_id) -- must always be populated or inserts of new plans fail with
         // "null value in column bigisub_plan_id violates not-null constraint".
@@ -2819,11 +2819,12 @@ if (Object.keys(updateData).length <= 1) {
         // Legacy / compat
         peyflex_variation_id: peyflex_variation_id || planId,
 
+        provider:             req.body.provider || (String(id || '').includes('nifex') ? 'nifex' : 'mozosubz'),
         is_active:            true,
         updated_at:           new Date().toISOString(),
       };
 
-      // Manual select-then-update/insert instead of .upsert() with onConflict —
+      // Manual select-then-update/insert instead of .upsert() with onConflict -
       // onConflict requires an actual unique index on that column in Postgres, and we
       // can't guarantee mozosubz_plan_id has one on every environment. This works regardless.
       record.bigisub_identifier_id = planId;
@@ -3307,7 +3308,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // Supabase: use process_payment_webhook RPC for atomic credit + idempotency
       const transactionResult = await supabase.rpc('process_payment_webhook', {
         p_reference: reference, p_email: customerEmail, p_amount: amountInNaira,
-        p_gateway: 'paystack', p_description: `Wallet Top-Up via Paystack (₦${amountInNaira.toLocaleString()})`
+        p_gateway: 'paystack', p_description: `Wallet Top-Up via Paystack (?${amountInNaira.toLocaleString()})`
       });
       const trd = transactionResult?.data;
       if (trd?.status === 'already_processed') {
@@ -3318,7 +3319,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         return res.status(400).send("Could not credit user: " + trd?.message);
       }
 
-      console.log(`[Paystack Webhook] Successfully processed Paystack top-up of ₦${amountInNaira}.`);
+      console.log(`[Paystack Webhook] Successfully processed Paystack top-up of ?${amountInNaira}.`);
       return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
 
     } catch (err: any) {
@@ -3386,7 +3387,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
       const currentBalance = Number(profile.wallet_balance || 0);
       if (currentBalance < finalAmount) {
-        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalAmount.toLocaleString()} but currently have ?${currentBalance.toLocaleString()}.` });
       }
 
       // Resolve the plan against services_config -- frontend may send either a composite
@@ -3445,7 +3446,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
       }
       if (!lockOk) {
-        return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
+        return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalAmount.toLocaleString()} but currently have ?${currentBalance.toLocaleString()}.` });
       }
 
       let pendingTxId: number | null = null;
@@ -4051,7 +4052,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       } else if (reqType === 'electricity') {
         finalPrice = Number(amount);
         if (!Number.isFinite(finalPrice) || finalPrice < 1000) {
-          return res.status(400).json({ error: 'Electricity purchase minimum is ₦1,000.' });
+          return res.status(400).json({ error: 'Electricity purchase minimum is ?1,000.' });
         }
       } else if (reqType === 'data' || reqType === 'cable') {
         finalPrice = Number(service.selling_price || amount || 0);
@@ -4067,7 +4068,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
 
       if (currentBalance < finalPrice) {
         return res.status(400).json({ 
-          error: `Insufficient wallet balance. This transaction requires ₦${finalPrice.toLocaleString()} but you have ₦${currentBalance.toLocaleString()}.` 
+          error: `Insufficient wallet balance. This transaction requires ?${finalPrice.toLocaleString()} but you have ?${currentBalance.toLocaleString()}.` 
         });
       }
 
@@ -4079,7 +4080,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           const nifexKey = await resolveNifexApiKey();
           if (!nifexKey) return res.status(503).json({ error: 'Nifex Data provider is not configured. Please set NIFEX_API_KEY.' });
           const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
-          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
+          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalPrice.toLocaleString()}.` });
           utilityResult = await purchaseNifexUtility({
             type: reqType as 'cable' | 'electricity', provider: String(service.provider_or_network || provider), packageName: String(service.item_name || plan || ''),
             smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
@@ -4090,7 +4091,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           const mozKey = await resolveMozosubzApiKey();
           if (!mozKey) return res.status(503).json({ error: 'Mozosubz provider is not configured.' });
           const { data: deducted, error: deductErr } = await supabase.rpc('deduct_balance', { user_uuid: profile.id, amount: finalPrice });
-          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalPrice.toLocaleString()}.` });
+          if (deductErr || !deducted) return res.status(400).json({ error: `Insufficient wallet balance. You need ?${finalPrice.toLocaleString()}.` });
           utilityResult = await purchaseMozosubzUtility({
             type: reqType as 'cable' | 'electricity', provider: String(provider), packageName: String(service.item_name || plan || ''),
             smartcard: reqType === 'cable' ? String(number) : undefined, meterNumber: reqType === 'electricity' ? String(number) : undefined,
@@ -4210,7 +4211,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       
 
       if (dispatchSuccess) {
-        // Deduct price from balance via the guarded RPC (never a raw UPDATE — the
+        // Deduct price from balance via the guarded RPC (never a raw UPDATE - the
         // guard_balance trigger silently reverts 'balance' on any raw UPDATE that
         // doesn't go through deduct_balance()/increment_balance()).
         //
@@ -4311,7 +4312,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       }
       const currentBalance = Number(profile.wallet_balance || 0);
       if (currentBalance < fee) {
-        return res.status(400).json({ error: `Insufficient balance. ₦${fee} required to upgrade to ${desireRole}.` });
+        return res.status(400).json({ error: `Insufficient balance. ?${fee} required to upgrade to ${desireRole}.` });
       }
 
       // Deduct via the guarded RPC first (never a raw UPDATE for balance), then set role separately.
@@ -4321,7 +4322,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       });
       if (deductErr) throw new Error(deductErr.message);
       if (!deductOk) {
-        return res.status(400).json({ error: `Insufficient balance. ₦${fee} required to upgrade to ${desireRole}.` });
+        return res.status(400).json({ error: `Insufficient balance. ?${fee} required to upgrade to ${desireRole}.` });
       }
 
       const { error: roleErr } = await supabase.from('profiles')
@@ -4336,13 +4337,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       await supabase.from('transactions').insert({
         user_id: pgUuid, type: 'upgrade',
         amount: fee, status: 'completed',
-        description: `Account upgraded to ${desireRole.toUpperCase()} (₦${fee} deducted)`,
+        description: `Account upgraded to ${desireRole.toUpperCase()} (?${fee} deducted)`,
         created_at: new Date().toISOString()
       });
 
       res.json({
         success: true,
-        message: `Congratulations! You are now classified as a VTU ${desireRole.toUpperCase()}. 🎉`,
+        message: `Congratulations! You are now classified as a VTU ${desireRole.toUpperCase()}. ??`,
         role: desireRole,
         balance: newBalance
       });
@@ -4352,7 +4353,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Reseller Program: manual monthly subscribe/renew ───────────────────
+  // ??? Reseller Program: manual monthly subscribe/renew ???????????????????
   // Charges RESELLER_MONTHLY_FEE from the caller's own wallet (never a body-supplied
   // target -- getAuthenticatedUserBalance only ever resolves the verified session's own
   // account) and extends reseller_expires_at by 30 days. If the previous subscription is
@@ -4369,7 +4370,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       });
       if (deductErr) throw new Error(deductErr.message);
       if (!deductOk) {
-        return res.status(400).json({ error: `Insufficient balance. ₦${RESELLER_MONTHLY_FEE} required to subscribe as a reseller.` });
+        return res.status(400).json({ error: `Insufficient balance. ?${RESELLER_MONTHLY_FEE} required to subscribe as a reseller.` });
       }
 
       const now = Date.now();
@@ -4462,7 +4463,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     });
   });
 
-  // ── Daily Bonus Lucky Wheel: REMOVED ──────────────────────────────────────
+  // ?? Daily Bonus Lucky Wheel: REMOVED ??????????????????????????????????????
   // Removed at owner request. A wallet-crediting "spin the wheel" endpoint is
   // inherently a money-minting surface (it previously could be fared without a
   // per-day cap, and even rate-limited it remains an unbacked credit path with
@@ -4495,7 +4496,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         if (userDoc) {
           const displayName = userDoc.name || userDoc.username || 'the user';
           const balance = Number(userDoc.wallet_balance ?? userDoc.balance ?? 0);
-          context += ` The user's name is ${displayName} and their current wallet balance is ₦${balance}.`;
+          context += ` The user's name is ${displayName} and their current wallet balance is ?${balance}.`;
         }
       }
 
@@ -4615,7 +4616,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       // been removed entirely).
       const transactionResult = await supabase.rpc('process_payment_webhook', {
         p_reference: reference, p_email: verifiedApiEmail, p_amount: verifiedAmount,
-        p_gateway: 'flutterwave', p_description: `Wallet Top-Up via Flutterwave (₦${verifiedAmount.toLocaleString()})`
+        p_gateway: 'flutterwave', p_description: `Wallet Top-Up via Flutterwave (?${verifiedAmount.toLocaleString()})`
       });
       const trd = transactionResult?.data;
       if (trd?.status === 'already_processed') {
@@ -4625,7 +4626,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         return res.status(400).send("Could not credit user: " + trd?.message);
       }
 
-      console.log(`[Flutterwave verification complete] Successfully credited User ${userId} with ₦${verifiedAmount}.`);
+      console.log(`[Flutterwave verification complete] Successfully credited User ${userId} with ?${verifiedAmount}.`);
       return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
 
     } catch (err: any) {
@@ -4821,7 +4822,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       }
 
       const effectiveRef = txRef || `FLW_${txId}`;
-      console.log(`[Flutterwave Webhook] Processing confirmed deposit of ₦${amount} for ${customerEmail} (Ref: ${effectiveRef})`);
+      console.log(`[Flutterwave Webhook] Processing confirmed deposit of ?${amount} for ${customerEmail} (Ref: ${effectiveRef})`);
 
       // 5. ATOMIC WALLET UPDATE (WITH MULTI-TIER FALLBACK)
       let credited = false;
@@ -4833,7 +4834,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           p_email: customerEmail,
           p_amount: amount,
           p_gateway: "flutterwave",
-          p_description: `Wallet Top-Up via Flutterwave (₦${amount.toLocaleString()})`
+          p_description: `Wallet Top-Up via Flutterwave (?${amount.toLocaleString()})`
         });
 
         if (!pwErr && pwResult) {
@@ -4843,7 +4844,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           }
           if (pwResult.status === "success") {
             credited = true;
-            console.log(`[Flutterwave Webhook] Successfully credited ${customerEmail} with ₦${amount} via process_payment_webhook RPC.`);
+            console.log(`[Flutterwave Webhook] Successfully credited ${customerEmail} with ?${amount} via process_payment_webhook RPC.`);
           }
         }
       } catch (tier1Err: any) {
@@ -4881,7 +4882,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
             }
             if (creditResult.status === "success") {
               credited = true;
-              console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ₦${amount} via process_webhook_credit_by_user RPC.`);
+              console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ?${amount} via process_webhook_credit_by_user RPC.`);
             }
           }
         } catch (tier2Err: any) {
@@ -4920,7 +4921,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           platform: "flutterwave",
           payment_method: "flutterwave",
           gateway: "flutterwave",
-          description: `Wallet Top-Up via Flutterwave (₦${amount.toLocaleString()})`,
+          description: `Wallet Top-Up via Flutterwave (?${amount.toLocaleString()})`,
           created_at: new Date().toISOString()
         });
 
@@ -4931,7 +4932,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
           gateway: "flutterwave"
         }).maybeSingle();
 
-        console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ₦${amount} via fallback direct credit.`);
+        console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ?${amount} via fallback direct credit.`);
       }
 
       return respond(200, { status: "success", message: "Wallet successfully credited" });
@@ -5094,13 +5095,13 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Wallet: user-scoped snapshot + ledger (authoritative reads) ─────────
+  // ??? Wallet: user-scoped snapshot + ledger (authoritative reads) ?????????
   // The dashboard MUST show exactly what the admin panel shows for the same
   // user. Serving the money reads through this API (service-role) instead of
-  // direct browser→Supabase queries removes every remaining way they can
+  // direct browser?Supabase queries removes every remaining way they can
   // diverge: realtime publication membership, authenticated-role table
   // grants, stale anon-key config, and background-tab throttling all stop
-  // mattering — the client just polls/refreshes this endpoint.
+  // mattering - the client just polls/refreshes this endpoint.
   app.get("/api/wallet/snapshot", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
@@ -5152,7 +5153,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Users list (paginated, searchable) ──────────────────────────
+  // ??? Admin: Users list (paginated, searchable) ??????????????????????????
   app.get("/api/admin/users", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;
     try {
@@ -5181,7 +5182,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Single user detail + their transactions ─────────────────────
+  // ??? Admin: Single user detail + their transactions ?????????????????????
   app.get("/api/admin/users/:id", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;
     try {
@@ -5211,7 +5212,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Ban a user ──────────────────────────
+  // ??? Admin: Ban a user ??????????????????????????
   app.post("/api/admin/users/:id/ban", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;
     try {
@@ -5250,7 +5251,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Adjust a user's wallet balance (credit or debit) ────────────
+  // ??? Admin: Adjust a user's wallet balance (credit or debit) ????????????
   app.post("/api/admin/users/:id/adjust-balance", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;
     try {
@@ -5289,7 +5290,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       const { error: authLookupErr } = await supabase.auth.admin.getUserById(userId);
       if (authLookupErr) {
         return res.status(400).json({
-          error: `This profile row is NOT linked to a login account (${authLookupErr.message}). Crediting it would be invisible to the user — their dashboard reads their login-linked row. Search the user list by email and pick the row that matches their live account.`,
+          error: `This profile row is NOT linked to a login account (${authLookupErr.message}). Crediting it would be invisible to the user - their dashboard reads their login-linked row. Search the user list by email and pick the row that matches their live account.`,
         });
       }
       if (targetUserEmail) {
@@ -5381,7 +5382,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: All-users transaction ledger (paginated, filterable) ────────
+  // ??? Admin: All-users transaction ledger (paginated, filterable) ????????
   app.get("/api/admin/transactions", async (req, res) => {
     if (!await requireAdmin(req, res, true)) return;
     try {
@@ -5420,7 +5421,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Mozosubz provider status / uptime check ─────────────────────
+  // ??? Admin: Mozosubz provider status / uptime check ?????????????????????
   app.get("/api/admin/mozosubz-status", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5494,9 +5495,9 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Dashboard summary metrics ────────────────────────────────────
+  // ??? Admin: Dashboard summary metrics ????????????????????????????????????
 
-  // ─── Admin: Nifex Data provider status & live balance (nifexdataapp.com.ng) ────
+  // ??? Admin: Nifex Data provider status & live balance (nifexdataapp.com.ng) ????
   app.get("/api/admin/nifex-status", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5552,74 +5553,76 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Fetch / Sync Nifex Data plans ─────────────────────────────────
+  // ??? Admin: Fetch / Sync Nifex Data plans ?????????????????????????????????
   app.post("/api/admin/fetch-nifex-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
       const apiKey = await resolveNifexApiKey();
-      if (!apiKey) {
-        return res.status(503).json({ error: "Nifex Data API token not configured. Please set NIFEX_API_KEY." });
-      }
 
       let userBalance = 0;
-      try {
-        const u = await fetchNifexUser(apiKey);
-        if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
-      } catch (_) {}
+      if (apiKey) {
+        try {
+          const u = await fetchNifexUser(apiKey);
+          if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
+        } catch (_) {}
+      }
 
-      // Standard active Nifex Data packages across MTN, GLO, Airtel, 9mobile
-      const NIFEX_CATALOG = [
-        // MTN SME & CG
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_1gb",   plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_2gb",   plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_3gb",   plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_5gb",   plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
-        { network: "MTN", plan_type: "SME", id: "mtn_sme_10gb",  plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_1gb",    plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_2gb",    plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
-        { network: "MTN", plan_type: "CG",  id: "mtn_cg_5gb",    plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
-        // GLO Data & SME
-        { network: "GLO", plan_type: "SME", id: "glo_sme_1gb",   plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_2gb",   plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_3gb",   plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_5gb",   plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
-        { network: "GLO", plan_type: "SME", id: "glo_sme_10gb",  plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
-        // Airtel SME & CG
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
-        { network: "AIRTEL", plan_type: "SME", id: "airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
-        { network: "AIRTEL", plan_type: "CG",  id: "airtel_cg_1gb",  plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
-        // 9mobile / Etisalat
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
-        { network: "9MOBILE", plan_type: "SME", id: "9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
-      ];
+      // Fetch LIVE plans directly from Nifex Data API (https://nifexdataapp.com.ng/api/data/)
+      const nifexRes = await fetchNifexPlans(apiKey);
+      if (!nifexRes.success || !Array.isArray(nifexRes.plans) || nifexRes.plans.length === 0) {
+        return res.status(502).json({
+          error: nifexRes.error || "Failed to retrieve live plans from Nifex Data API. Please check network or API token."
+        });
+      }
 
       const { data: dbRows } = await supabase
         .from("services_config")
         .select("mozosubz_plan_id, bigisub_identifier_id, selling_price, provider");
       const priceMap: Record<string, number> = {};
       (dbRows || []).forEach((r: any) => {
-        const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || "");
-        if (k) priceMap[k] = Number(r.selling_price || 0);
+        const k1 = String(r.mozosubz_plan_id || "");
+        const k2 = String(r.bigisub_identifier_id || "");
+        if (k1) priceMap[k1] = Number(r.selling_price || 0);
+        if (k2) priceMap[k2] = Number(r.selling_price || 0);
       });
 
-      const enriched = NIFEX_CATALOG.map(p => ({
-        ...p,
-        service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
-        selling_price: priceMap[p.id] || priceMap[String(p.plan_id)] || Math.ceil(p.price * 1.12),
-        provider: "nifex"
-      }));
+      const enriched = nifexRes.plans.map((p) => {
+        const netUpper = String(p.network || '').trim().toUpperCase();
+        const planType = String(p.type || 'SME').trim();
+        const planId = String(p.plan_id);
+        const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
+        const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+        const planKey = `nifex_${netUpper.toLowerCase()}_${planId}`;
 
-      return res.json({ success: true, balance: userBalance, plans: enriched });
+        return {
+          id: planKey,
+          plan_id: planId,
+          network: netUpper,
+          plan_type: planType,
+          name: fullName,
+          price: Number(p.price || 0),
+          validity: p.validity || '30 Days',
+          network_status: p.network_status || 'On',
+          service: serviceKey,
+          selling_price: priceMap[planKey] || priceMap[planId] || Math.ceil(Number(p.price || 0) * 1.10),
+          provider: "nifex"
+        };
+      });
+
+      return res.json({
+        success: true,
+        balance: userBalance,
+        account_type: nifexRes.account_type || 'Vendor',
+        count: enriched.length,
+        plans: enriched
+      });
     } catch (err: any) {
       console.error("[POST /api/admin/fetch-nifex-plans Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
     }
   });
 
-  // ─── Admin: Force Fetch / Sync Plans From ALL Providers (Mozosubz + Nifex Data) ───
+  // ??? Admin: Force Fetch / Sync Plans From ALL Providers (Mozosubz + Nifex Data) ???
   app.post("/api/admin/fetch-all-providers-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5684,39 +5687,35 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         providerStats.mozosubz.error = mozoErr.message;
       }
 
-      // 2. Fetch Nifex Data catalog & live plans
+      // 2. Fetch Nifex Data live plans
       try {
-        const NIFEX_CATALOG = [
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_500mb", plan_id: 204, name: "MTN 500MB SME (30 Days)", price: 130 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_1gb",   plan_id: 205, name: "MTN 1.0GB SME (30 Days)", price: 260 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_2gb",   plan_id: 206, name: "MTN 2.0GB SME (30 Days)", price: 520 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_3gb",   plan_id: 207, name: "MTN 3.0GB SME (30 Days)", price: 780 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_5gb",   plan_id: 208, name: "MTN 5.0GB SME (30 Days)", price: 1300 },
-          { network: "MTN", plan_type: "SME", id: "nifex_mtn_sme_10gb",  plan_id: 209, name: "MTN 10.0GB SME (30 Days)", price: 2600 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_1gb",    plan_id: 210, name: "MTN 1.0GB Corporate Gifting (30 Days)", price: 275 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_2gb",    plan_id: 211, name: "MTN 2.0GB Corporate Gifting (30 Days)", price: 550 },
-          { network: "MTN", plan_type: "CG",  id: "nifex_mtn_cg_5gb",    plan_id: 212, name: "MTN 5.0GB Corporate Gifting (30 Days)", price: 1375 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_1gb",   plan_id: 301, name: "GLO 1.0GB SME (30 Days)", price: 245 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_2gb",   plan_id: 302, name: "GLO 2.0GB SME (30 Days)", price: 490 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_3gb",   plan_id: 303, name: "GLO 3.0GB SME (30 Days)", price: 735 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_5gb",   plan_id: 304, name: "GLO 5.0GB SME (30 Days)", price: 1225 },
-          { network: "GLO", plan_type: "SME", id: "nifex_glo_sme_10gb",  plan_id: 305, name: "GLO 10.0GB SME (30 Days)", price: 2450 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_1gb", plan_id: 401, name: "Airtel 1.0GB SME (30 Days)", price: 260 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_2gb", plan_id: 402, name: "Airtel 2.0GB SME (30 Days)", price: 520 },
-          { network: "AIRTEL", plan_type: "SME", id: "nifex_airtel_sme_5gb", plan_id: 403, name: "Airtel 5.0GB SME (30 Days)", price: 1300 },
-          { network: "AIRTEL", plan_type: "CG",  id: "nifex_airtel_cg_1gb",  plan_id: 404, name: "Airtel 1.0GB CG (30 Days)", price: 270 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_1gb", plan_id: 501, name: "9mobile 1.0GB SME (30 Days)", price: 180 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_2gb", plan_id: 502, name: "9mobile 2.0GB SME (30 Days)", price: 360 },
-          { network: "9MOBILE", plan_type: "SME", id: "nifex_9mobile_sme_5gb", plan_id: 503, name: "9mobile 5.0GB SME (30 Days)", price: 900 }
-        ];
+        const nifexKey = await resolveNifexApiKey();
+        const liveNifex = await fetchNifexPlans(nifexKey);
+        if (liveNifex.success && Array.isArray(liveNifex.plans)) {
+          const nifexPlans = liveNifex.plans.map((p) => {
+            const netUpper = String(p.network || '').trim().toUpperCase();
+            const planType = String(p.type || 'SME').trim();
+            const planId = String(p.plan_id);
+            const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
+            const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-        const nifexPlans = NIFEX_CATALOG.map(p => ({
-          ...p,
-          service: `${p.network.toLowerCase()}_${p.plan_type.toLowerCase()}`,
-          provider: "nifex",
-        }));
-        allCombinedPlans.push(...nifexPlans);
-        providerStats.nifex.count += nifexPlans.length;
+            return {
+              id: `nifex_${netUpper.toLowerCase()}_${planId}`,
+              plan_id: planId,
+              network: netUpper,
+              plan_type: planType,
+              name: fullName,
+              price: Number(p.price || 0),
+              validity: p.validity || '30 Days',
+              service: serviceKey,
+              provider: "nifex",
+            };
+          });
+          allCombinedPlans.push(...nifexPlans);
+          providerStats.nifex.count += nifexPlans.length;
+        } else if (liveNifex.error) {
+          providerStats.nifex.error = liveNifex.error;
+        }
       } catch (nifexErr: any) {
         console.warn("[fetch-all-providers-plans] Nifex fetch error:", nifexErr.message);
         providerStats.nifex.error = nifexErr.message;
@@ -5784,7 +5783,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Save and inspect VTU provider API keys (Mozosubz, Nifex, Bigisub) ───
+  // ??? Admin: Save and inspect VTU provider API keys (Mozosubz, Nifex, Bigisub) ???
   app.post("/api/admin/provider-secrets", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5811,15 +5810,15 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       return res.json({
         mozosubz: {
           configured: Boolean(mozoKey && mozoKey.length > 5 && !mozoKey.includes('dummy')),
-          masked: mozoKey && mozoKey.length > 8 ? `${mozoKey.slice(0, 4)}••••${mozoKey.slice(-4)}` : (mozoKey ? "••••" : null),
+          masked: mozoKey && mozoKey.length > 8 ? `${mozoKey.slice(0, 4)}....${mozoKey.slice(-4)}` : (mozoKey ? "...." : null),
         },
         nifex: {
           configured: Boolean(nifexKey && nifexKey.length > 5 && !nifexKey.includes('dummy')),
-          masked: nifexKey && nifexKey.length > 8 ? `${nifexKey.slice(0, 4)}••••${nifexKey.slice(-4)}` : (nifexKey ? "••••" : null),
+          masked: nifexKey && nifexKey.length > 8 ? `${nifexKey.slice(0, 4)}....${nifexKey.slice(-4)}` : (nifexKey ? "...." : null),
         },
         bigisub: {
           configured: Boolean(bigiKey && bigiKey.length > 5 && !bigiKey.includes('dummy')),
-          masked: bigiKey && bigiKey.length > 8 ? `${bigiKey.slice(0, 4)}••••${bigiKey.slice(-4)}` : (bigiKey ? "••••" : null),
+          masked: bigiKey && bigiKey.length > 8 ? `${bigiKey.slice(0, 4)}....${bigiKey.slice(-4)}` : (bigiKey ? "...." : null),
         }
       });
     } catch (err: any) {
@@ -5827,7 +5826,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Live test provider key (Mozosubz or Nifex) ────────────────────
+  // ??? Admin: Live test provider key (Mozosubz or Nifex) ????????????????????
   app.post("/api/admin/test-provider-key", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5846,7 +5845,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
             provider: 'nifex',
             balance: Number(userObj.wallet_balance ?? 0),
             username: userObj.username || '',
-            message: `Connected successfully to Nifex Data! Account balance: ₦${Number(userObj.wallet_balance ?? 0).toLocaleString()}`
+            message: `Connected successfully to Nifex Data! Account balance: ?${Number(userObj.wallet_balance ?? 0).toLocaleString()}`
           });
         }
         return res.status(401).json({
@@ -5955,7 +5954,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── eSIM Inquiries & Messages Management (jeffholland299@gmail.com & Admins) ───
+  // ??? eSIM Inquiries & Messages Management (jeffholland299@gmail.com & Admins) ???
   let serverEsimInquiries: any[] = [];
   try {
     const dataDir = path.join(process.cwd(), '.data');
@@ -5990,7 +5989,7 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         user_phone = '',
         package_id = 'us-5gb',
         package_label = 'USA 5GB eSIM',
-        package_price = '₦8,500',
+        package_price = '?8,500',
         destination_country = 'United States',
         device_model = 'Smartphone',
         message = ''

@@ -9,7 +9,7 @@
 
 import axios from 'axios';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ??? Types ????????????????????????????????????????????????????????????????????
 
 export interface PurchaseParams {
   type: 'data' | 'airtime';
@@ -18,7 +18,7 @@ export interface PurchaseParams {
   amount: number;
   planId: string;                // provider-specific plan identifier
   providerPlanId?: string;       // override if stored separately (e.g. bigisub_identifier_id)
-  mozosubzService?: string;      // e.g. "mtn_sme" — Mozosubz-specific
+  mozosubzService?: string;      // e.g. "mtn_sme" - Mozosubz-specific
   apiKey: string;
 }
 
@@ -36,13 +36,13 @@ export interface VtuProvider {
   purchase: (params: PurchaseParams) => Promise<PurchaseResult>;
 }
 
-// ─── Supabase client (injected at runtime to avoid circular deps) ─────────────
+// ??? Supabase client (injected at runtime to avoid circular deps) ?????????????
 let _supabase: any = null;
 export function initProviders(supabaseClient: any) {
   _supabase = supabaseClient;
 }
 
-// ─── Key resolvers ────────────────────────────────────────────────────────────
+// ??? Key resolvers ????????????????????????????????????????????????????????????
 
 async function resolveKeyFromEnvOrDb(envVar: string, dbIdentifier: string): Promise<string> {
   // 1. Check provider_secrets table in Supabase
@@ -79,7 +79,7 @@ async function resolveKeyFromEnvOrDb(envVar: string, dbIdentifier: string): Prom
   return '';
 }
 
-// ─── Network name helpers ─────────────────────────────────────────────────────
+// ??? Network name helpers ?????????????????????????????????????????????????????
 
 function normNetwork(network: string): string {
   const n = network.toLowerCase();
@@ -107,7 +107,7 @@ function nifexNetworkId(network: string): number {
   return 1;
 }
 
-// ─── Provider: Mozosubz ───────────────────────────────────────────────────────
+// ??? Provider: Mozosubz ???????????????????????????????????????????????????????
 
 const mozosubzProvider: VtuProvider = {
   name: 'mozosubz',
@@ -136,7 +136,7 @@ const mozosubzProvider: VtuProvider = {
       ? { service, plan_id: rawPlanId, phone: p.phone }
       : { network: net, amount: p.amount, phone: p.phone };
 
-    console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+    console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase ?`, JSON.stringify(payload));
 
     try {
       const resp = await axios.post(url, payload, {
@@ -160,7 +160,7 @@ const mozosubzProvider: VtuProvider = {
   },
 };
 
-// ─── Provider: Nifex Data (https://nifexdataapp.com.ng) ────────────────────────
+// ??? Provider: Nifex Data (https://nifexdataapp.com.ng) ????????????????????????
 
 const nifexProvider: VtuProvider = {
   name: 'nifex',
@@ -176,7 +176,10 @@ const nifexProvider: VtuProvider = {
   async purchase(p: PurchaseParams): Promise<PurchaseResult> {
     const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
     const netId = nifexNetworkId(p.network);
-    const planCode = p.providerPlanId || p.planId;
+    const rawPlanCode = String(p.providerPlanId || p.planId || '').trim();
+    // Support prefixed IDs like 'nifex_mtn_226' or 'nifex_226' as well as pure numeric '226'
+    const planMatch = rawPlanCode.match(/\d+$/);
+    const planCode = planMatch ? planMatch[0] : rawPlanCode;
 
     const url = p.type === 'data' ? `${base}/data/` : `${base}/airtime/`;
     const payload: any = p.type === 'data'
@@ -194,7 +197,7 @@ const nifexProvider: VtuProvider = {
           airtime_type: 'VTU',
         };
 
-    console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+    console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase ?`, JSON.stringify(payload));
 
     try {
       const resp = await axios.post(url, payload, {
@@ -230,7 +233,7 @@ const nifexProvider: VtuProvider = {
   },
 };
 
-// ─── Provider: Bigisub ────────────────────────────────────────────────────────
+// ??? Provider: Bigisub ????????????????????????????????????????????????????????
 
 const bigisubProvider: VtuProvider = {
   name: 'bigisub',
@@ -257,7 +260,7 @@ const bigisubProvider: VtuProvider = {
       payload.airtime_type = 'VTU';
     }
 
-    console.log(`[Bigisub] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+    console.log(`[Bigisub] ${p.type.toUpperCase()} purchase ?`, JSON.stringify(payload));
 
     try {
       const resp = await axios.post(url, payload, {
@@ -277,7 +280,7 @@ const bigisubProvider: VtuProvider = {
   },
 };
 
-// ─── Utility & Bill Payments ─────────────────────────────────────────────────
+// ??? Utility & Bill Payments ?????????????????????????????????????????????????
 
 export interface UtilityPurchaseParams {
   type: 'cable' | 'electricity';
@@ -316,7 +319,7 @@ export async function purchaseMozosubzUtility(p: UtilityPurchaseParams): Promise
         phone: p.phone,
       };
 
-  console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+  console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase ?`, JSON.stringify(payload));
   try {
     const resp = await axios.post(url, payload, {
       headers: {
@@ -360,7 +363,7 @@ export async function purchaseNifexUtility(p: UtilityPurchaseParams): Promise<Pu
         MeterType: p.meterType === 'POSTPAID' ? 2 : 1,
       };
 
-  console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase →`, JSON.stringify(payload));
+  console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase ?`, JSON.stringify(payload));
   try {
     const resp = await axios.post(url, payload, {
       headers: {
@@ -380,7 +383,7 @@ export async function purchaseNifexUtility(p: UtilityPurchaseParams): Promise<Pu
   }
 }
 
-// ─── Nifex User / Balance Lookup ──────────────────────────────────────────────
+// ??? Nifex User / Balance Lookup ??????????????????????????????????????????????
 
 export async function fetchNifexUser(apiKey: string) {
   const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
@@ -395,7 +398,83 @@ export async function fetchNifexUser(apiKey: string) {
   return resp.data;
 }
 
-// ─── Registry ─────────────────────────────────────────────────────────────────
+// ??? Nifex Live Plans & Network Status Lookup ???????????????????????????????????
+
+export interface NifexLivePlan {
+  plan_id: number;
+  pId?: number;
+  network_id: number;
+  network: string;
+  plan_name: string;
+  type: string;
+  validity: string;
+  price: number;
+  network_status?: string;
+}
+
+export async function fetchNifexPlans(apiKey?: string): Promise<{
+  success: boolean;
+  plans: NifexLivePlan[];
+  account_type?: string;
+  count?: number;
+  raw?: any;
+  error?: string;
+}> {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const cleanKey = apiKey ? apiKey.replace(/^Token\s+/i, '').trim() : '';
+  if (cleanKey && cleanKey.length > 5 && !cleanKey.includes('PASTE_YOUR') && !cleanKey.includes('dummy')) {
+    headers['Authorization'] = `Token ${cleanKey}`;
+  }
+
+  try {
+    const resp = await axios.get(`${base}/data/`, {
+      headers,
+      timeout: 15000,
+    });
+    const d = resp.data;
+    if (d?.status === 'success' || Array.isArray(d?.plans)) {
+      return {
+        success: true,
+        plans: Array.isArray(d.plans) ? d.plans : [],
+        account_type: d.account_type || 'Vendor',
+        count: d.count || (Array.isArray(d.plans) ? d.plans.length : 0),
+        raw: d,
+      };
+    }
+    return {
+      success: false,
+      plans: [],
+      error: d?.message || 'Failed to retrieve plans from Nifex Data',
+      raw: d,
+    };
+  } catch (err: any) {
+    console.error('[fetchNifexPlans Exception]', err.response?.data || err.message);
+    return {
+      success: false,
+      plans: [],
+      error: err.response?.data?.message || err.response?.data?.msg || err.message,
+      raw: err.response?.data,
+    };
+  }
+}
+
+export async function fetchNifexNetworks(): Promise<any[]> {
+  const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+  try {
+    const resp = await axios.get(`${base}/network/`, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    return resp.data?.networks || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// ??? Registry ?????????????????????????????????????????????????????????????????
 
 export const PROVIDERS: Record<string, VtuProvider> = {
   mozosubz:  mozosubzProvider,
