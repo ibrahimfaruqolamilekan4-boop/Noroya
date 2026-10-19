@@ -474,6 +474,70 @@ export async function fetchNifexNetworks(): Promise<any[]> {
   }
 }
 
+export async function fetchNifexLivePlans(apiKey?: string): Promise<{
+  balance: number;
+  plans: any[];
+  account_type?: string;
+}> {
+  let balance = 0;
+  if (apiKey) {
+    try {
+      const u = await fetchNifexUser(apiKey);
+      const userObj = u?.user || u?.data || u;
+      if (userObj && (userObj.wallet_balance !== undefined || userObj.balance !== undefined)) {
+        balance = Number(userObj.wallet_balance ?? userObj.balance ?? 0);
+      }
+    } catch (_) {}
+  }
+
+  const res = await fetchNifexPlans(apiKey);
+  if (!res.success) {
+    throw new Error(res.error || 'Failed to retrieve live plans from Nifex Data API.');
+  }
+
+  const mapped = (res.plans || []).map((p: any) => {
+    const netRaw = String(p.network || 'MTN').toUpperCase();
+    const netUpper = netRaw.includes('MTN')
+      ? 'MTN'
+      : netRaw.includes('AIRTEL')
+      ? 'AIRTEL'
+      : netRaw.includes('GLO')
+      ? 'GLO'
+      : '9MOBILE';
+    const planType = String(p.type || 'SME').toUpperCase();
+    const service =
+      netUpper === 'MTN'
+        ? planType.includes('CG') || planType.includes('CORPORATE')
+          ? 'mtn_cg'
+          : planType.includes('GIFT')
+          ? 'mtn_gifting'
+          : 'mtn_sme'
+        : netUpper === 'AIRTEL'
+        ? 'airtel_data'
+        : netUpper === 'GLO'
+        ? 'glo_data'
+        : 'etisalat_data';
+    const planId = Number(p.plan_id ?? p.pId ?? p.id ?? 0);
+    return {
+      id: `nifex_${netUpper.toLowerCase()}_${planId}`,
+      plan_id: planId,
+      name: `${netUpper} ${p.plan_name} ${planType} (${p.validity || '30 Days'})`,
+      price: Number(p.price || 0),
+      network: netUpper,
+      plan_type: planType,
+      validity: p.validity || '30 Days',
+      service,
+      provider: 'nifex',
+    };
+  });
+
+  return {
+    balance,
+    plans: mapped,
+    account_type: res.account_type,
+  };
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const PROVIDERS: Record<string, VtuProvider> = {
