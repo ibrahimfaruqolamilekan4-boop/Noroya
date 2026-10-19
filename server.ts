@@ -172,12 +172,23 @@ const resolveBachsWebhookSecret = async (): Promise<string> =>
   resolveProviderSecret('bachs_webhook_secret', ['BACHS_WEBHOOK_SECRET', 'BACHS_SIGNING_SECRET']);
 
 const resolveBachsBaseUrl = (secretKey = ''): string => {
-  const explicitUrl = (process.env.BACHS_BASE_URL || '').trim().replace(/\/+$/, '');
-  if (explicitUrl) return explicitUrl;
-  if (secretKey.startsWith('sk_sandbox_') || secretKey.startsWith('sk_test_')) {
+  const explicitUrl = (process.env.BACHS_BASE_URL || '').trim();
+  if (explicitUrl) {
+    // Strip trailing slashes and any trailing /v1 so we never double-append /v1
+    return explicitUrl.replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
+  }
+  const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+  if (cleanKey.startsWith('sk_sandbox_') || cleanKey.startsWith('sk_test_')) {
     return 'https://sandbox-api.bachs.io';
   }
   return 'https://api.bachs.io';
+};
+
+const getBachsEndpoint = (baseUrl: string, subPath: string): string => {
+  const cleanBase = (baseUrl || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
+  const cleanPath = subPath.startsWith('/') ? subPath : `/${subPath}`;
+  const v1Path = cleanPath.startsWith('/v1/') ? cleanPath : `/v1${cleanPath}`;
+  return `${cleanBase}${v1Path}`;
 };
 
 dotenv.config();
@@ -4587,10 +4598,13 @@ if (Object.keys(updateData).length <= 1) {
         },
       };
 
-      const resp = await fetch(`${baseUrl}/v1/checkout-sessions`, {
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+      const checkoutEndpoint = getBachsEndpoint(baseUrl, '/v1/checkout-sessions');
+
+      const resp = await fetch(checkoutEndpoint, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${secretKey}`,
+          Authorization: `Bearer ${cleanKey}`,
           "Content-Type": "application/json",
           "Idempotency-Key": reference,
         },
@@ -4599,7 +4613,10 @@ if (Object.keys(updateData).length <= 1) {
 
       const respData: any = await resp.json().catch(() => ({}));
       if (!resp.ok || !respData?.checkout_url) {
-        const errDetail = respData?.detail || respData?.message || respData?.error || `Bachs API returned HTTP ${resp.status}`;
+        let errDetail = respData?.detail || respData?.message || respData?.error || `Bachs API returned HTTP ${resp.status}`;
+        if (resp.status === 404) {
+          errDetail = `Bachs API endpoint not found (HTTP 404). Ensure BACHS_BASE_URL is https://api.bachs.io (without /v1). Detail: ${respData?.detail || 'Not Found'}`;
+        }
         console.error("[Bachs Checkout Error]:", resp.status, respData);
         return res.status(resp.status >= 400 && resp.status < 600 ? resp.status : 502).json({
           error: errDetail,
@@ -4638,6 +4655,7 @@ if (Object.keys(updateData).length <= 1) {
       }
 
       const baseUrl = resolveBachsBaseUrl(secretKey);
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
       let verifiedAmount = 0;
       let verifiedCurrency = "NGN";
       let verifiedEmail = "";
@@ -4646,9 +4664,10 @@ if (Object.keys(updateData).length <= 1) {
       let isPaid = false;
 
       if (targetCheckoutId) {
-        const chkResp = await fetch(`${baseUrl}/v1/checkout-sessions/${encodeURIComponent(targetCheckoutId)}`, {
+        const verifyEndpoint = getBachsEndpoint(baseUrl, `/v1/checkout-sessions/${encodeURIComponent(targetCheckoutId)}`);
+        const chkResp = await fetch(verifyEndpoint, {
           method: "GET",
-          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
         });
         if (!chkResp.ok) {
           const errBody: any = await chkResp.json().catch(() => ({}));
@@ -4687,9 +4706,10 @@ if (Object.keys(updateData).length <= 1) {
           });
         }
       } else if (targetChargeId) {
-        const chResp = await fetch(`${baseUrl}/v1/payments/${encodeURIComponent(targetChargeId)}`, {
+        const chargeEndpoint = getBachsEndpoint(baseUrl, `/v1/payments/${encodeURIComponent(targetChargeId)}`);
+        const chResp = await fetch(chargeEndpoint, {
           method: "GET",
-          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
         });
         if (!chResp.ok) {
           const errBody: any = await chResp.json().catch(() => ({}));
@@ -4763,16 +4783,20 @@ if (Object.keys(updateData).length <= 1) {
       }
 
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      let resp = await fetch(`${baseUrl}/v1/virtual-accounts?currency=NGN`, {
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+      const getVaEndpoint = getBachsEndpoint(baseUrl, '/v1/virtual-accounts?currency=NGN');
+      const createVaEndpoint = getBachsEndpoint(baseUrl, '/v1/virtual-accounts');
+
+      let resp = await fetch(getVaEndpoint, {
         method: "GET",
-        headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
       });
 
       // If 404 NOT_FOUND, automatically request creation via POST /v1/virtual-accounts
       if (resp.status === 404) {
-        resp = await fetch(`${baseUrl}/v1/virtual-accounts`, {
+        resp = await fetch(createVaEndpoint, {
           method: "POST",
-          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({ currency: "NGN" }),
         });
       }
@@ -4814,9 +4838,11 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(503).json({ error: "Bachs.io secret key is not configured." });
       }
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const resp = await fetch(`${baseUrl}/v1/virtual-accounts`, {
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+      const createVaEndpoint = getBachsEndpoint(baseUrl, '/v1/virtual-accounts');
+      const resp = await fetch(createVaEndpoint, {
         method: "POST",
-        headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ currency: "NGN" }),
       });
       const data: any = await resp.json().catch(() => ({}));
@@ -4996,12 +5022,13 @@ if (Object.keys(updateData).length <= 1) {
         if (bachsSecretKey && (chargeId || checkoutId)) {
           try {
             const baseUrl = resolveBachsBaseUrl(bachsSecretKey);
+            const cleanKey = bachsSecretKey.replace(/^Bearer\s+/i, '').trim();
             const verifyUrl = chargeId
-              ? `${baseUrl}/v1/payments/charges/${encodeURIComponent(chargeId)}`
-              : `${baseUrl}/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`;
+              ? getBachsEndpoint(baseUrl, `/v1/payments/charges/${encodeURIComponent(chargeId)}`)
+              : getBachsEndpoint(baseUrl, `/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`);
             const vResp = await fetch(verifyUrl, {
               method: "GET",
-              headers: { Authorization: `Bearer ${bachsSecretKey}`, "Content-Type": "application/json" },
+              headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
             });
             if (vResp.ok) {
               const vData: any = await vResp.json();
@@ -5903,7 +5930,8 @@ if (Object.keys(updateData).length <= 1) {
 
       if (provider === 'bachs') {
         const baseUrl = resolveBachsBaseUrl(testKey);
-        const resp = await fetch(`${baseUrl}/v1/balances`, {
+        const balancesEndpoint = getBachsEndpoint(baseUrl, '/v1/balances');
+        const resp = await fetch(balancesEndpoint, {
           headers: {
             Authorization: `Bearer ${testKey.replace(/^Bearer\s+/i, '').trim()}`,
             "Content-Type": "application/json",
