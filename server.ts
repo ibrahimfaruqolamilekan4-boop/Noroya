@@ -123,7 +123,7 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 // at './src/lib/vtu-providers.js' throws ERR_MODULE_NOT_FOUND at function load
 // time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
-import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser, fetchNifexPlans, fetchNifexNetworks } from './src/lib/vtu-providers.ts';
+import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser, fetchNifexLivePlans } from './src/lib/vtu-providers.ts';
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
@@ -165,6 +165,21 @@ const resolveMozosubzApiKey = async (): Promise<string> =>
 const resolveNifexApiKey = async (): Promise<string> =>
   resolveProviderSecret('nifex_api_key', ['NIFEX_API_KEY', 'NIFEXDATA_API_KEY', 'NIFEX_TOKEN']);
 
+const resolveBachsSecretKey = async (): Promise<string> =>
+  resolveProviderSecret('bachs_secret_key', ['BACHS_SECRET_KEY', 'BACHS_API_KEY', 'BACHS_LIVE_SECRET_KEY', 'BACHS_SANDBOX_SECRET_KEY']);
+
+const resolveBachsWebhookSecret = async (): Promise<string> =>
+  resolveProviderSecret('bachs_webhook_secret', ['BACHS_WEBHOOK_SECRET', 'BACHS_SIGNING_SECRET']);
+
+const resolveBachsBaseUrl = (secretKey = ''): string => {
+  const explicitUrl = (process.env.BACHS_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (explicitUrl) return explicitUrl;
+  if (secretKey.startsWith('sk_sandbox_') || secretKey.startsWith('sk_test_')) {
+    return 'https://sandbox-api.bachs.io';
+  }
+  return 'https://api.bachs.io';
+};
+
 dotenv.config();
 
 // ─── Reseller Program ───────────────────────────────────────────────────────
@@ -205,7 +220,8 @@ const applyResellerPricing = (basePrice: number, profile: any, serviceType: stri
 //   - MOZOSUBZ_BASE_URL      : Base endpoint for Mozosubz (Default: "https://mozosubz.xyz/api")
 //   - MOZOSUBZ_WEBHOOK_SECRET: Secret for verifying inbound Mozosubz webhook signatures.
 //   - BIGISUB_API_KEY        : Your main Bigisub API secret token.
-//   - FLUTTERWAVE_SECRET_KEY : Your Flutterwave secret integration key.
+//   - BACHS_SECRET_KEY       : Your Bachs.io secret API key (sk_live_... or sk_sandbox_...).
+//   - BACHS_WEBHOOK_SECRET   : Your Bachs.io webhook signing secret (whsec_...).
 //
 // Method 2: Supabase Dynamic config in the "services_config" table:
 //   - Create a record with: bigisub_identifier_id = "mozosubz_api_key" and set the "item_name" as your key value.
@@ -385,14 +401,14 @@ async function startServer() {
   // After an API-key rotation, a missing env var fails LOUD here instead of
   // surfacing later as confusing "Invalid API key" / permission-denied errors.
   const requiredEnvs = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-  const optionalEnvs = ["GEMINI_API_KEY", "FLW_SECRET_HASH", "FLUTTERWAVE_SECRET_HASH", "FLUTTERWAVE_PUBLIC_KEY", "MOZOSUBZ_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
+  const optionalEnvs = ["GEMINI_API_KEY", "BACHS_SECRET_KEY", "BACHS_WEBHOOK_SECRET", "MOZOSUBZ_API_KEY", "NIFEX_API_KEY", "BIGISUB_API_KEY", "ADMIN_EMAIL"];
   const missingRequired = requiredEnvs.filter((k) => !(process.env[k] || "").trim());
   const missingOptional = optionalEnvs.filter((k) => !(process.env[k] || "").trim());
   if (missingRequired.length) {
     console.error(`CONFIG AUDIT - CRITICAL: missing environment variables: ${missingRequired.join(", ")}. Funding wallets, admin operations and protected reads will fail until these are set (Project Settings -> Environment Variables) and the site is redeployed.`);
   }
   if (missingOptional.length) {
-    console.warn(`CONFIG AUDIT - optional envs not set: ${missingOptional.join(", ")}. Features depending on them (AI chat, Flutterwave verification, VTU providers) will degrade.`);
+    console.warn(`CONFIG AUDIT - optional envs not set: ${missingOptional.join(", ")}. Features depending on them (AI chat, Bachs.io payments, VTU providers) can also be configured in provider_secrets.`);
   }
   if (!missingRequired.length && !missingOptional.length) {
     console.log("CONFIG AUDIT - all configured environment variables present.");
@@ -534,7 +550,7 @@ async function startServer() {
 
   const JSON_BODY_LIMIT = "128kb";
   // SECURITY: capture the RAW body bytes BEFORE JSON parsing so webhook HMAC
-  // signature checks (Flutterwave/Paystack) always verify against the exact
+  // signature checks (Bachs.io X-Bachs-Signature-V2 / X-Bachs-Signature) always verify against the exact
   // bytes the provider signed. Without this, req.rawBody only exists on the
   // Vercel serverless wrapper; every other runtime falls back to re-serialized
   // JSON whose whitespace/key order makes signature verification fail, so
@@ -997,72 +1013,18 @@ async function startServer() {
   });
 
 
-  // GET /api/v1/payment/config: Load Live Paystack/Flutterwave credentials securely without client-side exposures
-  app.get("/api/v1/payment/config", (req, res) => {
-    const paystackKeys = [
-      "PAYSTACK_LIVE_PUBLIC_KEY",
-      "PAYSTACK_PUBLIC_KEY",
-      "VITE_PAYSTACK_PUBLIC_KEY",
-      "VITE_PAYSTACK_LIVE_PUBLIC_KEY"
-    ];
-    let paystackKey = "";
-    for (const key of paystackKeys) {
-      const val = (process.env[key] || "").trim();
-      if (val && !val.includes("PASTE_YOUR") && !val.includes("your_paystack") && !val.includes("xxxxxx")) {
-        paystackKey = val.replace(/^["']|["']$/g, "").trim();
-        break;
-      }
-    }
-
-    // SECURITY: only ever return PUBLIC keys (pk_*). The previous autodetect
-    // loop matched sk_live_/sk_test_ too and would have handed a Paystack
-    // SECRET key to any anonymous caller. No hardcoded fallback key either.
-    if (!paystackKey) {
-      for (const [key, value] of Object.entries(process.env)) {
-        if (value && typeof value === "string") {
-          const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
-          if (trimmed.startsWith("pk_live_") || trimmed.startsWith("pk_test_")) {
-            paystackKey = trimmed;
-            console.log(`[Payment Config] Autodetected Paystack public key from env var: ${key}`);
-            break;
-          }
-        }
-      }
-    }
-
-    const flutterwaveKeys = [
-      "FLUTTERWAVE_PUBLIC_KEY",
-      "VITE_FLUTTERWAVE_PUBLIC_KEY",
-      "FLUTTERWAVE_LIVE_PUBLIC_KEY",
-      "VITE_FLUTTERWAVE_LIVE_PUBLIC_KEY"
-    ];
-    let flutterwaveKey = "";
-    for (const key of flutterwaveKeys) {
-      const val = (process.env[key] || "").trim();
-      if (val && !val.includes("PASTE_YOUR") && !val.includes("your_flutterwave") && !val.includes("xxxxxx")) {
-        flutterwaveKey = val.replace(/^["']|["']$/g, "").trim();
-        break;
-      }
-    }
-
-    // SECURITY: only public Flutterwave keys are ever exposed (never FLWSECK).
-    if (!flutterwaveKey) {
-      for (const [key, value] of Object.entries(process.env)) {
-        if (value && typeof value === "string") {
-          const trimmed = value.trim().replace(/^["']|["']$/g, "").trim();
-          if (trimmed.startsWith("FLWPUBK")) {
-            flutterwaveKey = trimmed;
-            console.log(`[Payment Config] Autodetected Flutterwave public key from env var: ${key}`);
-            break;
-          }
-        }
-      }
-    }
-
-    // SECURITY: no debug block -- key prefixes/lengths are an info leak.
+  // GET /api/v1/payment/config: Check live Bachs.io configuration status without exposing secret keys
+  app.get(["/api/v1/payment/config", "/api/payments/bachs/config"], async (_req, res) => {
+    const bachsSecret = await resolveBachsSecretKey();
+    const bachsWebhookSecret = await resolveBachsWebhookSecret();
+    const isConfigured = Boolean(bachsSecret && bachsSecret.length > 8 && !bachsSecret.includes("PASTE_YOUR"));
+    const mode = bachsSecret.startsWith("sk_sandbox_") || bachsSecret.startsWith("sk_test_") ? "sandbox" : "live";
     return res.json({
-      publicKey: paystackKey,
-      flutterwavePublicKey: flutterwaveKey,
+      gateway: "bachs",
+      configured: isConfigured,
+      webhookConfigured: Boolean(bachsWebhookSecret && bachsWebhookSecret.length > 5 && !bachsWebhookSecret.includes("PASTE_YOUR")),
+      mode,
+      baseUrl: resolveBachsBaseUrl(bachsSecret),
     });
   });
 
@@ -2819,7 +2781,6 @@ if (Object.keys(updateData).length <= 1) {
         // Legacy / compat
         peyflex_variation_id: peyflex_variation_id || planId,
 
-        provider:             req.body.provider || (String(id || '').includes('nifex') ? 'nifex' : 'mozosubz'),
         is_active:            true,
         updated_at:           new Date().toISOString(),
       };
@@ -3224,111 +3185,7 @@ if (Object.keys(updateData).length <= 1) {
   });
 
 
-  // Monnify credentials helpers completely removed
-
-  // 1.5 Secure Paystack Payment Webhook Endpoint
-  app.post("/api/v1/payment-webhook", async (req, res) => {
-    try {
-      // SECURITY: fail closed if no real secret is configured -- never fall back to a
-      // hardcoded test key, or anyone could forge a valid signature and mint free wallet funds.
-      const secretKey = process.env.PAYSTACK_LIVE_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
-      if (!secretKey || secretKey.includes("PASTE_YOUR")) {
-        console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY is not configured. Rejecting webhook.");
-        return res.status(503).send("Payment provider not configured.");
-      }
-
-      const signature = req.headers["x-paystack-signature"];
-      if (!signature) {
-        console.warn("[Paystack Webhook] Missing x-paystack-signature header.");
-        return res.status(401).send("Unauthorized: Signature header missing.");
-      }
-
-      let rawBody = "";
-      if ((req as any).rawBody && Buffer.isBuffer((req as any).rawBody)) {
-        rawBody = (req as any).rawBody.toString("utf-8");
-      } else if (typeof req.body === 'string') {
-        rawBody = req.body;
-      } else {
-        try {
-          rawBody = safeJsonStringify(req.body);
-        } catch (err) {
-          console.warn("[Paystack Webhook] Circular reference detected in stringification fallback:", err);
-          rawBody = "";
-        }
-      }
-
-      // Verify Paystack HMAC-SHA512 Signature -- NO bypass string of any kind. A mismatch is
-      // always rejected; this is the only thing standing between the internet and free money.
-      const computedHash = crypto
-        .createHmac("sha512", secretKey)
-        .update(rawBody)
-        .digest("hex");
-
-      if (signature !== computedHash) {
-        console.warn("[Paystack Webhook] Calculated signature mismatch.");
-        return res.status(401).send("Unauthorized: Invalid signature hash verification.");
-      }
-
-      const { event, data } = req.body;
-      if (event !== "charge.success") {
-        console.log(`[Paystack Webhook] Ignoring other event types: ${event}`);
-        return res.json({ status: "ignored", message: "Only charge.success is supported." });
-      }
-
-      const reference = data?.reference;
-      // Amount in Kobo from Paystack (convert to Naira by dividing by 100)
-      const amountInKobo = Number(data?.amount);
-      const amountInNaira = amountInKobo / 100;
-      const customerEmail = data?.customer?.email?.toLowerCase();
-
-      if (!reference || isNaN(amountInNaira) || amountInNaira <= 0 || !customerEmail) {
-        return res.status(400).send("Bad Request: Incomplete webhook payload parameters.");
-      }
-
-      // SECURITY: Defense-in-depth. Even though the signature above proves this request came
-      // from Paystack, independently re-verify the transaction directly against Paystack's own
-      // API using the reference, confirming status + amount server-side before crediting anyone.
-      try {
-
-const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-          headers: { Authorization: `Bearer ${secretKey}` },
-          timeout: 10000
-        });
-        const verifyData = verifyResp.data?.data;
-        const verifiedAmountNaira = Number(verifyData?.amount) / 100;
-        if (!verifyData || verifyData.status !== "success" || Math.abs(verifiedAmountNaira - amountInNaira) > 0.01) {
-          console.error("[Paystack Webhook] Server-side verification mismatch for reference", reference);
-          return res.status(400).send("Bad Request: Transaction could not be independently verified with Paystack.");
-        }
-      } catch (verifyErr: any) {
-        console.error("[Paystack Webhook] Failed to independently verify transaction with Paystack:", verifyErr.message);
-        return res.status(502).send("Could not verify transaction with payment provider.");
-      }
-
-      // Supabase: use process_payment_webhook RPC for atomic credit + idempotency
-      const transactionResult = await supabase.rpc('process_payment_webhook', {
-        p_reference: reference, p_email: customerEmail, p_amount: amountInNaira,
-        p_gateway: 'paystack', p_description: `Wallet Top-Up via Paystack (₦${amountInNaira.toLocaleString()})`
-      });
-      const trd = transactionResult?.data;
-      if (trd?.status === 'already_processed') {
-        return res.json({ status: "skipped", message: "Transaction already processed." });
-      }
-      if (trd?.status === 'error') {
-        console.error("[Paystack Webhook] RPC error:", trd?.message);
-        return res.status(400).send("Could not credit user: " + trd?.message);
-      }
-
-      console.log(`[Paystack Webhook] Successfully processed Paystack top-up of ₦${amountInNaira}.`);
-      return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
-
-    } catch (err: any) {
-      console.error("[Paystack Webhook error]:", err);
-      return res.status(500).send(`Server Error: ${err.message}`);
-    }
-  });
-
-  // Outdated Monnify Webhook and Admin endpoints completely deleted
+  // Bachs.io payment gateway handles all live checkouts, virtual accounts, and webhooks.
 
   // Real VTU Purchase Route with Database Sync & Agent-Scale Cashback (Bigisub Migration)
   app.post("/api/vtu/purchase", purchaseRateLimit, async (req, res) => {
@@ -4448,10 +4305,10 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
   // SECURITY: this endpoint let ANYONE instantly credit ANY wallet with fake, unbacked-by-any-
   // real-payment funds (no gateway call, no signature, no session check -- just "amount >= 1000"
   // and a straight balance increment). Disabled permanently. Real top-ups must go through the
-  // Paystack/Flutterwave webhooks or verify-flutterwave, which independently confirm real money moved.
+  // Bachs.io webhooks or /api/payments/bachs/verify, which independently confirm real money moved.
   app.post("/api/agent/bulk-fund", async (req, res) => {
     return res.status(501).json({
-      error: "Bulk capital deposit is disabled. Please fund your wallet through a real payment channel (Paystack/Flutterwave)."
+      error: "Bulk capital deposit is disabled. Please fund your wallet through Bachs.io Checkout or Bank Transfer."
     });
   });
 
@@ -4518,451 +4375,698 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // Secure Flutterwave Live Transaction Verification Endpoint
-  app.post("/api/payments/verify-flutterwave", async (req, res) => {
-    const { transactionId, reference, amount, email } = req.body;
-    if (!transactionId || !reference || !amount || !email) {
-      return res.status(400).json({ error: "Missing required payload parameters: transactionId, reference, amount, email" });
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 💳 BACHS.IO PAYMENT GATEWAY INTEGRATION (https://docs.bachs.io)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Implements:
+  //   1. POST /v1/checkout-sessions (Pure product-less NGN checkout with decimal string amount)
+  //   2. GET  /v1/checkout-sessions/{checkout_id} & GET /v1/payments/charges/{charge_id}
+  //   3. GET & POST /v1/virtual-accounts (NGN permanent virtual account numbers)
+  //   4. Webhook verification via X-Bachs-Signature-V2 (`t=...,v1=...`) and X-Bachs-Signature
+  //      on `collection.succeeded` and `checkout.completed` events.
+
+  const creditUserWalletAtomically = async (opts: {
+    reference: string;
+    email?: string;
+    userId?: string;
+    amount: number;
+    description?: string;
+    metadata?: Record<string, any>;
+  }): Promise<{ status: "success" | "already_processed" | "error"; message?: string; userId?: string }> => {
+    const cleanRef = String(opts.reference || "").trim();
+    const cleanEmail = String(opts.email || "").toLowerCase().trim();
+    const numericAmount = Number(opts.amount || 0);
+    const desc = opts.description || `Wallet Top-Up via Bachs.io (₦${numericAmount.toLocaleString()})`;
+
+    if (!cleanRef || isNaN(numericAmount) || numericAmount <= 0) {
+      return { status: "error", message: "Invalid payment reference or amount." };
     }
 
-    console.log(`[Flutterwave verification requested] reference: ${reference}, tx_id: ${transactionId}, amount: ${amount}, email: ${email}`);
-
+    // 1. Check processed_payments idempotency table first
     try {
-      // 1. Idempotency check via processed_payments table
-      const { data: alreadyDone } = await supabase
-        .from('processed_payments')
-        .select('reference')
-        .eq('reference', reference)
+      const { data: existing } = await supabase
+        .from("processed_payments")
+        .select("reference")
+        .eq("reference", cleanRef)
         .maybeSingle();
-      if (alreadyDone) {
-        return res.status(200).json({ status: "skipped", message: "Transaction already processed successfully." });
+      if (existing) {
+        return { status: "already_processed", message: "Transaction already processed." };
       }
+    } catch (_) {}
 
-      // 2. Query Flutterwave API server-side
-      // SECURITY: this must ALWAYS be a real, verified check. There is no "simulated"/unconfigured
-      // fallback path anymore -- an unconfigured key or a fake transactionId now hard-fails instead
-      // of silently trusting the client-supplied amount/status.
-      const fwSecretKey = (process.env.FLUTTERWAVE_SECRET_KEY || "").trim();
-      let isVerified = false;
-      let verifiedAmount = Number(amount);
-      const customerEmail = email.toLowerCase().trim();
-      let verifiedApiEmail = "";
-
-      const hasRealSecret = fwSecretKey && !fwSecretKey.includes("PASTE_YOUR") && fwSecretKey !== "";
-
-      if (!hasRealSecret) {
-        console.error("[Flutterwave Verify] FLUTTERWAVE_SECRET_KEY is not configured. Rejecting verification request.");
-        return res.status(503).json({ error: "Payment provider not configured." });
-      }
-
-      if (!transactionId || transactionId === "simulated" || typeof transactionId !== "string") {
-        return res.status(400).json({ error: "Invalid or missing transaction ID." });
-      }
-
-      try {
-        const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${fwSecretKey}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const resultData = await response.json() as any;
-          if (
-            resultData?.status === 'success' &&
-            resultData?.data?.status === 'successful' &&
-            resultData?.data?.tx_ref === reference &&
-            Math.abs(Number(resultData.data.amount) - Number(amount)) < 0.01
-          ) {
-            isVerified = true;
-            verifiedAmount = Number(resultData.data.amount || amount);
-            verifiedApiEmail = resultData.data.customer?.email?.toLowerCase() || "";
-          } else {
-            console.warn("[Flutterwave validation declined]:", resultData);
-          }
-        } else {
-          console.warn("[Flutterwave fetch status error]:", response.status);
-        }
-      } catch (apiErr: any) {
-        console.error("[Flutterwave fetch communication fail]:", apiErr.message);
-      }
-
-      if (!isVerified || !verifiedApiEmail) {
-        return res.status(400).json({ error: "Flutterwave returned unverified transaction status. Access revoked." });
-      }
-
-      // 3. SECURITY: resolve the recipient ONLY by the customer email that Flutterwave itself
-      // verified for this transaction -- never a client-supplied userId, since that would let
-      // anyone redirect someone else's real payment into an attacker's wallet.
-      // Resolve user by verified email only (never client-supplied userId)
-      const { data: userDoc } = await supabase
-        .from('profiles').select('*')
-        .ilike('email', verifiedApiEmail)
-        .maybeSingle();
-
-      if (!userDoc) {
-        return res.status(404).json({ error: `User with email ${customerEmail} not found in database.` });
-      }
-
-      const userId = userDoc.id; // user's Supabase profile id
-
-      // 4. Credit user wallet atomically (idempotent via process_payment_webhook RPC). This RPC
-      // already handles ALL balance-column crediting correctly, respecting the balance guard --
-      // it is the single source of truth for the credit. No further per-table raw-UPDATE loop
-      // is needed or performed below (that loop was the source of balance-column drift and has
-      // been removed entirely).
-      const transactionResult = await supabase.rpc('process_payment_webhook', {
-        p_reference: reference, p_email: verifiedApiEmail, p_amount: verifiedAmount,
-        p_gateway: 'flutterwave', p_description: `Wallet Top-Up via Flutterwave (₦${verifiedAmount.toLocaleString()})`
-      });
-      const trd = transactionResult?.data;
-      if (trd?.status === 'already_processed') {
-        return res.status(200).json({ status: "skipped", message: "Transaction already processed." });
-      }
-      if (trd?.status === 'error') {
-        return res.status(400).send("Could not credit user: " + trd?.message);
-      }
-
-      console.log(`[Flutterwave verification complete] Successfully credited User ${userId} with ₦${verifiedAmount}.`);
-      return res.status(200).json({ status: "success", message: "Wallet successfully credited" });
-
-    } catch (err: any) {
-      console.error("[Flutterwave Verification Handler Exception]:", err);
-      return res.status(500).json({ error: "Server Error", message: err.message });
-    }
-  });
-
-  // Secure Flutterwave Webhook Endpoint
-  //
-  // SERVERLESS SAFETY & UPTIME MONITORING:
-  // 1. Responds to GET/HEAD/OPTIONS pings with 200 OK so Flutterwave uptime checkers
-  //    never mark the webhook as "downtime".
-  // 2. Recognizes dashboard test webhooks (mock IDs, test emails) and returns 200 immediately.
-  // Secure Flutterwave Webhook Endpoints (all common path variations supported)
-  const flutterwaveWebhookRoutes = [
-    "/api/webhook/flutterwave",
-    "/api/webhooks/flutterwave",
-    "/api/flutterwave/webhook",
-    "/api/flutterwave/webhooks",
-    "/api/payments/flutterwave-webhook",
-    "/api/payments/webhook",
-    "/api/v1/webhook/flutterwave",
-    "/api/v1/webhooks/flutterwave",
-    "/api/webhook",
-    "/api/webhooks",
-    "/api/flutterwave",
-    "/webhook/flutterwave",
-    "/webhooks/flutterwave",
-    "/flutterwave/webhook",
-    "/flutterwave/webhooks",
-    "/webhook",
-    "/webhooks",
-    "/flutterwave"
-  ];
-
-  // Health check / uptime ping route for Flutterwave automated checkers and dashboard verification
-  app.get(flutterwaveWebhookRoutes, (_req, res) => {
-    const hasSecret = Boolean(
-      process.env.FLW_SECRET_HASH ||
-      process.env.FLUTTERWAVE_SECRET_HASH ||
-      process.env.FLUTTERWAVE_WEBHOOK_SECRET ||
-      process.env.FLW_WEBHOOK_SECRET ||
-      process.env.FLUTTERWAVE_SECRET_KEY
-    );
-    return res.status(200).json({
-      status: "active",
-      gateway: "flutterwave",
-      webhookConfigured: hasSecret,
-      message: "Flutterwave webhook endpoint is active, reachable, and ready to accept POST notifications.",
-      timestamp: new Date().toISOString()
-    });
-  });
-  app.head(flutterwaveWebhookRoutes, (_req, res) => res.status(200).end());
-  app.options(flutterwaveWebhookRoutes, (_req, res) => res.status(200).end());
-
-  const handleFlutterwaveWebhook = async (req: any, res: any) => {
-    const respond = (code: number, body: any) => {
-      if (res.writableEnded || res.headersSent) return;
-      try {
-        if (typeof body === "object") {
-          res.status(code).json(body);
-        } else {
-          res.status(code).send(body);
-        }
-      } catch { /* socket already closed */ }
-    };
-
-    try {
-      console.log("[Flutterwave Webhook] Processing notification received");
-
-      const payload = req.body || {};
-      const event = payload.event;
-      const status = payload.data?.status || payload.status;
-      const txId = payload.data?.id || payload.id;
-      const customerEmail = (payload.data?.customer?.email || payload.customer?.email || "").toLowerCase().trim();
-      const txRef = String(payload.data?.tx_ref || payload.tx_ref || (txId ? String(txId) : "")).trim();
-      const amount = Number(payload.data?.amount || payload.amount || 0);
-
-      // 1. HEALTH PING / DASHBOARD TEST WEBHOOK / EMPTY PROBE DETECTION
-      // Respond 200 immediately so Flutterwave uptime monitors and dashboard tests never detect downtime.
-      const isTestPing =
-        !event ||
-        Object.keys(payload).length === 0 ||
-        String(txId) === "123456" ||
-        customerEmail === "user@example.com" ||
-        customerEmail === "developers@flutterwavego.com" ||
-        customerEmail.endsWith("@example.com") ||
-        customerEmail.endsWith("@flutterwavego.com") ||
-        txRef.toLowerCase().includes("test");
-
-      if (isTestPing) {
-        console.log(`[Flutterwave Webhook] Test webhook ping verified and acknowledged: ID=${txId}, Email=${customerEmail}`);
-        return respond(200, {
-          status: "success",
-          gateway: "flutterwave",
-          message: "Flutterwave webhook test ping acknowledged successfully"
-        });
-      }
-
-      // 2. SIGNATURE VALIDATION
-      const rawSignature = (req.headers["verif-hash"] || req.headers["flutterwave-signature"] || "").toString().trim();
-      const secretHash = (
-        process.env.FLW_SECRET_HASH ||
-        process.env.FLUTTERWAVE_SECRET_HASH ||
-        process.env.FLUTTERWAVE_WEBHOOK_SECRET ||
-        process.env.FLW_WEBHOOK_SECRET ||
-        ""
-      ).trim().replace(/['"]/g, "");
-      const flwSecretKey = (
-        process.env.FLUTTERWAVE_SECRET_KEY ||
-        process.env.FLW_SECRET_KEY ||
-        ""
-      ).trim().replace(/['"]/g, "");
-
-      if (!secretHash && !flwSecretKey) {
-        console.warn("[Flutterwave Webhook] Warning: FLW_SECRET_HASH not configured on server. Acknowledging ping without crediting.");
-        return respond(200, { status: "ignored", reason: "webhook secret not configured" });
-      }
-
-      let isAuthorized = false;
-
-      // Verif-hash header direct match
-      if (rawSignature && secretHash && rawSignature === secretHash) {
-        isAuthorized = true;
-      }
-      if (!isAuthorized && rawSignature && flwSecretKey && rawSignature === flwSecretKey) {
-        isAuthorized = true;
-      }
-
-      // HMAC-SHA256 signature verification
-      if (!isAuthorized && rawSignature) {
-        try {
-          const rawBody = Buffer.isBuffer(req.rawBody)
-            ? req.rawBody
-            : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body), "utf8");
-
-          if (secretHash) {
-            const expected = crypto.createHmac("sha256", secretHash).update(rawBody).digest("base64");
-            if (rawSignature === expected) isAuthorized = true;
-          }
-          if (!isAuthorized && flwSecretKey) {
-            const expectedKey = crypto.createHmac("sha256", flwSecretKey).update(rawBody).digest("base64");
-            if (rawSignature === expectedKey) isAuthorized = true;
-          }
-        } catch (cryptoErr) {
-          console.error("[Flutterwave Webhook HMAC validation error]:", cryptoErr);
-        }
-      }
-
-      if (!isAuthorized) {
-        console.warn("[Flutterwave Webhook] Unauthorized signature for webhook notification. Received header:", rawSignature);
-        // Respond 200 with ignored status so Flutterwave does not repeatedly retry and flag downtime
-        return respond(200, { status: "ignored", reason: "Invalid webhook signature" });
-      }
-
-      // 3. TRANSACTION EVENT VALIDATION
-      const isChargeCompleted = event === "charge.completed";
-      const isSuccessful = status === "successful" || status === "succeeded" || status === "success";
-
-      if (!isChargeCompleted || !isSuccessful) {
-        console.log(`[Flutterwave Webhook] Event ignored: event="${event}", status="${status}"`);
-        return respond(200, { status: "ignored", message: `Event ${event} status ${status} ignored` });
-      }
-
-      if (!txId || !customerEmail || isNaN(amount) || amount <= 0) {
-        console.warn(`[Flutterwave Webhook] Invalid payload parameters: ID=${txId}, Email=${customerEmail}, Amount=${amount}`);
-        return respond(200, { status: "ignored", reason: "Invalid webhook payload parameters" });
-      }
-
-      // 4. INDEPENDENT TRANSACTION VERIFICATION WITH FLUTTERWAVE API
-      if (flwSecretKey && txId) {
-        try {
-          const verifyResp = await fetch(`https://api.flutterwave.com/v3/transactions/${txId}/verify`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${flwSecretKey}`,
-              "Content-Type": "application/json"
-            }
-          });
-          if (verifyResp.ok) {
-            const verifyData = (await verifyResp.json()) as any;
-            if (verifyData?.status !== "success" || !["successful", "succeeded"].includes(verifyData?.data?.status)) {
-              console.error("[Flutterwave Webhook] Independent verification unconfirmed for tx", txId);
-              return respond(200, { status: "ignored", reason: "Independent verification unconfirmed" });
-            }
-          } else {
-            console.warn("[Flutterwave Webhook] Independent verification returned status:", verifyResp.status);
-          }
-        } catch (verifyErr: any) {
-          console.warn("[Flutterwave Webhook] Independent verification call warning:", verifyErr.message);
-        }
-      }
-
-      const effectiveRef = txRef || `FLW_${txId}`;
-      console.log(`[Flutterwave Webhook] Processing confirmed deposit of ₦${amount} for ${customerEmail} (Ref: ${effectiveRef})`);
-
-      // 5. ATOMIC WALLET UPDATE (WITH MULTI-TIER FALLBACK)
-      let credited = false;
-
-      // Tier 1: Try process_payment_webhook (production RPC)
+    // 2. Tier 1: process_payment_webhook RPC (by email)
+    if (cleanEmail) {
       try {
         const { data: pwResult, error: pwErr } = await supabase.rpc("process_payment_webhook", {
-          p_reference: effectiveRef,
-          p_email: customerEmail,
-          p_amount: amount,
-          p_gateway: "flutterwave",
-          p_description: `Wallet Top-Up via Flutterwave (₦${amount.toLocaleString()})`
+          p_reference: cleanRef,
+          p_email: cleanEmail,
+          p_amount: numericAmount,
+          p_gateway: "bachs",
+          p_description: desc,
         });
-
         if (!pwErr && pwResult) {
           if (pwResult.status === "already_processed") {
-            console.log(`[Flutterwave Webhook] Reference ${effectiveRef} already processed. Skipping duplicate.`);
-            return respond(200, { status: "skipped", message: "Transaction already processed" });
+            return { status: "already_processed", message: "Transaction already processed." };
           }
           if (pwResult.status === "success") {
-            credited = true;
-            console.log(`[Flutterwave Webhook] Successfully credited ${customerEmail} with ₦${amount} via process_payment_webhook RPC.`);
+            return { status: "success", userId: pwResult.profile_id };
           }
         }
-      } catch (tier1Err: any) {
-        console.warn("[Flutterwave Webhook] Tier 1 process_payment_webhook warning:", tier1Err.message || tier1Err);
+      } catch (e: any) {
+        console.warn("[Bachs Credit Tier 1 warning]:", e?.message || e);
       }
+    }
 
-      // Look up profile for Tier 2 and Tier 3
-      const { data: profile, error: selectErr } = await supabase
+    // 3. Resolve profile by email or userId
+    let profile: any = null;
+    if (cleanEmail) {
+      const { data: pByEmail } = await supabase
         .from("profiles")
         .select("*")
-        .ilike("email", customerEmail)
+        .ilike("email", cleanEmail)
         .maybeSingle();
+      if (pByEmail) profile = pByEmail;
+    }
+    if (!profile && opts.userId) {
+      const pgUuid = ensureUUID(opts.userId);
+      const { data: pById } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", pgUuid)
+        .maybeSingle();
+      if (pById) profile = pById;
+    }
 
-      if (selectErr || !profile) {
-        if (!credited) {
-          console.warn(`[Flutterwave Webhook] User profile not found for email ${customerEmail}`);
-          // Return 200 ignored so Flutterwave does not treat missing user as endpoint downtime
-          return respond(200, { status: "ignored", reason: `User with email ${customerEmail} not found` });
+    if (!profile) {
+      return { status: "error", message: `User profile not found for ${cleanEmail || opts.userId || "payment"}.` };
+    }
+
+    // 4. Tier 2: process_webhook_credit_by_user RPC
+    try {
+      const { data: creditResult, error: rpcErr } = await supabase.rpc("process_webhook_credit_by_user", {
+        p_reference: cleanRef,
+        p_user_uuid: profile.id,
+        p_amount: numericAmount,
+        p_gateway: "bachs",
+      });
+      if (!rpcErr && creditResult) {
+        if (creditResult.status === "already_processed") {
+          return { status: "already_processed", message: "Transaction already processed.", userId: profile.id };
+        }
+        if (creditResult.status === "success") {
+          return { status: "success", userId: profile.id };
         }
       }
+    } catch (e: any) {
+      console.warn("[Bachs Credit Tier 2 warning]:", e?.message || e);
+    }
 
-      // Tier 2: Try process_webhook_credit_by_user RPC if Tier 1 was not available
-      if (!credited && profile) {
-        try {
-          const { data: creditResult, error: rpcErr } = await supabase.rpc("process_webhook_credit_by_user", {
-            p_reference: effectiveRef,
-            p_user_uuid: profile.id,
-            p_amount: amount,
-            p_gateway: "flutterwave"
+    // 5. Tier 3: Direct atomic fallback
+    const { data: existingTx } = await supabase
+      .from("transactions")
+      .select("id")
+      .eq("reference", cleanRef)
+      .maybeSingle();
+    if (existingTx) {
+      return { status: "already_processed", message: "Transaction already processed.", userId: profile.id };
+    }
+
+    await supabase.from("processed_payments").insert({
+      reference: cleanRef,
+      email: cleanEmail || profile.email || null,
+      amount: numericAmount,
+      gateway: "bachs",
+    });
+
+    const currentBalance = Number(profile.wallet_balance ?? profile.balance ?? 0);
+    const newBalance = currentBalance + numericAmount;
+
+    await supabase
+      .from("profiles")
+      .update({
+        wallet_balance: newBalance,
+        balance: newBalance,
+        available_balance: newBalance,
+        last_funding_at: new Date().toISOString(),
+      })
+      .eq("id", profile.id);
+
+    await supabase.from("transactions").insert({
+      user_id: profile.id,
+      user_email: cleanEmail || profile.email || "",
+      amount: numericAmount,
+      type: "funding",
+      status: "completed",
+      reference: cleanRef,
+      platform: "bachs",
+      payment_method: "bachs",
+      gateway: "bachs",
+      description: desc,
+      metadata: opts.metadata || {},
+      created_at: new Date().toISOString(),
+    });
+
+    return { status: "success", userId: profile.id };
+  };
+
+  // 1. Create a Bachs.io Checkout Session (POST /v1/checkout-sessions)
+  app.post(["/api/payments/bachs/checkout", "/api/v1/payments/bachs/checkout"], async (req, res) => {
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({
+          error: "Bachs.io secret key is not configured. Please add BACHS_SECRET_KEY in Environment Variables or Admin Settings.",
+        });
+      }
+
+      const { amount, email, name, phone, userId, redirectUrl } = req.body || {};
+      const numericAmount = Number(amount);
+      if (!numericAmount || isNaN(numericAmount) || numericAmount < 100) {
+        return res.status(400).json({ error: "Minimum wallet funding amount on Bachs.io is ₦100.00." });
+      }
+
+      const customerEmail = String(email || "").toLowerCase().trim();
+      if (!customerEmail || !customerEmail.includes("@")) {
+        return res.status(400).json({ error: "A valid customer email address is required." });
+      }
+
+      const reference = `NRY-BACHS-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+
+      const appOrigin =
+        String(redirectUrl || "").trim() ||
+        String(req.headers.origin || "").trim() ||
+        String(process.env.APP_URL || "").trim() ||
+        `${req.protocol}://${req.get("host")}`;
+      const cleanOrigin = appOrigin.replace(/\/+$/, "");
+
+      // Per Bachs.io OpenAPI specification:
+      // Money is always a decimal string at the currency's precision (e.g. "2000.00")
+      const amountDecimalString = numericAmount.toFixed(2);
+
+      const customerPayload: Record<string, any> = { email: customerEmail };
+      if (name && String(name).trim()) customerPayload.name = String(name).trim();
+      if (phone && String(phone).trim()) customerPayload.phone_number = String(phone).trim();
+
+      const checkoutPayload = {
+        customer: customerPayload,
+        pricing: {
+          currency: "NGN",
+          amount: amountDecimalString,
+          price_type: "fixed",
+        },
+        billing_currency: "NGN",
+        reference,
+        success_url: `${cleanOrigin}/?bachs_verify=1&reference=${encodeURIComponent(reference)}`,
+        cancel_url: `${cleanOrigin}/?bachs_cancelled=1&reference=${encodeURIComponent(reference)}`,
+        metadata: {
+          user_id: String(userId || ""),
+          email: customerEmail,
+          reference,
+          purpose: "wallet_funding",
+        },
+      };
+
+      const resp = await fetch(`${baseUrl}/v1/checkout-sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": reference,
+        },
+        body: JSON.stringify(checkoutPayload),
+      });
+
+      const respData: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || !respData?.checkout_url) {
+        const errDetail = respData?.detail || respData?.message || respData?.error || `Bachs API returned HTTP ${resp.status}`;
+        console.error("[Bachs Checkout Error]:", resp.status, respData);
+        return res.status(resp.status >= 400 && resp.status < 600 ? resp.status : 502).json({
+          error: errDetail,
+          error_code: respData?.error_code || null,
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        checkout_id: respData.checkout_id,
+        checkout_url: respData.checkout_url,
+        reference: respData.reference || reference,
+        status: respData.status || "open",
+        expires_at: respData.expires_at,
+      });
+    } catch (err: any) {
+      console.error("[POST /api/payments/bachs/checkout Exception]:", err);
+      return res.status(500).json({ error: err.message || "Failed to initialize Bachs.io checkout session." });
+    }
+  });
+
+  // 2. Verify a Bachs.io Checkout Session or Charge Status
+  app.post(["/api/payments/bachs/verify", "/api/v1/payments/bachs/verify"], async (req, res) => {
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({ error: "Bachs.io secret key is not configured." });
+      }
+
+      const { checkoutId, checkout_id, chargeId, charge_id, paymentId, payment_id, reference } = req.body || {};
+      const targetCheckoutId = String(checkoutId || checkout_id || "").trim();
+      const targetChargeId = String(chargeId || charge_id || paymentId || payment_id || "").trim();
+
+      if (!targetCheckoutId && !targetChargeId) {
+        return res.status(400).json({ error: "Missing checkout_id or charge_id to verify with Bachs.io." });
+      }
+
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      let verifiedAmount = 0;
+      let verifiedCurrency = "NGN";
+      let verifiedEmail = "";
+      let verifiedUserId = "";
+      let verifiedRef = String(reference || "").trim();
+      let isPaid = false;
+
+      if (targetCheckoutId) {
+        const chkResp = await fetch(`${baseUrl}/v1/checkout-sessions/${encodeURIComponent(targetCheckoutId)}`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+        });
+        if (!chkResp.ok) {
+          const errBody: any = await chkResp.json().catch(() => ({}));
+          return res.status(chkResp.status).json({
+            error: errBody?.detail || errBody?.message || `Could not retrieve checkout session ${targetCheckoutId}`,
           });
+        }
+        const chkData: any = await chkResp.json();
+        const status = String(chkData?.status || "").toLowerCase();
+        const paymentStatus = String(chkData?.payment_status || "").toLowerCase();
+        const chargeStatus = String(chkData?.charge?.status || "").toLowerCase();
 
-          if (!rpcErr && creditResult) {
-            if (creditResult.status === "already_processed") {
-              return respond(200, { status: "skipped", message: "Transaction already processed" });
-            }
-            if (creditResult.status === "success") {
-              credited = true;
-              console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ₦${amount} via process_webhook_credit_by_user RPC.`);
-            }
-          }
-        } catch (tier2Err: any) {
-          console.warn("[Flutterwave Webhook] Tier 2 process_webhook_credit_by_user warning:", tier2Err.message || tier2Err);
+        if (
+          status === "completed" &&
+          (paymentStatus === "succeeded" || paymentStatus === "paid" || chargeStatus === "succeeded")
+        ) {
+          isPaid = true;
+          verifiedAmount = Number(chkData?.charge?.amount ?? chkData?.amount ?? 0);
+          verifiedCurrency = String(chkData?.charge?.currency || chkData?.currency || "NGN").toUpperCase();
+          verifiedEmail = String(
+            chkData?.customer?.email ||
+              chkData?.customer_details?.email ||
+              chkData?.metadata?.email ||
+              ""
+          )
+            .toLowerCase()
+            .trim();
+          verifiedUserId = String(chkData?.metadata?.user_id || "").trim();
+          verifiedRef = String(chkData?.reference || chkData?.charge?.payment_id || chkData?.checkout_id).trim();
+        } else {
+          return res.status(200).json({
+            status: status || "open",
+            payment_status: paymentStatus || "pending",
+            verified: false,
+            message: `Checkout status is '${chkData?.status || "open"}' (payment: '${chkData?.payment_status || "pending"}').`,
+          });
+        }
+      } else if (targetChargeId) {
+        const chResp = await fetch(`${baseUrl}/v1/payments/${encodeURIComponent(targetChargeId)}`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+        });
+        if (!chResp.ok) {
+          const errBody: any = await chResp.json().catch(() => ({}));
+          return res.status(chResp.status).json({
+            error: errBody?.detail || errBody?.message || `Could not retrieve payment ${targetChargeId}`,
+          });
+        }
+        const chData: any = await chResp.json();
+        const chStatus = String(chData?.status || "").toLowerCase();
+        if (chStatus === "succeeded" || chStatus === "paid") {
+          isPaid = true;
+          verifiedAmount = Number(chData?.amount_paid ?? chData?.amount ?? 0);
+          verifiedCurrency = String(chData?.currency || "NGN").toUpperCase();
+          verifiedEmail = String(chData?.customer?.email || chData?.meta?.email || "").toLowerCase().trim();
+          verifiedUserId = String(chData?.meta?.user_id || "").trim();
+          verifiedRef = String(chData?.reference || chData?.payment_id || targetChargeId).trim();
+        } else {
+          return res.status(200).json({
+            status: chStatus || "processing",
+            verified: false,
+            message: `Payment status is '${chData?.status || "processing"}'.`,
+          });
         }
       }
 
-      // Tier 3: Direct atomic update fallback
-      if (!credited && profile) {
-        const { data: existingTx } = await supabase
-          .from("transactions")
-          .select("id")
-          .eq("reference", effectiveRef)
-          .maybeSingle();
+      if (!isPaid || verifiedAmount <= 0) {
+        return res.status(400).json({ error: "Payment has not succeeded on Bachs.io yet." });
+      }
 
-        if (existingTx) {
-          console.log(`[Flutterwave Webhook] Transaction ${effectiveRef} already exists. Skipping.`);
-          return respond(200, { status: "skipped", message: "Transaction already processed" });
+      if (verifiedCurrency !== "NGN") {
+        return res.status(400).json({ error: `Unsupported settlement currency ${verifiedCurrency}. Expected NGN.` });
+      }
+
+      const creditOutcome = await creditUserWalletAtomically({
+        reference: verifiedRef,
+        email: verifiedEmail,
+        userId: verifiedUserId,
+        amount: verifiedAmount,
+        description: `Wallet Top-Up via Bachs.io (₦${verifiedAmount.toLocaleString()})`,
+      });
+
+      if (creditOutcome.status === "error") {
+        return res.status(400).json({ error: creditOutcome.message || "Could not credit wallet." });
+      }
+
+      return res.status(200).json({
+        status: creditOutcome.status,
+        verified: true,
+        amount: verifiedAmount,
+        reference: verifiedRef,
+        message:
+          creditOutcome.status === "already_processed"
+            ? "Payment already credited to your wallet."
+            : `Successfully credited ₦${verifiedAmount.toLocaleString()} to your wallet!`,
+      });
+    } catch (err: any) {
+      console.error("[POST /api/payments/bachs/verify Exception]:", err);
+      return res.status(500).json({ error: err.message || "Verification failed." });
+    }
+  });
+
+  // 3. Bachs.io NGN Virtual Account Endpoints (GET & POST /v1/virtual-accounts)
+  app.get("/api/payments/bachs/virtual-account", async (_req, res) => {
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({
+          configured: false,
+          error: "Bachs.io secret key is not configured.",
+        });
+      }
+
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      let resp = await fetch(`${baseUrl}/v1/virtual-accounts?currency=NGN`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+      });
+
+      // If 404 NOT_FOUND, automatically request creation via POST /v1/virtual-accounts
+      if (resp.status === 404) {
+        resp = await fetch(`${baseUrl}/v1/virtual-accounts`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ currency: "NGN" }),
+        });
+      }
+
+      const data: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        return res.status(resp.status).json({
+          configured: true,
+          available: false,
+          error: data?.detail || data?.message || "Virtual account is not active on this Bachs account yet.",
+          error_code: data?.error_code || null,
+        });
+      }
+
+      return res.json({
+        configured: true,
+        available: true,
+        virtualAccount: {
+          id: data.id,
+          currency: data.currency || "NGN",
+          account_number: data.account_number,
+          account_name: data.account_name,
+          bank_name: data.bank_name,
+          bank_code: data.bank_code,
+          status: data.status || "active",
+          created_at: data.created_at,
+        },
+      });
+    } catch (err: any) {
+      console.error("[GET /api/payments/bachs/virtual-account Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/payments/bachs/virtual-account", async (_req, res) => {
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({ error: "Bachs.io secret key is not configured." });
+      }
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      const resp = await fetch(`${baseUrl}/v1/virtual-accounts`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currency: "NGN" }),
+      });
+      const data: any = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        return res.status(resp.status).json({
+          error: data?.detail || data?.message || "Failed to create NGN virtual account on Bachs.io.",
+          error_code: data?.error_code || null,
+        });
+      }
+      return res.json({ success: true, virtualAccount: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. Bachs.io Webhook Signature Verification (V2 & V1 per official docs)
+  const verifyBachsWebhookSignature = (
+    rawBodyBuffer: Buffer,
+    headers: Record<string, any>,
+    secret: string,
+    toleranceSeconds = 300
+  ): boolean => {
+    const cleanSecret = String(secret || "").trim();
+    if (!cleanSecret) return false;
+
+    const rawBodyStr = rawBodyBuffer.toString("utf8");
+    const v2Header = String(headers["x-bachs-signature-v2"] || "").trim();
+    const v1Signature = String(headers["x-bachs-signature"] || "").trim();
+    const v1Timestamp = String(headers["x-bachs-timestamp"] || "").trim();
+
+    // Prefer X-Bachs-Signature-V2 (`t={timestamp},v1={sig1},v1={sig2}`)
+    if (v2Header) {
+      const parts = v2Header.split(",").map((p) => p.trim()).filter(Boolean);
+      let timestampStr = "";
+      const signatures: string[] = [];
+
+      for (const part of parts) {
+        const eqIdx = part.indexOf("=");
+        if (eqIdx === -1) continue;
+        const k = part.slice(0, eqIdx).trim();
+        const v = part.slice(eqIdx + 1).trim();
+        if (k === "t") timestampStr = v;
+        if (k === "v1" && v) signatures.push(v);
+      }
+
+      const ts = parseInt(timestampStr, 10);
+      if (isNaN(ts) || signatures.length === 0) return false;
+      if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
+
+      const expected = crypto
+        .createHmac("sha256", cleanSecret)
+        .update(`${ts}.${rawBodyStr}`, "utf8")
+        .digest("hex");
+      const expectedBuf = Buffer.from(expected, "utf8");
+
+      for (const sig of signatures) {
+        const sigBuf = Buffer.from(sig, "utf8");
+        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Fallback to X-Bachs-Signature + X-Bachs-Timestamp
+    if (v1Signature && v1Timestamp) {
+      const ts = parseInt(v1Timestamp, 10);
+      if (isNaN(ts)) return false;
+      if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
+
+      const expected = crypto
+        .createHmac("sha256", cleanSecret)
+        .update(`${ts}.${rawBodyStr}`, "utf8")
+        .digest("hex");
+      const expectedBuf = Buffer.from(expected, "utf8");
+      const sigBuf = Buffer.from(v1Signature, "utf8");
+      return sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf);
+    }
+
+    return false;
+  };
+
+  const bachsWebhookRoutes = [
+    "/api/webhooks/bachs",
+    "/api/webhook/bachs",
+    "/api/bachs/webhook",
+    "/api/bachs/webhooks",
+    "/api/payments/bachs-webhook",
+    "/api/payments/webhook",
+    "/api/v1/payment-webhook",
+    "/api/webhook",
+    "/api/webhooks",
+    "/webhook/bachs",
+    "/webhooks/bachs",
+    "/bachs/webhook",
+    "/webhook",
+    "/webhooks",
+  ];
+
+  app.get(bachsWebhookRoutes, async (_req, res) => {
+    const webhookSecret = await resolveBachsWebhookSecret();
+    const secretKey = await resolveBachsSecretKey();
+    return res.status(200).json({
+      status: "active",
+      gateway: "bachs",
+      webhookConfigured: Boolean(webhookSecret),
+      apiKeyConfigured: Boolean(secretKey),
+      message: "Bachs.io webhook endpoint is active and ready to receive signed POST events.",
+      timestamp: new Date().toISOString(),
+    });
+  });
+  app.head(bachsWebhookRoutes, (_req, res) => res.status(200).end());
+  app.options(bachsWebhookRoutes, (_req, res) => res.status(200).end());
+
+  const handleBachsWebhook = async (req: any, res: any) => {
+    try {
+      const webhookSecret = await resolveBachsWebhookSecret();
+      const bachsSecretKey = await resolveBachsSecretKey();
+
+      if (!webhookSecret) {
+        console.error("[Bachs Webhook] BACHS_WEBHOOK_SECRET is not configured. Rejecting delivery.");
+        return res.status(503).json({ error: "Bachs webhook signing secret not configured." });
+      }
+
+      const rawBody: Buffer = Buffer.isBuffer(req.rawBody)
+        ? req.rawBody
+        : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
+
+      const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, webhookSecret);
+      if (!isValidSig) {
+        console.warn("[Bachs Webhook] Invalid X-Bachs-Signature / X-Bachs-Signature-V2.");
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+
+      const eventPayload = req.body || {};
+      const eventId = String(eventPayload.id || "").trim();
+      const eventType = String(eventPayload.type || "").toLowerCase().trim();
+      const data = eventPayload.data || {};
+
+      console.log(`[Bachs Webhook] Verified event received: id=${eventId}, type=${eventType}`);
+
+      // Handle `collection.succeeded` and `checkout.completed`
+      if (eventType === "collection.succeeded" || eventType === "checkout.completed") {
+        // For checkout.completed, confirm a payment was actually collected
+        if (eventType === "checkout.completed") {
+          const payStatus = String(data.payment_status || "").toLowerCase();
+          const chargeStatus = String(data.charge?.status || "").toLowerCase();
+          if (payStatus !== "paid" && payStatus !== "succeeded" && chargeStatus !== "succeeded") {
+            return res.status(200).json({ received: true, status: "ignored_no_payment" });
+          }
         }
 
-        const currentBalance = Number(profile.wallet_balance || profile.balance || 0);
-        const newBalance = currentBalance + amount;
+        const chargeId = String(data.charge_id || data.charge?.id || "").trim();
+        const checkoutId = String(data.checkout_id || "").trim();
+        const reference = String(data.reference || chargeId || checkoutId || eventId).trim();
+        const currency = String(data.currency || data.charge?.currency || "NGN").toUpperCase();
+        let amount = Number(data.amount ?? data.charge?.amount ?? 0);
 
-        await supabase
-          .from("profiles")
-          .update({ wallet_balance: newBalance })
-          .eq("id", profile.id);
+        let customerEmail = String(
+          data.customer?.email ||
+            data.customer_details?.email ||
+            data.metadata?.email ||
+            ""
+        )
+          .toLowerCase()
+          .trim();
+        let userId = String(data.metadata?.user_id || "").trim();
 
-        await supabase.from("transactions").insert({
-          user_id: profile.id,
-          user_email: customerEmail,
-          amount: amount,
-          type: "funding",
-          status: "completed",
-          reference: effectiveRef,
-          platform: "flutterwave",
-          payment_method: "flutterwave",
-          gateway: "flutterwave",
-          description: `Wallet Top-Up via Flutterwave (₦${amount.toLocaleString()})`,
-          created_at: new Date().toISOString()
+        // If this is a permanent Virtual Account deposit, also check narration for email/reference
+        const bankTransfer = data.payment_method_details?.bank_transfer;
+        if (!customerEmail && bankTransfer?.narration) {
+          const emailMatch = String(bankTransfer.narration).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch) customerEmail = emailMatch[0].toLowerCase();
+        }
+
+        // Defense-in-depth: independently verify with Bachs API when secret key & chargeId/checkoutId exist
+        if (bachsSecretKey && (chargeId || checkoutId)) {
+          try {
+            const baseUrl = resolveBachsBaseUrl(bachsSecretKey);
+            const verifyUrl = chargeId
+              ? `${baseUrl}/v1/payments/charges/${encodeURIComponent(chargeId)}`
+              : `${baseUrl}/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`;
+            const vResp = await fetch(verifyUrl, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${bachsSecretKey}`, "Content-Type": "application/json" },
+            });
+            if (vResp.ok) {
+              const vData: any = await vResp.json();
+              const vStatus = String(vData?.status || vData?.payment_status || "").toLowerCase();
+              if (vStatus === "succeeded" || vStatus === "completed" || vStatus === "paid") {
+                if (vData?.amount) amount = Number(vData.amount);
+                if (!customerEmail && vData?.customer?.email) customerEmail = String(vData.customer.email).toLowerCase().trim();
+                if (!customerEmail && vData?.customer_details?.email) customerEmail = String(vData.customer_details.email).toLowerCase().trim();
+                if (!userId && vData?.metadata?.user_id) userId = String(vData.metadata.user_id).trim();
+              }
+            }
+          } catch (vErr: any) {
+            console.warn("[Bachs Webhook] Independent verification warning:", vErr.message);
+          }
+        }
+
+        if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
+          return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
+        }
+
+        const creditRes = await creditUserWalletAtomically({
+          reference,
+          email: customerEmail,
+          userId,
+          amount,
+          description: bankTransfer
+            ? `Wallet Deposit via Bachs Bank Transfer (${bankTransfer.sender_name || "Bank Transfer"})`
+            : `Wallet Top-Up via Bachs.io (₦${amount.toLocaleString()})`,
+          metadata: {
+            event_id: eventId,
+            event_type: eventType,
+            charge_id: chargeId || null,
+            checkout_id: checkoutId || null,
+          },
         });
 
-        await supabase.from("processed_payments").insert({
-          reference: effectiveRef,
-          email: customerEmail,
-          amount: amount,
-          gateway: "flutterwave"
-        }).maybeSingle();
+        if (creditRes.status === "error") {
+          console.warn(`[Bachs Webhook] Unmatched or uncredited deposit (ref=${reference}, email=${customerEmail}):`, creditRes.message);
+          return res.status(200).json({ received: true, status: "unmatched", reason: creditRes.message });
+        }
 
-        console.log(`[Flutterwave Webhook] Successfully credited User ${profile.id} with ₦${amount} via fallback direct credit.`);
+        return res.status(200).json({ received: true, status: creditRes.status, reference });
       }
 
-      return respond(200, { status: "success", message: "Wallet successfully credited" });
+      return res.status(200).json({ received: true, status: "ignored", type: eventType });
     } catch (err: any) {
-      console.error("[Flutterwave Webhook Exception]:", err.message || err);
-      return respond(200, { status: "error", error: "Internal processing error", message: err.message });
+      console.error("[Bachs Webhook Exception]:", err.message || err);
+      // Return 500 on unexpected DB/runtime failure so Bachs retries delivery per official docs
+      return res.status(500).json({ error: "Internal webhook processing error" });
     }
   };
 
-  app.post(flutterwaveWebhookRoutes, handleFlutterwaveWebhook);
+  app.post(bachsWebhookRoutes, handleBachsWebhook);
 
-  // Lightweight self-check so the owner can confirm from any browser that the
-  // live deployment is configured to receive Flutterwave webhooks. Reports
-  // presence only -- never the secret values themselves.
-  app.get(["/api/payments/flutterwave-webhook-health", "/api/webhook/flutterwave/health"], (_req, res) => {
-    const secretHash = (
-      process.env.FLW_SECRET_HASH ||
-      process.env.FLUTTERWAVE_SECRET_HASH ||
-      process.env.FLUTTERWAVE_WEBHOOK_SECRET ||
-      process.env.FLW_WEBHOOK_SECRET ||
-      ""
-    ).trim();
-    const secretKey = (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY || "").trim();
-    const looksReal = (v: string) => Boolean(v) && !v.includes("PASTE_YOUR") && !v.includes("xxxxxx");
+  app.get(["/api/payments/bachs-webhook-health", "/api/webhook/bachs/health"], async (_req, res) => {
+    const webhookSecret = await resolveBachsWebhookSecret();
+    const secretKey = await resolveBachsSecretKey();
     res.json({
       status: "ok",
-      flutterwaveWebhookSecretConfigured: looksReal(secretHash),
-      flutterwaveSecretKeyConfigured: looksReal(secretKey),
+      gateway: "bachs",
+      bachsWebhookSecretConfigured: Boolean(webhookSecret),
+      bachsSecretKeyConfigured: Boolean(secretKey),
       supabaseServiceRoleConfigured: serverHasServiceRoleKey,
-      recommendedWebhookUrl: "/api/webhook/flutterwave",
+      recommendedWebhookUrl: "/api/webhooks/bachs",
+      subscribedEvents: ["collection.succeeded", "collection.failed", "checkout.completed", "checkout.expired", "refund.paid"],
       timestamp: new Date().toISOString(),
     });
   });
@@ -5041,15 +5145,16 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // Support administrative revenue audit via direct Supabase query
-  app.get("/api/admin/opay-revenue", async (req, res) => {
+  // Support administrative revenue audit via direct Supabase query (Bachs.io deposits)
+  app.get(["/api/admin/opay-revenue", "/api/admin/bachs-revenue"], async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      console.log("[Admin Revenue Audit] Processing audit records via direct Supabase query.");
+      console.log("[Admin Revenue Audit] Querying Bachs.io deposit records from Supabase.");
       const { data: txs, error: txError } = await supabase
         .from('transactions')
         .select('*')
-        .eq('platform', 'flutterwave')
+        .or('platform.eq.bachs,gateway.eq.bachs,type.eq.funding')
+        .order('created_at', { ascending: false })
         .limit(100);
 
       if (txError) {
@@ -5068,10 +5173,11 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         payments.push({
           reference: tx.reference || tx.id,
           userId: tx.user_id || tx.userId || "unknown",
+          email: tx.user_email || "",
           amount: amt,
           status: isCompleted ? "success" : "failed",
           createdAt: tx.created_at || new Date().toISOString(),
-          paymentMethod: tx.payment_method || "Flutterwave"
+          paymentMethod: tx.payment_method || tx.gateway || "Bachs.io"
         });
 
         if (isCompleted) {
@@ -5553,25 +5659,19 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
     }
   });
 
-  // ─── Admin: Fetch / Sync Nifex Data plans ─────────────────────────────────
+  // ─── Admin: Fetch / Sync Live Nifex Data plans (No Hardcoding) ────────────
   app.post("/api/admin/fetch-nifex-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
       const apiKey = await resolveNifexApiKey();
-
-      let userBalance = 0;
-      if (apiKey) {
-        try {
-          const u = await fetchNifexUser(apiKey);
-          if (u?.user?.wallet_balance) userBalance = Number(u.user.wallet_balance);
-        } catch (_) {}
+      if (!apiKey) {
+        return res.status(503).json({ error: "Nifex Data API token not configured. Please set NIFEX_API_KEY in Admin Settings." });
       }
 
-      // Fetch LIVE plans directly from Nifex Data API (https://nifexdataapp.com.ng/api/data/)
-      const nifexRes = await fetchNifexPlans(apiKey);
-      if (!nifexRes.success || !Array.isArray(nifexRes.plans) || nifexRes.plans.length === 0) {
-        return res.status(502).json({
-          error: nifexRes.error || "Failed to retrieve live plans from Nifex Data API. Please check network or API token."
+      const { balance: userBalance, plans: liveNifexPlans } = await fetchNifexLivePlans(apiKey);
+      if (!liveNifexPlans.length) {
+        return res.status(404).json({
+          error: "No live data plans were returned by Nifex Data API. Verify your Nifex account token and plan catalog on nifexdataapp.com.ng.",
         });
       }
 
@@ -5580,45 +5680,21 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         .select("mozosubz_plan_id, bigisub_identifier_id, selling_price, provider");
       const priceMap: Record<string, number> = {};
       (dbRows || []).forEach((r: any) => {
-        const k1 = String(r.mozosubz_plan_id || "");
-        const k2 = String(r.bigisub_identifier_id || "");
-        if (k1) priceMap[k1] = Number(r.selling_price || 0);
-        if (k2) priceMap[k2] = Number(r.selling_price || 0);
+        const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || "");
+        if (k) priceMap[k] = Number(r.selling_price || 0);
       });
 
-      const enriched = nifexRes.plans.map((p) => {
-        const netUpper = String(p.network || '').trim().toUpperCase();
-        const planType = String(p.type || 'SME').trim();
-        const planId = String(p.plan_id);
-        const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
-        const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-        const planKey = `nifex_${netUpper.toLowerCase()}_${planId}`;
+      const enriched = liveNifexPlans.map((p: any) => ({
+        ...p,
+        selling_price: priceMap[p.id] || priceMap[String(p.plan_id)] || Math.ceil(Number(p.price) * 1.12),
+        provider: "nifex",
+      }));
 
-        return {
-          id: planKey,
-          plan_id: planId,
-          network: netUpper,
-          plan_type: planType,
-          name: fullName,
-          price: Number(p.price || 0),
-          validity: p.validity || '30 Days',
-          network_status: p.network_status || 'On',
-          service: serviceKey,
-          selling_price: priceMap[planKey] || priceMap[planId] || Math.ceil(Number(p.price || 0) * 1.10),
-          provider: "nifex"
-        };
-      });
-
-      return res.json({
-        success: true,
-        balance: userBalance,
-        account_type: nifexRes.account_type || 'Vendor',
-        count: enriched.length,
-        plans: enriched
-      });
+      return res.json({ success: true, balance: userBalance, plans: enriched });
     } catch (err: any) {
       console.error("[POST /api/admin/fetch-nifex-plans Exception]:", err);
-      return res.status(500).json({ error: `Internal server error: ${err.message}` });
+      const errMsg = err.response?.data?.msg || err.response?.data?.message || err.message;
+      return res.status(500).json({ error: `Failed to fetch live Nifex Data plans: ${errMsg}` });
     }
   });
 
@@ -5687,34 +5763,15 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         providerStats.mozosubz.error = mozoErr.message;
       }
 
-      // 2. Fetch Nifex Data live plans
+      // 2. Fetch Nifex Data live plans directly via Nifex API key (No hardcoded plans)
       try {
         const nifexKey = await resolveNifexApiKey();
-        const liveNifex = await fetchNifexPlans(nifexKey);
-        if (liveNifex.success && Array.isArray(liveNifex.plans)) {
-          const nifexPlans = liveNifex.plans.map((p) => {
-            const netUpper = String(p.network || '').trim().toUpperCase();
-            const planType = String(p.type || 'SME').trim();
-            const planId = String(p.plan_id);
-            const fullName = `${netUpper} ${p.plan_name} ${planType} (${p.validity})`.replace(/\s+/g, ' ').trim();
-            const serviceKey = `${netUpper.toLowerCase()}_${planType.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-
-            return {
-              id: `nifex_${netUpper.toLowerCase()}_${planId}`,
-              plan_id: planId,
-              network: netUpper,
-              plan_type: planType,
-              name: fullName,
-              price: Number(p.price || 0),
-              validity: p.validity || '30 Days',
-              service: serviceKey,
-              provider: "nifex",
-            };
-          });
-          allCombinedPlans.push(...nifexPlans);
-          providerStats.nifex.count += nifexPlans.length;
-        } else if (liveNifex.error) {
-          providerStats.nifex.error = liveNifex.error;
+        if (nifexKey && nifexKey.length > 5 && !nifexKey.includes("PASTE_YOUR")) {
+          const { plans: liveNifexPlans } = await fetchNifexLivePlans(nifexKey);
+          allCombinedPlans.push(...liveNifexPlans);
+          providerStats.nifex.count += liveNifexPlans.length;
+        } else {
+          providerStats.nifex.error = "NIFEX_API_KEY not configured";
         }
       } catch (nifexErr: any) {
         console.warn("[fetch-all-providers-plans] Nifex fetch error:", nifexErr.message);
@@ -5807,6 +5864,8 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
       const mozoKey = await resolveMozosubzApiKey();
       const nifexKey = await resolveNifexApiKey();
       const bigiKey = await resolveBigisubApiKey();
+      const bachsKey = await resolveBachsSecretKey();
+      const bachsWebhookKey = await resolveBachsWebhookSecret();
       return res.json({
         mozosubz: {
           configured: Boolean(mozoKey && mozoKey.length > 5 && !mozoKey.includes('dummy')),
@@ -5819,38 +5878,61 @@ const verifyResp = await axios.get(`https://api.paystack.co/transaction/verify/$
         bigisub: {
           configured: Boolean(bigiKey && bigiKey.length > 5 && !bigiKey.includes('dummy')),
           masked: bigiKey && bigiKey.length > 8 ? `${bigiKey.slice(0, 4)}••••${bigiKey.slice(-4)}` : (bigiKey ? "••••" : null),
-        }
+        },
+        bachs: {
+          configured: Boolean(bachsKey && bachsKey.length > 8 && !bachsKey.includes('dummy')),
+          masked: bachsKey && bachsKey.length > 8 ? `${bachsKey.slice(0, 7)}••••${bachsKey.slice(-4)}` : (bachsKey ? "••••" : null),
+          webhookConfigured: Boolean(bachsWebhookKey && bachsWebhookKey.length > 5 && !bachsWebhookKey.includes('dummy')),
+          webhookMasked: bachsWebhookKey && bachsWebhookKey.length > 8 ? `${bachsWebhookKey.slice(0, 6)}••••${bachsWebhookKey.slice(-4)}` : (bachsWebhookKey ? "••••" : null),
+        },
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
 
-  // ─── Admin: Live test provider key (Mozosubz or Nifex) ────────────────────
+  // ─── Admin: Live test provider key (Mozosubz, Nifex, or Bachs.io) ─────────
   app.post("/api/admin/test-provider-key", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
       const { provider, key } = req.body;
       const testKey = String(key || '').trim();
       if (!testKey) {
-        return res.status(400).json({ success: false, error: "Please provide an API key or Connect Key to test." });
+        return res.status(400).json({ success: false, error: "Please provide an API key to test." });
       }
 
-      if (provider === 'nifex') {
-        const u = await fetchNifexUser(testKey);
-        if (u && (u.user || u.status === 'success')) {
-          const userObj = u.user || u;
+      if (provider === 'bachs') {
+        const baseUrl = resolveBachsBaseUrl(testKey);
+        const resp = await fetch(`${baseUrl}/v1/balances`, {
+          headers: {
+            Authorization: `Bearer ${testKey.replace(/^Bearer\s+/i, '').trim()}`,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        const data: any = await resp.json().catch(() => ({}));
+        if (resp.ok) {
           return res.json({
             success: true,
-            provider: 'nifex',
-            balance: Number(userObj.wallet_balance ?? 0),
-            username: userObj.username || '',
-            message: `Connected successfully to Nifex Data! Account balance: ₦${Number(userObj.wallet_balance ?? 0).toLocaleString()}`
+            provider: 'bachs',
+            message: `Connected successfully to Bachs.io (${testKey.startsWith('sk_sandbox_') ? 'Sandbox' : 'Live'})!`,
+            balances: data,
           });
         }
         return res.status(401).json({
           success: false,
-          error: u?.msg || u?.message || "Nifex Data rejected the token: Unauthorized or invalid token."
+          error: data?.detail || data?.message || `Bachs.io rejected the key (HTTP ${resp.status}). Ensure you use a valid sk_live_... or sk_sandbox_... secret key.`,
+        });
+      }
+
+      if (provider === 'nifex') {
+        const { balance, plans } = await fetchNifexLivePlans(testKey);
+        return res.json({
+          success: true,
+          provider: 'nifex',
+          balance,
+          planCount: plans.length,
+          message: `Connected successfully to Nifex Data! Account balance: ₦${Number(balance).toLocaleString()} (${plans.length} live plans found).`
         });
       }
 

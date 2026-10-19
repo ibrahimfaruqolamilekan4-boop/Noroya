@@ -137,6 +137,16 @@ export default function AdminPanelSection() {
 
   const [opayRevenueStats, setOpayRevenueStats] = React.useState<any>(null);
   const [loadingOpayStats, setLoadingOpayStats] = React.useState(false);
+  const [bachsSecretInput, setBachsSecretInput] = React.useState('');
+  const [bachsWebhookInput, setBachsWebhookInput] = React.useState('');
+  const [savingBachsConfig, setSavingBachsConfig] = React.useState(false);
+  const [testingBachsConfig, setTestingBachsConfig] = React.useState(false);
+  const [bachsAdminStatus, setBachsAdminStatus] = React.useState<{
+    configured: boolean;
+    masked: string | null;
+    webhookConfigured: boolean;
+    webhookMasked: string | null;
+  } | null>(null);
   const [planSearchQuery, setPlanSearchQuery] = React.useState('');
   const [planFilterNetwork, setPlanFilterNetwork] = React.useState<string>('All');
   const [planFilterType, setPlanFilterType] = React.useState<string>('All');
@@ -802,17 +812,93 @@ export default function AdminPanelSection() {
     setLoadingOpayStats(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/api/admin/opay-revenue', {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
-      });
+      const headers = { 'Authorization': `Bearer ${session?.access_token}` };
+      const [res, secRes] = await Promise.all([
+        fetch('/api/admin/bachs-revenue', { headers }),
+        fetch('/api/admin/provider-secrets', { headers }).catch(() => null),
+      ]);
       if (res.ok) {
         const data = await res.json();
         setOpayRevenueStats(data);
       }
+      if (secRes && secRes.ok) {
+        const secData = await secRes.json();
+        if (secData?.bachs) {
+          setBachsAdminStatus(secData.bachs);
+        }
+      }
     } catch (err) {
-      console.error("Error fetching OPy revenue stats:", err);
+      console.error("Error fetching Bachs.io revenue stats:", err);
     } finally {
       setLoadingOpayStats(false);
+    }
+  };
+
+  const handleSaveBachsSecrets = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bachsSecretInput.trim() && !bachsWebhookInput.trim()) {
+      toast.error("Enter a Bachs.io Secret Key or Webhook Signing Secret to save.");
+      return;
+    }
+    setSavingBachsConfig(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`,
+      };
+      if (bachsSecretInput.trim()) {
+        const r1 = await fetch('/api/admin/provider-secrets', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ identifier: 'bachs_secret_key', secret: bachsSecretInput.trim() }),
+        });
+        if (!r1.ok) throw new Error('Failed to save Bachs Secret Key');
+      }
+      if (bachsWebhookInput.trim()) {
+        const r2 = await fetch('/api/admin/provider-secrets', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ identifier: 'bachs_webhook_secret', secret: bachsWebhookInput.trim() }),
+        });
+        if (!r2.ok) throw new Error('Failed to save Bachs Webhook Secret');
+      }
+      toast.success("Bachs.io credentials saved and activated!");
+      setBachsSecretInput('');
+      setBachsWebhookInput('');
+      fetchOpayRevenueStats();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save Bachs.io credentials");
+    } finally {
+      setSavingBachsConfig(false);
+    }
+  };
+
+  const handleTestBachsKey = async () => {
+    if (!bachsSecretInput.trim()) {
+      toast.error("Paste your Bachs.io Secret Key (sk_live_... or sk_sandbox_...) to test.");
+      return;
+    }
+    setTestingBachsConfig(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/admin/test-provider-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ provider: 'bachs', key: bachsSecretInput.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Bachs.io rejected the secret key");
+      }
+      toast.success(data.message || "Bachs.io connection verified!");
+    } catch (err: any) {
+      toast.error(err.message || "Bachs.io connection test failed");
+    } finally {
+      setTestingBachsConfig(false);
     }
   };
 
@@ -955,7 +1041,7 @@ export default function AdminPanelSection() {
                   : "text-slate-500 hover:text-slate-850"
               )}
             >
-              Bank Deposits Audit
+              Bachs.io Gateway & Audit
             </button>
             <button
               onClick={() => setAdminSubTab('pricing-manager')}
@@ -1863,11 +1949,11 @@ export default function AdminPanelSection() {
 
       {!isRestrictedAdmin && adminSubTab === 'opay-receipts' && (
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
-          <div className="flex justify-between items-center pb-6 border-b border-slate-50">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-slate-50">
             <div>
-              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
+              <h5 className="font-extrabold text-slate-900 text-lg">Bachs.io Payment Gateway & Deposits Audit</h5>
               <p className="text-sm text-slate-400 font-medium font-sans">
-                Real-time transaction values, status checks, and revenue auditing.
+                Configure live Bachs.io API credentials (`sk_live_...` / `sk_sandbox_...`), webhook signing secrets, and audit incoming wallet deposits.
               </p>
             </div>
             <button
@@ -1879,10 +1965,83 @@ export default function AdminPanelSection() {
             </button>
           </div>
 
+          {/* Live Bachs.io API Key & Webhook Secret Configuration Card */}
+          <form onSubmit={handleSaveBachsSecrets} className="bg-slate-900 text-white rounded-2xl p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h6 className="font-extrabold text-sm uppercase tracking-wider text-emerald-400">
+                  🔑 Bachs.io Dynamic Credentials (https://docs.bachs.io)
+                </h6>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Keys are stored encrypted in `provider_secrets` (no hardcoding required). Webhook URL: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">{window.location.origin}/api/webhooks/bachs</code>
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold">
+                <span className={cn(
+                  "px-2.5 py-1 rounded-full",
+                  bachsAdminStatus?.configured ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"
+                )}>
+                  API Key: {bachsAdminStatus?.configured ? (bachsAdminStatus.masked || "Configured") : "Not Set"}
+                </span>
+                <span className={cn(
+                  "px-2.5 py-1 rounded-full",
+                  bachsAdminStatus?.webhookConfigured ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"
+                )}>
+                  Webhook Secret: {bachsAdminStatus?.webhookConfigured ? (bachsAdminStatus.webhookMasked || "Configured") : "Not Set"}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Bachs.io Secret Key (`BACHS_SECRET_KEY`)
+                </label>
+                <input
+                  type="password"
+                  value={bachsSecretInput}
+                  onChange={(e) => setBachsSecretInput(e.target.value)}
+                  placeholder="sk_live_... or sk_sandbox_..."
+                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Bachs.io Webhook Signing Secret (`BACHS_WEBHOOK_SECRET`)
+                </label>
+                <input
+                  type="password"
+                  value={bachsWebhookInput}
+                  onChange={(e) => setBachsWebhookInput(e.target.value)}
+                  placeholder="whsec_..."
+                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleTestBachsKey}
+                disabled={testingBachsConfig || !bachsSecretInput.trim()}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white disabled:opacity-50 cursor-pointer transition"
+              >
+                {testingBachsConfig ? "Testing Connection..." : "Test Secret Key Live"}
+              </button>
+              <button
+                type="submit"
+                disabled={savingBachsConfig || (!bachsSecretInput.trim() && !bachsWebhookInput.trim())}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white disabled:opacity-50 cursor-pointer transition"
+              >
+                {savingBachsConfig ? "Saving..." : "Save Bachs.io Credentials"}
+              </button>
+            </div>
+          </form>
+
           {loadingOpayStats && !opayRevenueStats ? (
             <div className="py-16 text-center space-y-3">
               <div className="w-8 h-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-slate-400 font-bold font-sans">Loading administrative receipts...</p>
+              <p className="text-xs text-slate-400 font-bold font-sans">Loading Bachs.io deposit receipts...</p>
             </div>
           ) : (
             <div className="space-y-8">
@@ -1911,7 +2070,7 @@ export default function AdminPanelSection() {
 
               {/* Transactions List */}
               <div className="space-y-4">
-                <h6 className="font-extrabold text-slate-900">Deposit Webhook Transaction Logs</h6>
+                <h6 className="font-extrabold text-slate-900">Bachs.io Deposit & Webhook Transaction Logs</h6>
                 <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-50">
                   {opayRevenueStats?.payments && opayRevenueStats.payments.length > 0 ? (
                     opayRevenueStats.payments.map((p: any) => (
@@ -1938,7 +2097,7 @@ export default function AdminPanelSection() {
                       </div>
                     ))
                   ) : (
-                    <div className="p-12 text-center text-slate-500">No Flutterwave payment gateway transactions recorded yet.</div>
+                    <div className="p-12 text-center text-slate-500">No Bachs.io payment gateway transactions recorded yet.</div>
                   )}
                 </div>
               </div>
@@ -1946,8 +2105,6 @@ export default function AdminPanelSection() {
           )}
         </div>
       )}
-
-      {/* Monnify Configuration form completely deleted */}
 
       {/* EDIT SERVICE PLAN OVERLAY MODAL */}
       <AnimatePresence>

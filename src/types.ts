@@ -16,9 +16,9 @@ export interface UserProfile {
   transactionPin?: string;
   transaction_pin?: string;
   createdAt: string;
-  monnifyBankName?: string;
-  monnifyAccountNumber?: string;
-  monnifyAccountName?: string;
+  bachsBankName?: string;
+  bachsAccountNumber?: string;
+  bachsAccountName?: string;
 }
 
 export type TransactionType = 'data' | 'airtime' | 'funding' | 'transfer' | 'bill';

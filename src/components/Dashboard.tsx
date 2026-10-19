@@ -825,57 +825,143 @@ function DashboardOverview({
     finally { setTransferLoading(false); }
   };
 
-  const handleFlutterwaveFundSubmit = async (e: React.FormEvent) => {
+  // Bachs.io Gateway & Virtual Account state
+  const [bachsVirtualAccount, setBachsVirtualAccount] = React.useState<{
+    id?: string;
+    account_number: string;
+    account_name?: string | null;
+    bank_name: string;
+    bank_code?: string | null;
+    currency: string;
+    status: string;
+  } | null>(null);
+  const [loadingVirtualAccount, setLoadingVirtualAccount] = React.useState(false);
+  const [bachsConfigStatus, setBachsConfigStatus] = React.useState<{
+    configured: boolean;
+    webhookConfigured: boolean;
+    mode?: string;
+  } | null>(null);
+
+  const loadBachsVirtualAccount = React.useCallback(async () => {
+    setLoadingVirtualAccount(true);
+    try {
+      const [cfgRes, vaRes] = await Promise.all([
+        fetch('/api/payments/bachs/config').catch(() => null),
+        fetch('/api/payments/bachs/virtual-account').catch(() => null),
+      ]);
+      if (cfgRes && cfgRes.ok) {
+        const cfgData = await cfgRes.json();
+        setBachsConfigStatus({
+          configured: Boolean(cfgData.configured),
+          webhookConfigured: Boolean(cfgData.webhookConfigured),
+          mode: cfgData.mode,
+        });
+      }
+      if (vaRes && vaRes.ok) {
+        const vaData = await vaRes.json();
+        if (vaData?.available && vaData?.virtualAccount?.account_number) {
+          setBachsVirtualAccount(vaData.virtualAccount);
+        }
+      }
+    } catch (_) {
+      // Silent fallback if not configured yet
+    } finally {
+      setLoadingVirtualAccount(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (showFundModal) {
+      loadBachsVirtualAccount();
+    }
+  }, [showFundModal, loadBachsVirtualAccount]);
+
+  // Automatically verify Bachs.io Checkout redirect return (`?bachs_verify=1&reference=...&checkout_id=...`)
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isVerify = params.get('bachs_verify');
+    const isCancelled = params.get('bachs_cancelled');
+    const reference = params.get('reference') || '';
+    const checkoutId = params.get('checkout_id') || params.get('session_id') || localStorage.getItem('noroya_pending_bachs_checkout_id') || '';
+    const chargeId = params.get('charge_id') || params.get('payment_id') || '';
+
+    if (isCancelled) {
+      toast('Bachs.io checkout was cancelled.', { icon: 'ℹ️' });
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+      return;
+    }
+
+    if (isVerify && (checkoutId || chargeId || reference)) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+
+      (async () => {
+        const toastId = toast.loading('Verifying your Bachs.io payment…');
+        try {
+          const resp = await fetch('/api/payments/bachs/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              checkout_id: checkoutId || undefined,
+              charge_id: chargeId || undefined,
+              reference: reference || undefined,
+            }),
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (resp.ok && data.verified) {
+            localStorage.removeItem('noroya_pending_bachs_checkout_id');
+            toast.success(data.message || `Wallet credited via Bachs.io!`, { id: toastId, duration: 7000 });
+            refreshBalance();
+          } else {
+            toast(data.message || data.error || 'Payment is being confirmed via Bachs.io webhook.', {
+              id: toastId,
+              icon: '⏳',
+              duration: 6000,
+            });
+            setTimeout(refreshBalance, 2500);
+          }
+        } catch (err: any) {
+          toast.error(err.message || 'Could not verify payment status.', { id: toastId });
+        }
+      })();
+    }
+  }, []);
+
+  const handleBachsFundSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = Number(opayAmount);
-    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    if (!amt || isNaN(amt) || amt < 100) {
+      toast.error('Minimum deposit amount on Bachs.io is ₦100');
+      return;
+    }
     setFwLoading(true);
-    const reference = `NOR-FW-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    const loadScript = (): Promise<boolean> => new Promise((resolve) => {
-      if ((window as any).FlutterwaveCheckout) { resolve(true); return; }
-      const script = document.createElement('script');
-      script.src = 'https://checkout.flutterwave.com/v3.js';
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-    const scriptLoaded = await loadScript();
-    if (!scriptLoaded) { toast.error('Flutterwave failed to load.', { duration: 8000 }); setFwLoading(false); return; }
     try {
-      const pKeyResp = await fetch('/api/v1/payment/config').catch(() => null);
-      let flutterwavePublicKey = '';
-      if (pKeyResp && pKeyResp.ok) {
-        const configData = await pKeyResp.json();
-        flutterwavePublicKey = configData.flutterwavePublicKey || '';
-      }
-      if (!flutterwavePublicKey) flutterwavePublicKey = (import.meta as any).env?.VITE_FLUTTERWAVE_PUBLIC_KEY || '';
-      flutterwavePublicKey = flutterwavePublicKey.replace(/^["']|["']$/g, '').trim();
-      if (!flutterwavePublicKey || flutterwavePublicKey.includes('xxxx')) {
-        setFwLoading(false); toast.error('Flutterwave not configured.', { duration: 8000 }); return;
-      }
-      const verifyOnServer = async (transactionId: string) => {
-        setFwLoading(false);
-        fetch('/api/payments/verify-flutterwave', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transactionId, reference, amount: amt, email: user.email, userId: user.uid })
-        }).catch(() => {});
-        toast.success(`Topped up ₦${amt.toLocaleString()} via Flutterwave!`, { duration: 7500, icon: '🚀' });
-        setShowFundModal(false); setOpayAmount('2000');
-        setTimeout(refreshBalance, 1500);
-      };
-      (window as any).FlutterwaveCheckout({
-        public_key: flutterwavePublicKey, tx_ref: reference, amount: amt, currency: 'NGN', country: 'NG',
-        payment_options: 'card, banktransfer',
-        customer: { email: user.email, phone_number: (user as any).phone_number || '08000000000', name: user.fullName || 'Customer' },
-        customizations: { title: 'NORODATA Wallet Funding', description: 'Wallet top-up via Flutterwave', logo: '' },
-        callback: (response: any) => {
-          if (response.status === 'successful' || response.status === 'success') {
-            verifyOnServer(String(response.transaction_id || 'simulated'));
-          } else { setFwLoading(false); toast.error('Payment not completed.'); }
-        },
-        onclose: () => { setFwLoading(false); toast('Payment cancelled.', { icon: 'ℹ️' }); }
+      const resp = await fetch('/api/payments/bachs/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: amt,
+          email: user.email,
+          name: user.fullName || 'Customer',
+          phone: (user as any).phone_number || user.phoneNumber || '',
+          userId: (user as any).id || user.uid,
+          redirectUrl: window.location.origin,
+        }),
       });
-    } catch (err: any) { toast.error(`Flutterwave error: ${err.message}`); setFwLoading(false); }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.checkout_url) {
+        throw new Error(data?.error || 'Could not initialize Bachs.io checkout session.');
+      }
+      if (data.checkout_id) {
+        localStorage.setItem('noroya_pending_bachs_checkout_id', String(data.checkout_id));
+      }
+      toast.success('Redirecting to Bachs.io secure checkout…');
+      window.location.href = data.checkout_url;
+    } catch (err: any) {
+      toast.error(err.message || 'Bachs.io checkout failed to initialize.');
+      setFwLoading(false);
+    }
   };
 
   // Quick service grid
@@ -1064,7 +1150,7 @@ function DashboardOverview({
                     className={cn('flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all',
                       fundingTab === t ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700')}
                   >
-                    {t === 'bank' ? 'Bank Transfer' : t === 'gateway' ? 'Card/Gateway' : 'Manual Request'}
+                    {t === 'bank' ? 'Bank Transfer' : t === 'gateway' ? 'Bachs.io Checkout' : 'Manual Request'}
                   </button>
                 ))}
               </div>
@@ -1183,36 +1269,97 @@ function DashboardOverview({
                         ))}
                       </div>
 
-                      {/* Webhook notice */}
-                      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3.5 space-y-1">
-                        <p className="text-xs font-bold text-yellow-800 flex items-center gap-2">
+                      {/* Live Bachs.io Virtual Account (if active on merchant account) */}
+                      {bachsVirtualAccount && (
+                        <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                              ⚡ Instant Automated Virtual Account (Bachs.io)
+                            </span>
+                            <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
+                              {bachsVirtualAccount.status}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between pt-1">
+                            <div>
+                              <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
+                              <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
+                              {bachsVirtualAccount.account_name && (
+                                <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(bachsVirtualAccount.account_number);
+                                toast.success('Bachs Virtual Account copied!');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-xs font-bold transition"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-emerald-200/90">
+                            Include your email ({user.email}) in the transfer narration for automatic instant wallet credit.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Bachs.io Gateway notice */}
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1">
+                        <p className="text-xs font-bold text-emerald-900 flex items-center gap-2">
                           <AlertCircle size={14} />
-                          Payment Gateway Notice
+                          Instant Automated Checkout Available
                         </p>
-                        <p className="text-xs text-yellow-700">Our Flutterwave payment webhook is having issues. Bank transfer is currently the fastest way to fund your wallet.</p>
+                        <p className="text-xs text-emerald-700">
+                          Switch to the <strong>Bachs.io Checkout</strong> tab above to fund your wallet automatically via Card or Instant Bank Transfer with real-time webhook confirmation.
+                        </p>
                       </div>
                     </div>
                   </div>
                 )}
 
                 {fundingTab === 'gateway' && (
-                  <form onSubmit={handleFlutterwaveFundSubmit} className="space-y-4">
+                  <form onSubmit={handleBachsFundSubmit} className="space-y-4">
+                    <div className="rounded-2xl p-4 bg-emerald-50/70 border border-emerald-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Bachs.io Payment Gateway</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 uppercase">
+                          {bachsConfigStatus?.mode === 'sandbox' ? 'Sandbox' : 'Live NGN'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-emerald-800">
+                        Pay securely via Bank Transfer or Card on Bachs.io. Your wallet is credited automatically once payment succeeds.
+                      </p>
+                    </div>
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
                       <input
-                        type="number" required value={opayAmount}
+                        type="number" required min={100} value={opayAmount}
                         onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
                         placeholder="e.g. 2000"
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
                       />
+                      <div className="flex gap-2 mt-2">
+                        {['500', '1000', '2000', '5000', '10000'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setOpayAmount(preset)}
+                            className="flex-1 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 transition"
+                          >
+                            ₦{Number(preset).toLocaleString()}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <button
                       type="submit"
-                      disabled={fwLoading || !opayAmount || Number(opayAmount) <= 0}
-                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50"
+                      disabled={fwLoading || !opayAmount || Number(opayAmount) < 100}
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
-                      {fwLoading ? 'Initializing…' : 'Pay via Flutterwave'}
+                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${Number(opayAmount || 0).toLocaleString()} via Bachs.io`}
                     </button>
                   </form>
                 )}

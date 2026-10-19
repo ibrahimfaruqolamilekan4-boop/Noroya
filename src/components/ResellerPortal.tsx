@@ -278,7 +278,7 @@ export default function ResellerPortal() {
       } else {
         // The backend intentionally disabled this endpoint (raw balance-minting was a
         // security hole with no real payment behind it) -- its error message explains
-        // that and points to Paystack/Flutterwave instead, so we just relay it here.
+        // that and points to Bachs.io instead, so we just relay it here.
         toast.error(resData.error || "Bulk funding was declined.");
       }
     } catch (err) {

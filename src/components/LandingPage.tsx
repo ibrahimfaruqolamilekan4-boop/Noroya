@@ -987,7 +987,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             
             {[
-              { icon: ShieldCheck, title: 'Secure payments', desc: 'One-time accounts powered by Monnify' },
+              { icon: ShieldCheck, title: 'Secure payments', desc: 'Instant checkouts & virtual accounts powered by Bachs.io' },
               { icon: ZapIcon, title: 'Instant delivery', desc: 'Airtime, data, cable in seconds' },
               { icon: Sparkles, title: 'Auto-refunds', desc: 'Failed transactions reversed instantly' },
               { icon: DollarSign, title: 'Transparent fees', desc: 'No hidden costs or surprises' },
@@ -1154,7 +1154,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
           <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="space-y-1 text-center md:text-left">
               <p className="text-slate-500 text-xs font-bold">© 2026 NORODATA. All rights reserved.</p>
-              <p className="text-slate-600 text-xs font-bold uppercase tracking-wider">Powered by Monnify</p>
+              <p className="text-slate-600 text-xs font-bold uppercase tracking-wider">Payments Powered by Bachs.io</p>
             </div>
             <div className="flex gap-6 text-xs text-slate-500 font-bold">
               <a href="#" className="hover:text-emerald-400 transition-colors">Privacy</a>
@@ -1188,7 +1188,7 @@ export default function LandingPage({ onAuth }: { onAuth: () => void }) {
               <div className="flex justify-between items-start">
                 <div className="space-y-2">
                   <span className="text-xs font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full inline-block">
-                    Monnify Gateway
+                    Bachs.io Gateway
                   </span>
                   <h3 className="text-2xl font-black text-slate-900">Your Bank Account</h3>
                 </div>
