@@ -13,11 +13,7 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/flutterwave(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/flw(.*)",
+      "source": "/bachs(.*)",
       "destination": "/api/index.js"
     },
     {

@@ -1324,13 +1324,21 @@ function DashboardOverview({
                     <div className="rounded-2xl p-4 bg-emerald-50/70 border border-emerald-200 space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Bachs.io Payment Gateway</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 uppercase">
-                          {bachsConfigStatus?.mode === 'sandbox' ? 'Sandbox' : 'Live NGN'}
+                        <span className={cn(
+                          "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                          bachsConfigStatus?.configured ? "bg-emerald-200 text-emerald-900" : "bg-amber-200 text-amber-900"
+                        )}>
+                          {!bachsConfigStatus ? "Connecting..." : !bachsConfigStatus.configured ? "Key Pending" : bachsConfigStatus.mode === 'sandbox' ? 'Sandbox' : 'Live NGN'}
                         </span>
                       </div>
                       <p className="text-xs text-emerald-800">
                         Pay securely via Bank Transfer or Card on Bachs.io. Your wallet is credited automatically once payment succeeds.
                       </p>
+                      {bachsConfigStatus && !bachsConfigStatus.configured && (
+                        <p className="text-[11px] text-amber-800 bg-amber-100/80 rounded-lg p-2 font-medium">
+                          ⚠️ Bachs.io secret key is not set yet. Please paste your <code>sk_live_...</code> or <code>sk_sandbox_...</code> in the Admin Panel (Bachs.io Gateway tab) or your Vercel Environment Variables.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
