@@ -285,6 +285,11 @@ export const marketplaceService = {
     });
   },
 
+  async processPayment(_buyerId: string, orderId: string, _amount?: number): Promise<MarketplaceOrder> {
+    const res = await this.verifyAndComplete(orderId);
+    return res.order;
+  },
+
   // Poll chat updates (works across all serverless & browser sessions without needing Supabase Realtime publication)
   subscribeToMessages(orderId: string, callback: (msg: any) => void) {
     let active = true;
