@@ -5288,10 +5288,20 @@ if (Object.keys(updateData).length <= 1) {
       const userId = authUser.id;
       const { data: profile, error: profErr } = await supabase
         .from('profiles')
-        .select('id, wallet_balance, balance, available_balance, updated_at')
+        .select('id, email, full_name, name, phone_number, referral_code, wallet_balance, balance, available_balance, updated_at')
         .eq('id', userId)
         .maybeSingle();
       if (profErr) throw new Error(profErr.message);
+
+      if (profile && !profile.referral_code) {
+        const generatedCode = `NORODATA-${String(userId).replace(/-/g, '').substring(0, 6).toUpperCase()}`;
+        try {
+          await supabase.from('profiles').update({ referral_code: generatedCode }).eq('id', userId);
+          profile.referral_code = generatedCode;
+        } catch (_) {
+          profile.referral_code = generatedCode;
+        }
+      }
 
       const { data: recent, error: txErr } = await supabase
         .from('transactions')
@@ -5329,6 +5339,244 @@ if (Object.keys(updateData).length <= 1) {
     } catch (err: any) {
       console.error("[Wallet Transactions Error]:", err.message);
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Wallet-to-Wallet Transfer: Authoritative Recipient Lookup & Transfer ───
+  app.post("/api/wallet/lookup-recipient", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const rawQuery = String(req.body?.query || "").trim();
+      if (!rawQuery) {
+        return res.status(400).json({ error: "Please enter recipient Transfer ID, email, or phone number." });
+      }
+
+      const safeQ = pgSafeFilter(rawQuery);
+      const upperQ = pgSafeFilter(rawQuery.toUpperCase());
+      const lowerQ = pgSafeFilter(rawQuery.toLowerCase());
+
+      // Normalize Nigerian phone variants if digits
+      const digitsOnly = rawQuery.replace(/[^0-9]/g, "");
+      const phoneVariants = new Set<string>([safeQ]);
+      if (digitsOnly.length >= 10) {
+        if (digitsOnly.startsWith("0") && digitsOnly.length === 11) {
+          phoneVariants.add(digitsOnly);
+          phoneVariants.add(`234${digitsOnly.slice(1)}`);
+          phoneVariants.add(`+234${digitsOnly.slice(1)}`);
+        } else if (digitsOnly.startsWith("234") && digitsOnly.length === 13) {
+          phoneVariants.add(`0${digitsOnly.slice(3)}`);
+          phoneVariants.add(digitsOnly);
+          phoneVariants.add(`+${digitsOnly}`);
+        }
+      }
+
+      const orParts = [
+        `email.ilike.${lowerQ}`,
+        `referral_code.ilike.${upperQ}`,
+        ...Array.from(phoneVariants).map((p) => `phone_number.eq.${pgSafeFilter(p)}`),
+      ];
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawQuery)) {
+        orParts.push(`id.eq.${rawQuery}`);
+      }
+
+      let recipient: any = null;
+      const { data: matchedRows, error: lookupErr } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, name, phone_number, referral_code')
+        .or(orParts.join(','))
+        .limit(5);
+
+      if (!lookupErr && matchedRows && matchedRows.length > 0) {
+        recipient = matchedRows[0];
+      }
+
+      // Fallback: if query looks like NORODATA-XXXXXX (or a 6+ char hex prefix), match against user ID prefix
+      if (!recipient && (rawQuery.toUpperCase().startsWith('NORODATA-') || /^[A-Z0-9]{5,10}$/i.test(rawQuery))) {
+        const codePart = rawQuery.toUpperCase().replace(/^NORODATA-/, '').trim();
+        if (codePart.length >= 4) {
+          const { data: allProfiles } = await supabase
+            .from('profiles')
+            .select('id, email, full_name, name, phone_number, referral_code')
+            .limit(500);
+          if (allProfiles) {
+            recipient = allProfiles.find((p: any) => {
+              const pCode = String(p.referral_code || '').toUpperCase();
+              const idHex = String(p.id || '').replace(/-/g, '').toUpperCase();
+              return pCode === rawQuery.toUpperCase() || pCode === `NORODATA-${codePart}` || idHex.startsWith(codePart);
+            });
+          }
+        }
+      }
+
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found. Check the Transfer ID, email, or phone number." });
+      }
+
+      if (String(recipient.id) === String(authUser.id)) {
+        return res.status(400).json({ error: "You cannot transfer money to your own wallet." });
+      }
+
+      const displayCode = recipient.referral_code || `NORODATA-${String(recipient.id).replace(/-/g, '').substring(0, 6).toUpperCase()}`;
+      return res.json({
+        recipient: {
+          id: recipient.id,
+          full_name: recipient.full_name || recipient.name || (recipient.email ? recipient.email.split('@')[0] : 'NORODATA User'),
+          email: recipient.email || '',
+          phone_number: recipient.phone_number || '',
+          referral_code: displayCode,
+        }
+      });
+    } catch (err: any) {
+      console.error("[Wallet Lookup Recipient Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to look up recipient." });
+    }
+  });
+
+  app.post("/api/wallet/transfer", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const senderId = authUser.id;
+      const recipientId = String(req.body?.recipientId || req.body?.recipient_uid || "").trim();
+      const rawAmount = Number(req.body?.amount ?? req.body?.p_amount ?? 0);
+      const note = String(req.body?.note ?? req.body?.p_note ?? "").trim();
+
+      if (!recipientId) {
+        return res.status(400).json({ status: 'error', error: "Recipient ID is required." });
+      }
+      if (recipientId === senderId) {
+        return res.status(400).json({ status: 'error', error: "You cannot transfer money to yourself." });
+      }
+      if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+        return res.status(400).json({ status: 'error', error: "Please enter a valid transfer amount greater than ₦0." });
+      }
+
+      const amount = Number(rawAmount.toFixed(2));
+
+      // 1. Fetch sender and recipient profiles via service-role
+      const [{ data: senderProfile, error: sErr }, { data: recipientProfile, error: rErr }] = await Promise.all([
+        supabase.from('profiles').select('id, email, full_name, name, wallet_balance, balance, available_balance').eq('id', senderId).maybeSingle(),
+        supabase.from('profiles').select('id, email, full_name, name, wallet_balance, balance, available_balance').eq('id', recipientId).maybeSingle(),
+      ]);
+
+      if (sErr || !senderProfile) {
+        return res.status(404).json({ status: 'error', error: "Sender wallet profile not found." });
+      }
+      if (rErr || !recipientProfile) {
+        return res.status(404).json({ status: 'error', error: "Recipient wallet profile not found." });
+      }
+
+      const senderBalance = Number(senderProfile.wallet_balance ?? senderProfile.balance ?? 0);
+      if (senderBalance < amount) {
+        return res.status(400).json({
+          status: 'insufficient_funds',
+          error: `Insufficient wallet balance. Available: ₦${senderBalance.toLocaleString()}, Required: ₦${amount.toLocaleString()}.`,
+          balance: senderBalance,
+          required: amount,
+        });
+      }
+
+      const recipientBalance = Number(recipientProfile.wallet_balance ?? recipientProfile.balance ?? 0);
+      const newSenderBalance = Number((senderBalance - amount).toFixed(2));
+      const newRecipientBalance = Number((recipientBalance + amount).toFixed(2));
+      const nowIso = new Date().toISOString();
+
+      // 2. Deduct from sender
+      const { error: deductErr } = await supabase
+        .from('profiles')
+        .update({
+          wallet_balance: newSenderBalance,
+          balance: newSenderBalance,
+          available_balance: newSenderBalance,
+          updated_at: nowIso,
+        })
+        .eq('id', senderId);
+
+      if (deductErr) {
+        throw new Error(`Failed to debit sender wallet: ${deductErr.message}`);
+      }
+
+      // 3. Credit recipient
+      const { error: creditErr } = await supabase
+        .from('profiles')
+        .update({
+          wallet_balance: newRecipientBalance,
+          balance: newRecipientBalance,
+          available_balance: newRecipientBalance,
+          updated_at: nowIso,
+        })
+        .eq('id', recipientId);
+
+      if (creditErr) {
+        // Rollback sender deduction if recipient update fails
+        await supabase
+          .from('profiles')
+          .update({
+            wallet_balance: senderBalance,
+            balance: senderBalance,
+            available_balance: senderBalance,
+            updated_at: nowIso,
+          })
+          .eq('id', senderId);
+        throw new Error(`Failed to credit recipient wallet: ${creditErr.message}`);
+      }
+
+      // Best-effort sync legacy users table if present
+      try {
+        await Promise.all([
+          supabase.from('users').update({ wallet_balance: newSenderBalance }).eq('id', senderId),
+          supabase.from('users').update({ wallet_balance: newRecipientBalance }).eq('id', recipientId),
+        ]);
+      } catch (_) {}
+
+      const baseRef = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      const senderName = senderProfile.full_name || senderProfile.name || senderProfile.email || 'NORODATA User';
+      const recipientName = recipientProfile.full_name || recipientProfile.name || recipientProfile.email || 'NORODATA User';
+
+      // 4. Record transactions for both sender and recipient
+      try {
+        await supabase.from('transactions').insert([
+          {
+            user_id: String(senderId),
+            user_email: senderProfile.email || authUser.email || null,
+            type: 'transfer_out',
+            amount: amount,
+            status: 'completed',
+            reference: `${baseRef}-OUT`,
+            description: note ? `Wallet transfer to ${recipientName} (${note})` : `Wallet transfer sent to ${recipientName}`,
+            gateway: 'wallet_transfer',
+            created_at: nowIso,
+          },
+          {
+            user_id: String(recipientId),
+            user_email: recipientProfile.email || null,
+            type: 'funding',
+            amount: amount,
+            status: 'completed',
+            reference: `${baseRef}-IN`,
+            description: note ? `Wallet transfer from ${senderName} (${note})` : `Wallet transfer received from ${senderName}`,
+            gateway: 'wallet_transfer',
+            created_at: nowIso,
+          }
+        ]);
+      } catch (txLogErr: any) {
+        console.warn("[Wallet Transfer] Transaction log warning:", txLogErr.message);
+      }
+
+      return res.json({
+        status: 'success',
+        amount,
+        newBalance: newSenderBalance,
+        reference: baseRef,
+        recipient: {
+          id: recipientId,
+          name: recipientName,
+        }
+      });
+    } catch (err: any) {
+      console.error("[Wallet Transfer Error]:", err.message);
+      return res.status(500).json({ status: 'error', error: err.message || "Transfer failed." });
     }
   });
 
@@ -6255,6 +6503,804 @@ if (Object.keys(updateData).length <= 1) {
       return res.json({ success: true, inquiry });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Marketplace & Foreign Numbers (Admin-Only Number Listing + Live Chat + Auto-Debit) ───
+  const MARKETPLACE_CATEGORIES = [
+    { id: 'cat-us-phone', name: 'US Phone Numbers', description: 'American phone numbers for verification and calls', icon: '🇺🇸', type: 'foreign_number' },
+    { id: 'cat-uk-phone', name: 'UK Phone Numbers', description: 'British phone numbers for verification and calls', icon: '🇬🇧', type: 'foreign_number' },
+    { id: 'cat-ca-phone', name: 'Canada Phone Numbers', description: 'Canadian phone numbers for verification and calls', icon: '🇨🇦', type: 'foreign_number' },
+    { id: 'cat-ig-acc', name: 'Instagram Accounts', description: 'Verified Instagram accounts with active followers', icon: '📷', type: 'social_account' },
+    { id: 'cat-tt-acc', name: 'TikTok Accounts', description: 'TikTok accounts with active followers and high engagement', icon: '🎵', type: 'social_account' },
+    { id: 'cat-x-acc', name: 'Twitter/X Accounts', description: 'Twitter/X verified accounts and pages', icon: '𝕏', type: 'social_account' },
+    { id: 'cat-snap-acc', name: 'Snapchat Accounts', description: 'Snapchat accounts with high score and active contacts', icon: '👻', type: 'social_account' },
+    { id: 'cat-fb-acc', name: 'Facebook Accounts', description: 'Facebook pages, groups, and aged accounts', icon: '👍', type: 'social_account' },
+  ];
+
+  const SEEDED_FOREIGN_NUMBER_LISTINGS = [
+    {
+      id: 'num-us-clean',
+      seller_id: 'admin',
+      category_id: 'cat-us-phone',
+      title: '🇺🇸 Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)',
+      description: 'Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, request your verification code, and your wallet will be debited automatically once the deal is done.',
+      price: 4500,
+      product_details: { item_identifier: '+1 (555) 234-8901', phone_number: '+1 (555) 234-8901', country: 'United States', carrier: 'AT&T / T-Mobile Non-VoIP' },
+      status: 'available',
+      views: 94,
+      is_admin_listing: true,
+      created_at: new Date(Date.now() - 3600 * 1000 * 12).toISOString(),
+      marketplace_categories: { name: 'US Phone Numbers', icon: '🇺🇸', type: 'foreign_number' },
+      profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
+    },
+    {
+      id: 'num-uk-clean',
+      seller_id: 'admin',
+      category_id: 'cat-uk-phone',
+      title: '🇬🇧 Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)',
+      description: 'Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and request your code — automatic wallet debit once completed.',
+      price: 5000,
+      product_details: { item_identifier: '+44 7700 900412', phone_number: '+44 7700 900412', country: 'United Kingdom', carrier: 'Vodafone UK Physical SIM' },
+      status: 'available',
+      views: 67,
+      is_admin_listing: true,
+      created_at: new Date(Date.now() - 3600 * 1000 * 8).toISOString(),
+      marketplace_categories: { name: 'UK Phone Numbers', icon: '🇬🇧', type: 'foreign_number' },
+      profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
+    },
+    {
+      id: 'num-ca-clean',
+      seller_id: 'admin',
+      category_id: 'cat-ca-phone',
+      title: '🇨🇦 Clean Canada +1 Phone Number (WhatsApp / Global Apps)',
+      description: 'Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, request OTP code, and complete your deal.',
+      price: 4800,
+      product_details: { item_identifier: '+1 (416) 555-0184', phone_number: '+1 (416) 555-0184', country: 'Canada', carrier: 'Rogers Canada SIM' },
+      status: 'available',
+      views: 51,
+      is_admin_listing: true,
+      created_at: new Date(Date.now() - 3600 * 1000 * 5).toISOString(),
+      marketplace_categories: { name: 'Canada Phone Numbers', icon: '🇨🇦', type: 'foreign_number' },
+      profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
+    },
+    {
+      id: 'acc-ig-aged',
+      seller_id: 'seller-2',
+      category_id: 'cat-ig-acc',
+      title: '📷 Aged Instagram Account (2020) • 12.5k Real Followers',
+      description: 'Established 2020 lifestyle & fashion page. 12.5k organic followers, high engagement rate, full email access included.',
+      price: 25000,
+      product_details: { item_identifier: '@fashionvibes_ng', username: '@fashionvibes_ng', followers: '12.5k', platform: 'Instagram' },
+      status: 'available',
+      views: 110,
+      created_at: new Date(Date.now() - 3600 * 1000 * 24).toISOString(),
+      marketplace_categories: { name: 'Instagram Accounts', icon: '📷', type: 'social_account' },
+      profiles: { full_name: 'DigitalAssets Hub', name: 'DigitalAssets Hub', marketplace_seller_rating: 4.9, marketplace_seller_reviews: 65 }
+    }
+  ];
+
+  const isCallerAdminUser = async (req: any, authUser?: any): Promise<boolean> => {
+    const ALLOWED_ADMIN_EMAILS = [
+      ADMIN_EMAIL.toLowerCase().trim(),
+      'ibrahimfaruqolamilekan4@gmail.com',
+      'adewaleogunkeye200@gmail.com',
+      'jeffholland299@gmail.com',
+    ].filter(Boolean);
+
+    const headerEmail = String(req.headers['x-admin-email'] || '').toLowerCase().trim();
+    const userEmail = String(authUser?.email || headerEmail || '').toLowerCase().trim();
+    if (userEmail && ALLOWED_ADMIN_EMAILS.includes(userEmail)) return true;
+    if (authUser?.user_metadata?.role === 'admin') return true;
+    if (authUser?.id) {
+      try {
+        const { data: prof } = await supabase.from('profiles').select('role, email').eq('id', authUser.id).maybeSingle();
+        if (prof?.role === 'admin') return true;
+        if (prof?.email && ALLOWED_ADMIN_EMAILS.includes(String(prof.email).toLowerCase().trim())) return true;
+      } catch (_) {}
+    }
+    return false;
+  };
+
+  let memoryMarketplaceListings: any[] | null = null;
+  let memoryMarketplaceOrders: any[] | null = null;
+
+  const loadMarketplaceStore = async (): Promise<{ listings: any[]; orders: any[] }> => {
+    try {
+      const { data: rows } = await supabase
+        .from('services_config')
+        .select('bigisub_identifier_id, item_name')
+        .in('bigisub_identifier_id', ['marketplace_listings_store_v1', 'marketplace_orders_store_v1']);
+
+      let listings: any[] | null = null;
+      let orders: any[] | null = null;
+
+      if (rows && rows.length > 0) {
+        for (const r of rows) {
+          if (r.bigisub_identifier_id === 'marketplace_listings_store_v1' && r.item_name) {
+            try { listings = JSON.parse(r.item_name); } catch (_) {}
+          }
+          if (r.bigisub_identifier_id === 'marketplace_orders_store_v1' && r.item_name) {
+            try { orders = JSON.parse(r.item_name); } catch (_) {}
+          }
+        }
+      }
+
+      if (!Array.isArray(listings) || listings.length === 0) {
+        listings = memoryMarketplaceListings || [...SEEDED_FOREIGN_NUMBER_LISTINGS];
+      }
+      if (!Array.isArray(orders)) {
+        orders = memoryMarketplaceOrders || [];
+      }
+
+      memoryMarketplaceListings = listings;
+      memoryMarketplaceOrders = orders;
+      return { listings, orders };
+    } catch (_) {
+      if (!memoryMarketplaceListings) memoryMarketplaceListings = [...SEEDED_FOREIGN_NUMBER_LISTINGS];
+      if (!memoryMarketplaceOrders) memoryMarketplaceOrders = [];
+      return { listings: memoryMarketplaceListings, orders: memoryMarketplaceOrders };
+    }
+  };
+
+  const saveMarketplaceStore = async (listings: any[], orders: any[]) => {
+    memoryMarketplaceListings = listings;
+    memoryMarketplaceOrders = orders;
+    try {
+      await supabase.from('services_config').upsert([
+        {
+          bigisub_identifier_id: 'marketplace_listings_store_v1',
+          item_name: JSON.stringify(listings),
+          name: 'Marketplace Listings Store',
+          cost_price: 0,
+          selling_price: 0,
+          is_active: false,
+        },
+        {
+          bigisub_identifier_id: 'marketplace_orders_store_v1',
+          item_name: JSON.stringify(orders),
+          name: 'Marketplace Orders Store',
+          cost_price: 0,
+          selling_price: 0,
+          is_active: false,
+        }
+      ], { onConflict: 'bigisub_identifier_id' });
+    } catch (err: any) {
+      console.warn("[Marketplace Store Save Warning]:", err.message);
+    }
+  };
+
+  app.get("/api/marketplace/categories", async (_req, res) => {
+    return res.json({ categories: MARKETPLACE_CATEGORIES });
+  });
+
+  app.get("/api/marketplace/listings", async (req, res) => {
+    try {
+      const { listings } = await loadMarketplaceStore();
+      const category = String(req.query.category || 'all').trim();
+      const type = String(req.query.type || 'all').trim();
+      const search = String(req.query.search || '').trim().toLowerCase();
+      const includeSold = req.query.includeSold === 'true';
+
+      let result = listings.filter((item: any) => includeSold || item.status === 'available');
+      if (category && category !== 'all') {
+        result = result.filter((item: any) => item.category_id === category);
+      }
+      if (type && type !== 'all') {
+        result = result.filter((item: any) => item.marketplace_categories?.type === type);
+      }
+      if (search) {
+        result = result.filter((item: any) =>
+          String(item.title || '').toLowerCase().includes(search) ||
+          String(item.description || '').toLowerCase().includes(search) ||
+          String(item.product_details?.phone_number || item.product_details?.item_identifier || '').toLowerCase().includes(search)
+        );
+      }
+
+      return res.json({ listings: result });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/marketplace/listings", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { categoryId, title, description, price, productDetails, imageUrl } = req.body || {};
+      const cat = MARKETPLACE_CATEGORIES.find((c) => c.id === categoryId) || MARKETPLACE_CATEGORIES[0];
+      const isForeignNumber = cat.type === 'foreign_number';
+      const isAdmin = await isCallerAdminUser(req, authUser);
+
+      // STRICT RULE: Only Admin can post Foreign Numbers for sale!
+      if (isForeignNumber && !isAdmin) {
+        return res.status(403).json({
+          error: "Only the platform Admin can post foreign numbers for sale.",
+        });
+      }
+
+      const numPrice = Number(price);
+      if (!title || !Number.isFinite(numPrice) || numPrice <= 0) {
+        return res.status(400).json({ error: "Valid title and selling price are required." });
+      }
+
+      const { data: sellerProf } = await supabase
+        .from('profiles')
+        .select('full_name, name, email')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      const sellerDisplayName = isForeignNumber
+        ? 'NORODATA Official Admin'
+        : (sellerProf?.full_name || sellerProf?.name || authUser.email?.split('@')[0] || 'Verified Seller');
+
+      const newListing = {
+        id: `lst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        seller_id: isForeignNumber ? 'admin' : authUser.id,
+        created_by_id: authUser.id,
+        category_id: cat.id,
+        title: String(title).trim(),
+        description: String(description || '').trim(),
+        price: numPrice,
+        product_details: productDetails || {},
+        image_url: imageUrl || null,
+        status: 'available',
+        views: 1,
+        is_admin_listing: isForeignNumber || isAdmin,
+        created_at: new Date().toISOString(),
+        marketplace_categories: {
+          name: cat.name,
+          icon: cat.icon,
+          type: cat.type,
+        },
+        profiles: {
+          full_name: sellerDisplayName,
+          name: sellerDisplayName,
+          marketplace_seller_rating: 5.0,
+          marketplace_seller_reviews: 100,
+        },
+      };
+
+      const { listings, orders } = await loadMarketplaceStore();
+      listings.unshift(newListing);
+      await saveMarketplaceStore(listings, orders);
+
+      return res.json({ listing: newListing });
+    } catch (err: any) {
+      console.error("[POST /api/marketplace/listings Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to create listing." });
+    }
+  });
+
+  app.delete("/api/marketplace/listings/:id", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const idx = listings.findIndex((l: any) => l.id === id);
+      if (idx === -1) return res.status(404).json({ error: "Listing not found." });
+
+      const target = listings[idx];
+      if (!isAdmin && target.seller_id !== authUser.id && target.created_by_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden: you can only delete your own listings." });
+      }
+
+      listings.splice(idx, 1);
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Initiate or resume order + live chat when user clicks on a Foreign Number / listing
+  app.post("/api/marketplace/orders/initiate", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const buyerId = authUser.id;
+      const { listingId, listingSnapshot } = req.body || {};
+      if (!listingId) return res.status(400).json({ error: "listingId is required." });
+
+      const { listings, orders } = await loadMarketplaceStore();
+      let listing = listings.find((l: any) => l.id === listingId) || listingSnapshot;
+      if (!listing) {
+        return res.status(404).json({ error: "Listing not found." });
+      }
+
+      const isForeignNumber = listing.marketplace_categories?.type === 'foreign_number' || String(listing.category_id || '').includes('phone');
+
+      // Check for an existing active order for this buyer on this listing
+      const existingOrder = orders.find((o: any) =>
+        o.listing_id === listing.id &&
+        o.buyer_id === buyerId &&
+        ['pending', 'code_requested', 'code_sent', 'paid'].includes(o.status)
+      );
+
+      if (existingOrder) {
+        return res.json({ order: existingOrder });
+      }
+
+      const { data: buyerProf } = await supabase
+        .from('profiles')
+        .select('id, full_name, name, email, phone_number, wallet_balance, balance')
+        .eq('id', buyerId)
+        .maybeSingle();
+
+      const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split('@')[0] || 'Buyer';
+      const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
+      const phonePreview = listing.product_details?.phone_number || listing.product_details?.item_identifier || '';
+      const nowIso = new Date().toISOString();
+      const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+      const initialMessages: any[] = [
+        {
+          id: `msg-${Date.now()}-1`,
+          order_id: orderId,
+          sender_id: buyerId,
+          sender_role: 'buyer',
+          message_type: 'text',
+          content: isForeignNumber
+            ? `👋 Hi Admin! I want to buy the foreign number "${listing.title}" ${phonePreview ? `(${phonePreview})` : ''} for ₦${Number(listing.price).toLocaleString()}.`
+            : `Hi! I'm interested in purchasing: "${listing.title}". Let's finalize the details here.`,
+          created_at: nowIso,
+        }
+      ];
+
+      if (isForeignNumber) {
+        initialMessages.push({
+          id: `msg-${Date.now()}-2`,
+          order_id: orderId,
+          sender_id: 'admin',
+          sender_role: 'admin',
+          message_type: 'text',
+          content: `✅ Connected to NORODATA Official Admin Desk!\n\n📱 Number: ${phonePreview || listing.title}\n💰 Price: ₦${Number(listing.price).toLocaleString()}\n\nClick "Request Verification Code" below when you are ready for the OTP code. Once Admin gives you the code and the deal is done, ₦${Number(listing.price).toLocaleString()} will be debited from your wallet automatically!`,
+          created_at: nowIso,
+        });
+      }
+
+      const newOrder = {
+        id: orderId,
+        listing_id: listing.id,
+        buyer_id: buyerId,
+        seller_id: isForeignNumber ? 'admin' : (listing.seller_id || 'admin'),
+        price: Number(listing.price),
+        status: 'pending',
+        is_foreign_number: isForeignNumber,
+        code_requested: false,
+        created_at: nowIso,
+        updated_at: nowIso,
+        marketplace_listings: {
+          id: listing.id,
+          title: listing.title,
+          price: Number(listing.price),
+          description: listing.description,
+          product_details: listing.product_details || {},
+          image_url: listing.image_url || null,
+          marketplace_categories: listing.marketplace_categories || { name: 'Foreign Number', icon: '📱', type: 'foreign_number' },
+        },
+        seller: {
+          id: isForeignNumber ? 'admin' : listing.seller_id,
+          full_name: isForeignNumber ? 'NORODATA Official Admin' : (listing.profiles?.full_name || 'Verified Seller'),
+          name: isForeignNumber ? 'NORODATA Official Admin' : (listing.profiles?.name || 'Verified Seller'),
+          marketplace_seller_rating: 5.0,
+        },
+        buyer: {
+          id: buyerId,
+          full_name: buyerName,
+          name: buyerName,
+          email: buyerProf?.email || authUser.email || '',
+          phone_number: buyerProf?.phone_number || '',
+          wallet_balance: buyerBalance,
+        },
+        messages: initialMessages,
+      };
+
+      orders.unshift(newOrder);
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ order: newOrder });
+    } catch (err: any) {
+      console.error("[POST /api/marketplace/orders/initiate Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to initiate order chat." });
+    }
+  });
+
+  // Get orders for buyer, seller, or Admin (all orders)
+  app.get("/api/marketplace/orders", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const role = String(req.query.role || 'buyer').trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { orders } = await loadMarketplaceStore();
+
+      let filtered: any[] = [];
+      if (role === 'admin' && isAdmin) {
+        filtered = orders;
+      } else if (role === 'seller') {
+        filtered = orders.filter((o: any) =>
+          o.seller_id === authUser.id || (isAdmin && (o.seller_id === 'admin' || o.is_foreign_number))
+        );
+      } else {
+        filtered = orders.filter((o: any) => o.buyer_id === authUser.id);
+      }
+
+      // Enrich buyer balances for admin view
+      if (isAdmin && filtered.length > 0) {
+        const buyerIds = Array.from(new Set(filtered.map((o: any) => o.buyer_id).filter(Boolean)));
+        if (buyerIds.length > 0) {
+          const { data: buyerProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, name, email, phone_number, wallet_balance, balance')
+            .in('id', buyerIds);
+          const map: Record<string, any> = {};
+          (buyerProfiles || []).forEach((p: any) => { map[p.id] = p; });
+          filtered = filtered.map((o: any) => {
+            const bp = map[o.buyer_id];
+            if (!bp) return o;
+            return {
+              ...o,
+              buyer: {
+                ...o.buyer,
+                id: bp.id,
+                full_name: bp.full_name || bp.name || o.buyer?.full_name || 'Buyer',
+                email: bp.email || o.buyer?.email || '',
+                phone_number: bp.phone_number || o.buyer?.phone_number || '',
+                wallet_balance: Number(bp.wallet_balance ?? bp.balance ?? 0),
+              }
+            };
+          });
+        }
+      }
+
+      return res.json({ orders: filtered });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get single order + messages + live buyer wallet balance
+  app.get("/api/marketplace/orders/:id", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+
+      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+
+      // Refresh live buyer wallet balance
+      let buyerBalance = Number(order.buyer?.wallet_balance ?? 0);
+      if (order.buyer_id) {
+        const { data: bp } = await supabase
+          .from('profiles')
+          .select('id, full_name, name, email, phone_number, wallet_balance, balance')
+          .eq('id', order.buyer_id)
+          .maybeSingle();
+        if (bp) {
+          buyerBalance = Number(bp.wallet_balance ?? bp.balance ?? 0);
+          order.buyer = {
+            ...order.buyer,
+            id: bp.id,
+            full_name: bp.full_name || bp.name || order.buyer?.full_name || 'Buyer',
+            email: bp.email || order.buyer?.email || '',
+            phone_number: bp.phone_number || order.buyer?.phone_number || '',
+            wallet_balance: buyerBalance,
+          };
+        }
+      }
+
+      return res.json({
+        order,
+        messages: order.messages || [],
+        buyerBalance,
+        isAdmin,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Send message in order chat
+  app.post("/api/marketplace/orders/:id/messages", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const content = String(req.body?.content || '').trim();
+      if (!content) return res.status(400).json({ error: "Message content is required." });
+
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+
+      const senderId = (isAdmin && authUser.id !== order.buyer_id) ? 'admin' : authUser.id;
+      const msg = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        order_id: id,
+        sender_id: senderId,
+        sender_role: senderId === order.buyer_id ? 'buyer' : 'admin',
+        message_type: 'text',
+        content,
+        created_at: new Date().toISOString(),
+      };
+
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.updated_at = msg.created_at;
+      await saveMarketplaceStore(listings, orders);
+
+      return res.json({ message: msg, order });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Buyer clicks "Request Verification Code" in chat
+  app.post("/api/marketplace/orders/:id/request-code", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+
+      // Check buyer's live wallet balance so Admin knows buyer has funds ready for auto-debit
+      const { data: bp } = await supabase
+        .from('profiles')
+        .select('wallet_balance, balance')
+        .eq('id', order.buyer_id)
+        .maybeSingle();
+      const buyerBalance = Number(bp?.wallet_balance ?? bp?.balance ?? 0);
+      const requiredPrice = Number(order.price || 0);
+
+      if (buyerBalance < requiredPrice && order.status !== 'paid') {
+        return res.status(400).json({
+          error: `Insufficient wallet balance (₦${buyerBalance.toLocaleString()}). Please fund your wallet with at least ₦${requiredPrice.toLocaleString()} before requesting the code — your wallet will be debited automatically once the deal is done.`,
+        });
+      }
+
+      const phonePreview = order.marketplace_listings?.product_details?.phone_number || order.marketplace_listings?.title || 'this number';
+      const nowIso = new Date().toISOString();
+      const msg = {
+        id: `msg-${Date.now()}-req`,
+        order_id: id,
+        sender_id: order.buyer_id,
+        sender_role: 'buyer',
+        message_type: 'text',
+        content: `🔔 CODE REQUEST: Admin, I am ready to receive the verification OTP code for ${phonePreview}. (Wallet balance ₦${buyerBalance.toLocaleString()} verified — ₦${requiredPrice.toLocaleString()} will be auto-debited once deal is done).`,
+        created_at: nowIso,
+      };
+
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.code_requested = true;
+      order.updated_at = nowIso;
+      await saveMarketplaceStore(listings, orders);
+
+      return res.json({ order, message: msg });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Helper to complete deal and automatically debit buyer's wallet
+  const executeOrderDealCompletion = async (order: any, listings: any[], orders: any[], verificationCode?: string) => {
+    if (order.status === 'completed') {
+      return { order, alreadyCompleted: true };
+    }
+
+    const nowIso = new Date().toISOString();
+    const price = Number(order.price || 0);
+    let paymentRef = order.payment_reference || `NUM-DEAL-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    let newBuyerBalance = 0;
+
+    // Automatically debit buyer's wallet if not already paid!
+    if (order.status !== 'paid' && !order.payment_reference && price > 0) {
+      const { data: buyerProf, error: bErr } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, name, wallet_balance, balance, available_balance')
+        .eq('id', order.buyer_id)
+        .maybeSingle();
+
+      if (bErr || !buyerProf) {
+        throw new Error("Buyer wallet profile not found.");
+      }
+
+      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
+      if (currentBalance < price) {
+        throw new Error(`Buyer has insufficient wallet balance (Available: ₦${currentBalance.toLocaleString()}, Price: ₦${price.toLocaleString()}). Please fund wallet to complete the deal.`);
+      }
+
+      newBuyerBalance = Number((currentBalance - price).toFixed(2));
+      const { error: deductErr } = await supabase
+        .from('profiles')
+        .update({
+          wallet_balance: newBuyerBalance,
+          balance: newBuyerBalance,
+          available_balance: newBuyerBalance,
+          updated_at: nowIso,
+        })
+        .eq('id', order.buyer_id);
+
+      if (deductErr) {
+        throw new Error(`Failed to auto-debit buyer wallet: ${deductErr.message}`);
+      }
+
+      try {
+        await supabase.from('users').update({ wallet_balance: newBuyerBalance }).eq('id', order.buyer_id);
+      } catch (_) {}
+
+      // Record transaction in ledger
+      try {
+        await supabase.from('transactions').insert({
+          user_id: String(order.buyer_id),
+          user_email: buyerProf.email || null,
+          type: 'marketplace',
+          amount: price,
+          status: 'completed',
+          reference: paymentRef,
+          description: `Foreign Number Purchase: ${order.marketplace_listings?.title || 'Foreign Number'}`,
+          gateway: 'wallet_auto_debit',
+          created_at: nowIso,
+        });
+      } catch (_) {}
+
+      // If seller is a real non-admin user UUID (e.g. social account seller), credit seller 98%
+      if (order.seller_id && order.seller_id !== 'admin' && /^[0-9a-f-]{36}$/i.test(order.seller_id)) {
+        try {
+          const sellerPayout = Math.floor(price * 0.98);
+          const { data: sellerProf } = await supabase
+            .from('profiles')
+            .select('id, email, wallet_balance, balance')
+            .eq('id', order.seller_id)
+            .maybeSingle();
+          if (sellerProf) {
+            const sBal = Number(sellerProf.wallet_balance ?? sellerProf.balance ?? 0);
+            const newSBal = Number((sBal + sellerPayout).toFixed(2));
+            await supabase.from('profiles').update({
+              wallet_balance: newSBal,
+              balance: newSBal,
+              available_balance: newSBal,
+              updated_at: nowIso,
+            }).eq('id', order.seller_id);
+            await supabase.from('transactions').insert({
+              user_id: String(order.seller_id),
+              user_email: sellerProf.email || null,
+              type: 'funding',
+              amount: sellerPayout,
+              status: 'completed',
+              reference: `${paymentRef}-PAYOUT`,
+              description: `Marketplace sale payout: ${order.marketplace_listings?.title || 'Listing'}`,
+              gateway: 'marketplace_escrow',
+              created_at: nowIso,
+            });
+          }
+        } catch (_) {}
+      }
+    }
+
+    order.status = 'completed';
+    order.paid_at = order.paid_at || nowIso;
+    order.completed_at = nowIso;
+    order.verified_at = nowIso;
+    order.payment_reference = paymentRef;
+    if (verificationCode) {
+      order.verification_code = verificationCode;
+    }
+    if (order.buyer) {
+      order.buyer.wallet_balance = newBuyerBalance;
+    }
+
+    // Mark custom listing as sold (keep seeded template numbers available or mark sold if custom)
+    const listingObj = listings.find((l: any) => l.id === order.listing_id);
+    if (listingObj && !['num-us-clean', 'num-uk-clean', 'num-ca-clean'].includes(listingObj.id)) {
+      listingObj.status = 'sold';
+    }
+
+    if (!Array.isArray(order.messages)) order.messages = [];
+    order.messages.push({
+      id: `msg-${Date.now()}-done`,
+      order_id: order.id,
+      sender_id: 'admin',
+      sender_role: 'admin',
+      message_type: 'text',
+      content: `🎉 DEAL COMPLETED! ₦${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Thank you for using NORODATA!`,
+      created_at: nowIso,
+    });
+    order.updated_at = nowIso;
+
+    await saveMarketplaceStore(listings, orders);
+    return { order, newBuyerBalance, reference: paymentRef };
+  };
+
+  // Admin/Seller sends verification code in chat (with optional auto-complete & auto-debit)
+  app.post("/api/marketplace/orders/:id/send-code", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const code = String(req.body?.code || '').trim();
+      const autoCompleteDeal = Boolean(req.body?.autoCompleteDeal);
+      if (!code) return res.status(400).json({ error: "Verification code is required." });
+
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+
+      if (!isAdmin && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Only Admin or the seller can send verification codes." });
+      }
+
+      const nowIso = new Date().toISOString();
+      const msg = {
+        id: `msg-${Date.now()}-code`,
+        order_id: id,
+        sender_id: isAdmin ? 'admin' : authUser.id,
+        sender_role: 'admin',
+        message_type: 'verification_code',
+        content: 'Here is your official verification code:',
+        code_value: code,
+        created_at: nowIso,
+      };
+
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.verification_code = code;
+      order.updated_at = nowIso;
+
+      if (autoCompleteDeal) {
+        const result = await executeOrderDealCompletion(order, listings, orders, code);
+        return res.json({ success: true, order: result.order, message: msg, dealCompleted: true });
+      }
+
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ success: true, order, message: msg, dealCompleted: false });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || "Failed to send code." });
+    }
+  });
+
+  // Complete deal & automatically debit buyer's wallet (callable by Admin or Buyer once code is delivered)
+  app.post("/api/marketplace/orders/:id/complete-deal", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const submittedCode = String(req.body?.code || '').trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+
+      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+
+      // If buyer submitted a code, optionally validate if a code_value was posted
+      const latestCodeMsg = [...(order.messages || [])].reverse().find((m: any) => m.message_type === 'verification_code');
+      const finalCode = submittedCode || latestCodeMsg?.code_value || order.verification_code || 'VERIFIED';
+
+      const result = await executeOrderDealCompletion(order, listings, orders, finalCode);
+      return res.json({
+        success: true,
+        order: result.order,
+        newBuyerBalance: result.newBuyerBalance,
+        reference: result.reference,
+      });
+    } catch (err: any) {
+      console.error("[POST /api/marketplace/orders/:id/complete-deal Error]:", err.message);
+      return res.status(400).json({ error: err.message || "Failed to complete deal." });
     }
   });
 

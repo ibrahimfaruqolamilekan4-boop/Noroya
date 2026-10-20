@@ -44,8 +44,8 @@ export function ListingDetailsModal({
     setLoading(true);
     try {
       const buyerId = currentUser.id || currentUser.uid;
-      const order = await marketplaceService.initiatePurchase(buyerId, listing.id);
-      toast.success('Order created! Connecting you to seller chat…');
+      const order = await marketplaceService.initiatePurchase(buyerId, listing.id, listing);
+      toast.success('Live chat opened!');
       onStartOrder(order);
     } catch (err: any) {
       console.error('[handleBuyNow] Error:', err);

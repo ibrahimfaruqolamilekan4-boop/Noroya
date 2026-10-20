@@ -62,6 +62,7 @@ import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
+import { fetchWalletSnapshot, lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
 
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
@@ -758,14 +759,33 @@ function DashboardOverview({
     return () => window.removeEventListener('open-transfer-modal', handler);
   }, []);
 
+  // Listen for automatic wallet balance updates (e.g. Foreign Number deal completion auto-debit)
+  React.useEffect(() => {
+    const handler = (e: any) => {
+      if (typeof e?.detail?.balance === 'number') {
+        setCurrentBalance(e.detail.balance);
+      }
+      refreshBalance();
+    };
+    window.addEventListener('wallet-balance-updated', handler);
+    return () => window.removeEventListener('wallet-balance-updated', handler);
+  }, []);
+
   const refreshBalance = async () => {
+    try {
+      const snap = await fetchWalletSnapshot();
+      if (snap && typeof snap.balance === 'number') {
+        setCurrentBalance(snap.balance);
+        return;
+      }
+    } catch (_) {}
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
     const { data: profile } = await supabase
       .from('profiles')
       .select('wallet_balance')
       .eq('id', authUser.id)
-      .single();
+      .maybeSingle();
     if (profile) setCurrentBalance(profile.wallet_balance || 0);
   };
 
@@ -785,44 +805,60 @@ function DashboardOverview({
 
   const handleLookupRecipient = async () => {
     if (!transferUid.trim()) { toast.error('Please enter recipient details'); return; }
+    const amt = Number(transferAmount);
+    if (!amt || amt <= 0) { toast.error('Please enter a valid transfer amount'); return; }
     setTransferLoading(true);
     try {
       const q = transferUid.trim();
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .or(`email.eq.${q},phone_number.eq.${q},username.eq.${q},referral_code.eq.${q.toUpperCase()}`)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) { toast.error('User not found.'); setTransferLoading(false); return; }
-      if (data.id === (user as any).uid || data.id === (user as any).id) { toast.error('Cannot transfer to yourself.'); setTransferLoading(false); return; }
-      setTransferRecipient(data);
+      const { recipient } = await lookupTransferRecipient(q);
+      if (!recipient) { toast.error('User not found.'); setTransferLoading(false); return; }
+      if (recipient.id === (user as any).uid || recipient.id === (user as any).id) {
+        toast.error('Cannot transfer to yourself.');
+        setTransferLoading(false);
+        return;
+      }
+      setTransferRecipient(recipient);
       setTransferStep('confirm');
-    } catch (err: any) { toast.error(err.message || 'Failed to find recipient'); }
-    finally { setTransferLoading(false); }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to find recipient');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   const handleConfirmTransfer = async () => {
     const amt = Number(transferAmount);
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    if (!transferRecipient?.id) { toast.error('No recipient selected'); return; }
     setTransferLoading(true);
-    const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     try {
-      const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote
+      const result = await executeWalletTransfer({
+        recipientId: transferRecipient.id,
+        amount: amt,
+        note: transferNote,
       });
-      if (error) throw error;
-      if (data.status === 'success') {
-        toast.success(`₦${amt.toLocaleString()} sent!`);
+      if (result.status === 'success') {
+        toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.full_name || 'recipient'}!`);
+        if (typeof result.newBalance === 'number') {
+          setCurrentBalance(result.newBalance);
+        }
         setShowTransferModal(false);
         setTransferStep('input');
-        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null);
+        setTransferUid('');
+        setTransferAmount('');
+        setTransferNote('');
+        setTransferRecipient(null);
         refreshBalance();
-      } else if (data.status === 'insufficient_funds') {
-        toast.error(`Insufficient balance.`);
-      } else { toast.error(data.message || 'Transfer failed'); }
-    } catch (err: any) { toast.error(err.message || 'Transfer failed'); }
-    finally { setTransferLoading(false); }
+      } else if (result.status === 'insufficient_funds') {
+        toast.error(result.error || 'Insufficient balance.');
+      } else {
+        toast.error(result.error || 'Transfer failed');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Transfer failed');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   // Bachs.io Gateway & Virtual Account state
@@ -1460,21 +1496,25 @@ function DashboardOverview({
                   </div>
 
                   {/* Your own Transfer ID for easy sharing */}
-                  {user.referralCode && (
-                    <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
-                      <div>
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
-                        <p className="font-mono font-black text-gray-900 mt-0.5">{user.referralCode}</p>
+                  {(() => {
+                    const myTransferId = user.referralCode || `NORODATA-${String(user.uid || (user as any).id || '').replace(/-/g, '').substring(0, 6).toUpperCase()}`;
+                    return (
+                      <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
+                        <div>
+                          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
+                          <p className="font-mono font-black text-gray-900 mt-0.5">{myTransferId}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { navigator.clipboard.writeText(myTransferId); toast.success('Your Transfer ID copied!'); }}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
+                          style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
+                        >
+                          <Copy size={12} /> Copy mine
+                        </button>
                       </div>
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(user.referralCode); toast.success('Your Transfer ID copied!'); }}
-                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
-                        style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
-                      >
-                        <Copy size={12} /> Copy mine
-                      </button>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Amount */}
                   <div>
