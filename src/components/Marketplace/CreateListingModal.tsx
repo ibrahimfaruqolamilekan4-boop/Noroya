@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, ShieldCheck, Loader2 } from 'lucide-react';
+import { X, Plus, ShieldCheck, Loader2, Lock } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { marketplaceService, MarketplaceCategory } from '../../lib/marketplaceService';
 
@@ -9,6 +9,8 @@ interface CreateListingModalProps {
   onClose: () => void;
   categories: MarketplaceCategory[];
   sellerId: string;
+  isAdmin?: boolean;
+  defaultType?: 'foreign_number' | 'social_account';
   onSuccess: () => void;
 }
 
@@ -17,9 +19,17 @@ export function CreateListingModal({
   onClose,
   categories,
   sellerId,
+  isAdmin = false,
+  defaultType,
   onSuccess
 }: CreateListingModalProps) {
-  const [categoryId, setCategoryId] = useState(categories[0]?.id || '');
+  // Only Admin can post Foreign Numbers for sale
+  const allowedCategories = React.useMemo(() => {
+    if (isAdmin) return categories;
+    return categories.filter(c => c.type !== 'foreign_number');
+  }, [categories, isAdmin]);
+
+  const [categoryId, setCategoryId] = useState(allowedCategories[0]?.id || '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
@@ -28,18 +38,31 @@ export function CreateListingModal({
   const [submitting, setSubmitting] = useState(false);
 
   React.useEffect(() => {
-    if (categories.length > 0 && !categoryId) {
-      setCategoryId(categories[0].id);
+    if (!isOpen || allowedCategories.length === 0) return;
+    if (defaultType && isAdmin) {
+      const match = allowedCategories.find(c => c.type === defaultType);
+      if (match) {
+        setCategoryId(match.id);
+        return;
+      }
     }
-  }, [categories, categoryId]);
+    if (!categoryId || !allowedCategories.some(c => c.id === categoryId)) {
+      setCategoryId(allowedCategories[0].id);
+    }
+  }, [isOpen, allowedCategories, defaultType, isAdmin, categoryId]);
 
-  const selectedCategory = categories.find(c => c.id === categoryId);
+  const selectedCategory = allowedCategories.find(c => c.id === categoryId);
   const isNumber = selectedCategory?.type === 'foreign_number';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !description.trim() || !price || !categoryId) {
       toast.error('Please fill in all required fields.');
+      return;
+    }
+
+    if (isNumber && !isAdmin) {
+      toast.error('Only the platform Admin can post foreign numbers for sale.');
       return;
     }
 
@@ -71,7 +94,7 @@ export function CreateListingModal({
         productDetails
       });
 
-      toast.success('🎉 Listing created and published to the Digital Marketplace!');
+      toast.success(isNumber ? '🎉 Foreign Number published for sale!' : '🎉 Listing published to the Digital Marketplace!');
       setTitle('');
       setDescription('');
       setPrice('');
@@ -103,8 +126,14 @@ export function CreateListingModal({
                 <Plus size={20} />
               </div>
               <div>
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">Create Marketplace Listing</h3>
-                <p className="text-xs text-slate-500 font-medium">Sell foreign numbers or social accounts</p>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                  {isAdmin ? 'Post Foreign Number / Listing (Admin)' : 'Sell a Social Media Account'}
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  {isAdmin
+                    ? 'Post verified foreign phone numbers or digital assets for sale'
+                    : 'Foreign phone numbers can only be posted by Admin'}
+                </p>
               </div>
             </div>
             <button
@@ -114,6 +143,13 @@ export function CreateListingModal({
               <X size={16} />
             </button>
           </div>
+
+          {!isAdmin && (
+            <div className="mt-4 p-3 rounded-2xl bg-amber-50 border border-amber-200 flex items-center gap-2.5 text-xs text-amber-900 font-semibold">
+              <Lock size={15} className="text-amber-600 shrink-0" />
+              <span>Foreign Phone Numbers are strictly posted and fulfilled by NORODATA Admin only.</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
             {/* Category selection */}
@@ -126,9 +162,9 @@ export function CreateListingModal({
                 onChange={e => setCategoryId(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:border-emerald-500"
               >
-                {categories.map(cat => (
+                {allowedCategories.map(cat => (
                   <option key={cat.id} value={cat.id}>
-                    {cat.icon} {cat.name} ({cat.type === 'foreign_number' ? 'Phone Number' : 'Social Account'})
+                    {cat.icon} {cat.name} ({cat.type === 'foreign_number' ? 'Admin Phone Number' : 'Social Account'})
                   </option>
                 ))}
               </select>
@@ -161,7 +197,7 @@ export function CreateListingModal({
                 step="50"
                 value={price}
                 onChange={e => setPrice(e.target.value)}
-                placeholder="e.g. 3500"
+                placeholder="e.g. 4500"
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-base font-black text-emerald-600 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -169,10 +205,11 @@ export function CreateListingModal({
             {/* Product Identifier (Number or Handle) */}
             <div>
               <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
-                {isNumber ? "Phone Number Preview" : "Handle / Username"}
+                {isNumber ? "Foreign Phone Number" : "Handle / Username"}
               </label>
               <input
                 type="text"
+                required={isNumber}
                 value={identifier}
                 onChange={e => setIdentifier(e.target.value)}
                 placeholder={isNumber ? "e.g. +1 (305) 555-0199" : "e.g. @fashion_trendz"}
@@ -183,13 +220,13 @@ export function CreateListingModal({
             {/* Extra detail */}
             <div>
               <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
-                {isNumber ? "Carrier / Verification Type" : "Followers / Engagement Rate"}
+                {isNumber ? "Carrier / Supported Apps (WhatsApp, Telegram, PayPal…)" : "Followers / Engagement Rate"}
               </label>
               <input
                 type="text"
                 value={extraDetail}
                 onChange={e => setExtraDetail(e.target.value)}
-                placeholder={isNumber ? "e.g. T-Mobile VoIP / Supports WhatsApp & SMS" : "e.g. 52,000 active organic followers"}
+                placeholder={isNumber ? "e.g. Non-VoIP SIM / Supports WhatsApp, Telegram & SMS" : "e.g. 52,000 active organic followers"}
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -197,21 +234,29 @@ export function CreateListingModal({
             {/* Description */}
             <div>
               <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
-                Description & Delivery Terms
+                Description & Instructions for Buyer
               </label>
               <textarea
                 required
                 rows={3}
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="Describe how the buyer will receive access and verification codes after payment..."
+                placeholder={
+                  isNumber
+                    ? "Click on this number to open live chat with Admin, request your verification OTP code, and your wallet will be automatically debited once the deal is done."
+                    : "Describe how the buyer will receive access and verification codes..."
+                }
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-2.5 text-xs text-emerald-800 font-semibold">
               <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
-              <span>Payments are held securely in escrow until buyer verifies the code.</span>
+              <span>
+                {isNumber
+                  ? 'Buyers click this number to open a live chat with you, request the OTP code, and their wallet is auto-debited once the deal is completed.'
+                  : 'Buyer wallet is debited automatically once the verification code is delivered and the deal is done.'}
+              </span>
             </div>
 
             <div className="pt-2 flex gap-3">
@@ -228,7 +273,7 @@ export function CreateListingModal({
                 className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {submitting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                {submitting ? 'Publishing…' : 'Publish Listing'}
+                {submitting ? 'Publishing…' : isNumber ? 'Post Number for Sale' : 'Publish Listing'}
               </button>
             </div>
           </form>

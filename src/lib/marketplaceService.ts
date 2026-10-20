@@ -20,6 +20,7 @@ export interface MarketplaceListing {
   image_url?: string;
   status: 'available' | 'sold' | 'pending';
   views: number;
+  is_admin_listing?: boolean;
   created_at: string;
   updated_at?: string;
   marketplace_categories?: {
@@ -41,30 +42,56 @@ export interface MarketplaceOrder {
   buyer_id: string;
   seller_id: string;
   price: number;
-  status: 'pending' | 'paid' | 'completed' | 'refunded';
+  status: 'pending' | 'code_requested' | 'code_sent' | 'paid' | 'completed' | 'refunded';
+  is_foreign_number?: boolean;
+  code_requested?: boolean;
   payment_reference?: string;
   paid_at?: string;
   verification_code?: string;
   verified_at?: string;
   created_at: string;
+  updated_at?: string;
   completed_at?: string;
   notes?: string;
   marketplace_listings?: {
+    id?: string;
     title: string;
     price: number;
+    description?: string;
     product_details: any;
     image_url?: string;
+    marketplace_categories?: {
+      name: string;
+      icon: string;
+      type: string;
+    };
+  };
+  seller?: {
+    id?: string;
+    full_name?: string;
+    name?: string;
+    marketplace_seller_rating?: number;
+  };
+  buyer?: {
+    id?: string;
+    full_name?: string;
+    name?: string;
+    email?: string;
+    phone_number?: string;
+    wallet_balance?: number;
   };
   profiles?: {
     full_name?: string;
     marketplace_seller_rating?: number;
   };
+  messages?: MarketplaceMessage[];
 }
 
 export interface MarketplaceMessage {
   id: string;
   order_id: string;
   sender_id: string;
+  sender_role?: 'buyer' | 'admin' | 'seller';
   message_type: 'text' | 'verification_code';
   content: string;
   code_value?: string;
@@ -72,7 +99,7 @@ export interface MarketplaceMessage {
   created_at: string;
 }
 
-const DEFAULT_CATEGORIES: MarketplaceCategory[] = [
+export const DEFAULT_CATEGORIES: MarketplaceCategory[] = [
   { id: 'cat-us-phone', name: 'US Phone Numbers', description: 'American phone numbers for verification and calls', icon: '🇺🇸', type: 'foreign_number' },
   { id: 'cat-uk-phone', name: 'UK Phone Numbers', description: 'British phone numbers for verification and calls', icon: '🇬🇧', type: 'foreign_number' },
   { id: 'cat-ca-phone', name: 'Canada Phone Numbers', description: 'Canadian phone numbers for verification and calls', icon: '🇨🇦', type: 'foreign_number' },
@@ -83,488 +110,233 @@ const DEFAULT_CATEGORIES: MarketplaceCategory[] = [
   { id: 'cat-fb-acc', name: 'Facebook Accounts', description: 'Facebook pages, groups, and aged accounts', icon: '👍', type: 'social_account' },
 ];
 
-export const DEFAULT_FALLBACK_LISTINGS: any[] = [
+export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [
   {
     id: 'num-us-clean',
-    seller_id: 'seller-1',
+    seller_id: 'admin',
     category_id: 'cat-us-phone',
-    title: '🇺🇸 Clean USA +1 Phone Number (WhatsApp / PayPal Ready)',
-    description: 'Fresh non-VoIP USA number ready for SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google.',
+    title: '🇺🇸 Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)',
+    description: 'Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, request your verification code, and your wallet will be debited automatically once the deal is done.',
     price: 4500,
-    product_details: { phone_number: '+1 (555) 234-8901', country: 'United States' },
+    product_details: { item_identifier: '+1 (555) 234-8901', phone_number: '+1 (555) 234-8901', country: 'United States', carrier: 'AT&T / T-Mobile Non-VoIP' },
     status: 'available',
-    views: 89,
+    views: 94,
+    is_admin_listing: true,
     created_at: new Date().toISOString(),
     marketplace_categories: { name: 'US Phone Numbers', icon: '🇺🇸', type: 'foreign_number' },
-    profiles: { full_name: 'FastVerify NG', marketplace_seller_rating: 4.8, marketplace_seller_reviews: 42 }
+    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
   },
   {
-    id: 'acc-ig-aged',
-    seller_id: 'seller-2',
-    category_id: 'cat-ig-acc',
-    title: '📷 Aged Instagram Account (2020) • 12.5k Real Followers',
-    description: 'Established 2020 lifestyle & fashion page. 12.5k organic followers, high engagement rate, full email access included.',
-    price: 25000,
-    product_details: { username: '@fashionvibes_ng', followers: '12.5k', platform: 'Instagram' },
+    id: 'num-uk-clean',
+    seller_id: 'admin',
+    category_id: 'cat-uk-phone',
+    title: '🇬🇧 Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)',
+    description: 'Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and request your code — automatic wallet debit once completed.',
+    price: 5000,
+    product_details: { item_identifier: '+44 7700 900412', phone_number: '+44 7700 900412', country: 'United Kingdom', carrier: 'Vodafone UK Physical SIM' },
     status: 'available',
-    views: 110,
+    views: 67,
+    is_admin_listing: true,
     created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'Instagram Accounts', icon: '📷', type: 'social_account' },
-    profiles: { full_name: 'DigitalAssets Hub', marketplace_seller_rating: 4.9, marketplace_seller_reviews: 65 }
+    marketplace_categories: { name: 'UK Phone Numbers', icon: '🇬🇧', type: 'foreign_number' },
+    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
+  },
+  {
+    id: 'num-ca-clean',
+    seller_id: 'admin',
+    category_id: 'cat-ca-phone',
+    title: '🇨🇦 Clean Canada +1 Phone Number (WhatsApp / Global Apps)',
+    description: 'Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, request OTP code, and complete your deal.',
+    price: 4800,
+    product_details: { item_identifier: '+1 (416) 555-0184', phone_number: '+1 (416) 555-0184', country: 'Canada', carrier: 'Rogers Canada SIM' },
+    status: 'available',
+    views: 51,
+    is_admin_listing: true,
+    created_at: new Date().toISOString(),
+    marketplace_categories: { name: 'Canada Phone Numbers', icon: '🇨🇦', type: 'foreign_number' },
+    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
   }
 ];
 
+async function marketplaceFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token || '';
+  const email = session?.user?.email || '';
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(email ? { 'x-admin-email': email } : {}),
+      ...(options?.headers || {}),
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error || json?.message || `Request failed (${res.status})`);
+  }
+  return json as T;
+}
+
 export const marketplaceService = {
-  // Get all categories
   async getCategories(): Promise<MarketplaceCategory[]> {
     try {
-      const { data, error } = await supabase
-        .from('marketplace_categories')
-        .select('*')
-        .order('name', { ascending: true });
-
-      if (error || !data || data.length === 0) {
-        return DEFAULT_CATEGORIES;
-      }
-      return data;
+      const data = await marketplaceFetch<{ categories: MarketplaceCategory[] }>('/api/marketplace/categories');
+      return data.categories?.length ? data.categories : DEFAULT_CATEGORIES;
     } catch (_) {
       return DEFAULT_CATEGORIES;
     }
   },
 
-  // Get all available listings with optional filters
-  async getListings(filters?: { category?: string; type?: string; search?: string }) {
+  async getListings(filters?: { category?: string; type?: string; search?: string }): Promise<MarketplaceListing[]> {
     try {
-      let query = supabase
-        .from('marketplace_listings')
-        .select(`
-          *,
-          marketplace_categories(name, icon, type),
-          profiles(full_name, name, marketplace_seller_rating, marketplace_seller_reviews)
-        `)
-        .eq('status', 'available');
-
+      const params = new URLSearchParams();
+      if (filters?.category) params.set('category', filters.category);
+      if (filters?.type) params.set('type', filters.type);
+      if (filters?.search) params.set('search', filters.search);
+      const data = await marketplaceFetch<{ listings: MarketplaceListing[] }>(`/api/marketplace/listings?${params.toString()}`);
+      return data.listings || [];
+    } catch (err: any) {
+      console.warn('[marketplaceService.getListings] Fallback:', err.message);
+      let result = [...DEFAULT_FALLBACK_LISTINGS];
       if (filters?.category && filters.category !== 'all') {
-        query = query.eq('category_id', filters.category);
-      }
-      if (filters?.search && filters.search.trim()) {
-        query = query.ilike('title', `%${filters.search.trim()}%`);
-      }
-
-      const { data, error } = await query
-        .order('created_at', { ascending: false })
-        .limit(60);
-
-      let result = (data && data.length > 0) ? data : DEFAULT_FALLBACK_LISTINGS;
-
-      if (filters?.category && filters.category !== 'all') {
-        result = result.filter((item: any) => item.category_id === filters.category);
+        result = result.filter((item) => item.category_id === filters.category);
       }
       if (filters?.type && filters.type !== 'all') {
-        result = result.filter((item: any) => item.marketplace_categories?.type === filters.type);
+        result = result.filter((item) => item.marketplace_categories?.type === filters.type);
       }
-      if (filters?.search && filters.search.trim()) {
-        const q = filters.search.toLowerCase();
-        result = result.filter((item: any) =>
-          String(item.title || '').toLowerCase().includes(q) ||
-          String(item.description || '').toLowerCase().includes(q)
-        );
-      }
-
       return result;
-    } catch (err: any) {
-      console.warn('[marketplaceService.getListings] Exception:', err.message);
-      return DEFAULT_FALLBACK_LISTINGS;
     }
   },
 
-  // Get single listing with seller profile and details
-  async getListing(id: string) {
-    const { data, error } = await supabase
-      .from('marketplace_listings')
-      .select(`
-        *,
-        marketplace_categories(name, icon, type),
-        profiles(full_name, name, marketplace_seller_rating, marketplace_seller_reviews)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (error) throw error;
-
-    // Increment views asynchronously
-    try {
-      await supabase
-        .from('marketplace_listings')
-        .update({ views: (data.views || 0) + 1 })
-        .eq('id', id);
-    } catch (_) {}
-
-    return data;
+  async getListing(id: string): Promise<MarketplaceListing> {
+    const listings = await this.getListings();
+    const found = listings.find((l) => l.id === id);
+    if (!found) throw new Error('Listing not found');
+    return found;
   },
 
-  // Create listing (for sellers)
-  async createListing(sellerId: string, data: {
+  async createListing(_sellerId: string, data: {
     categoryId: string;
     title: string;
     description: string;
     price: number;
     productDetails: any;
     imageUrl?: string;
-  }) {
-    // Ensure seller has seller status enabled
-    try {
-      await supabase
-        .from('profiles')
-        .update({ is_marketplace_seller: true })
-        .eq('id', sellerId);
-    } catch (_) {}
-
-    const { data: listing, error } = await supabase
-      .from('marketplace_listings')
-      .insert({
-        seller_id: sellerId,
-        category_id: data.categoryId,
-        title: data.title.trim(),
-        description: data.description.trim(),
-        price: Number(data.price),
-        product_details: data.productDetails || {},
-        image_url: data.imageUrl || null,
-        status: 'available'
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return listing;
-  },
-
-  // Start buying process (create order & initialize chat)
-  async initiatePurchase(buyerId: string, listingId: string) {
-    // 1. Verify listing exists
-    const { data: listing, error: listingError } = await supabase
-      .from('marketplace_listings')
-      .select('id, seller_id, price, title')
-      .eq('id', listingId)
-      .single();
-
-    if (listingError) throw listingError;
-    if (listing.seller_id === buyerId) {
-      throw new Error('You cannot buy your own listing.');
-    }
-
-    // 2. Check for an existing open order for this buyer on this listing
-    const { data: existingOrder } = await supabase
-      .from('marketplace_orders')
-      .select('*')
-      .eq('listing_id', listingId)
-      .eq('buyer_id', buyerId)
-      .in('status', ['pending', 'paid'])
-      .maybeSingle();
-
-    if (existingOrder) {
-      return existingOrder;
-    }
-
-    // 3. Create order
-    const { data: order, error: orderError } = await supabase
-      .from('marketplace_orders')
-      .insert({
-        listing_id: listingId,
-        buyer_id: buyerId,
-        seller_id: listing.seller_id,
-        price: listing.price,
-        status: 'pending'
-      })
-      .select()
-      .single();
-
-    if (orderError) throw orderError;
-
-    // 4. Send initial system/greeting message in order chat
-    await supabase.from('marketplace_messages').insert({
-      order_id: order.id,
-      sender_id: buyerId,
-      message_type: 'text',
-      content: `Hi! I'm interested in purchasing: "${listing.title}". Let's finalize the details here.`
+  }): Promise<MarketplaceListing> {
+    const res = await marketplaceFetch<{ listing: MarketplaceListing }>('/api/marketplace/listings', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
-
-    return order;
+    return res.listing;
   },
 
-  // Send message in chat
-  async sendMessage(orderId: string, senderId: string, content: string) {
-    const { error } = await supabase
-      .from('marketplace_messages')
-      .insert({
-        order_id: orderId,
-        sender_id: senderId,
-        message_type: 'text',
-        content: content.trim()
-      });
-
-    if (error) throw error;
+  async deleteListing(listingId: string): Promise<void> {
+    await marketplaceFetch(`/api/marketplace/listings/${encodeURIComponent(listingId)}`, {
+      method: 'DELETE',
+    });
   },
 
-  // Get all messages for an order
+  // Start buying process (immediately creates/opens order & chat with Admin)
+  async initiatePurchase(_buyerId: string, listingId: string, listingSnapshot?: MarketplaceListing): Promise<MarketplaceOrder> {
+    const res = await marketplaceFetch<{ order: MarketplaceOrder }>('/api/marketplace/orders/initiate', {
+      method: 'POST',
+      body: JSON.stringify({ listingId, listingSnapshot }),
+    });
+    return res.order;
+  },
+
+  async getOrderDetails(orderId: string): Promise<{ order: MarketplaceOrder; messages: MarketplaceMessage[]; buyerBalance: number; isAdmin: boolean }> {
+    return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}`);
+  },
+
+  async sendMessage(orderId: string, _senderId: string, content: string): Promise<void> {
+    await marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: content.trim() }),
+    });
+  },
+
   async getMessages(orderId: string): Promise<MarketplaceMessage[]> {
-    const { data, error } = await supabase
-      .from('marketplace_messages')
-      .select('*')
-      .eq('order_id', orderId)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
+    const data = await this.getOrderDetails(orderId);
+    return data.messages || [];
   },
 
-  // Process payment (deduct securely from wallet)
-  async processPayment(buyerId: string, orderId: string, amount: number) {
-    // 1. Check wallet balance
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('id, wallet_balance, balance')
-      .eq('id', buyerId)
-      .single();
-
-    if (profileError) throw profileError;
-    const currentBalance = Number(profile.wallet_balance !== undefined ? profile.wallet_balance : (profile.balance ?? 0));
-    if (currentBalance < amount) {
-      throw new Error(`Insufficient wallet balance. You need ₦${amount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.`);
-    }
-
-    // 2. Atomically deduct wallet balance via deduct_balance RPC
-    let deductOk = false;
-    const { data: rpcOk, error: rpcErr } = await supabase.rpc('deduct_balance', {
-      user_uuid: buyerId,
-      amount: Number(amount)
+  // Buyer clicks "Request Verification Code" in chat
+  async requestVerificationCode(orderId: string): Promise<{ order: MarketplaceOrder; message: MarketplaceMessage }> {
+    return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/request-code`, {
+      method: 'POST',
     });
-
-    if (!rpcErr && rpcOk) {
-      deductOk = true;
-    } else {
-      // Fallback direct update if RPC is missing
-      const { error: directErr } = await supabase
-        .from('profiles')
-        .update({
-          wallet_balance: Math.max(0, currentBalance - amount),
-          balance: Math.max(0, (profile.balance || currentBalance) - amount)
-        })
-        .eq('id', buyerId);
-      if (directErr) throw directErr;
-      deductOk = true;
-    }
-
-    if (!deductOk) {
-      throw new Error('Failed to deduct payment from wallet. Please try again.');
-    }
-
-    // 3. Mark order as paid
-    const ref = `MRKT-${Date.now()}`;
-    const { error: updateError } = await supabase
-      .from('marketplace_orders')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        payment_reference: ref
-      })
-      .eq('id', orderId);
-
-    if (updateError) throw updateError;
-
-    // 4. Record transaction in main transactions ledger
-    try {
-      await supabase.from('transactions').insert({
-        user_id: buyerId,
-        type: 'marketplace',
-        amount: Number(amount),
-        status: 'success',
-        reference: ref,
-        description: `Marketplace purchase for order #${orderId.slice(0, 8)}`,
-        created_at: new Date().toISOString()
-      });
-    } catch (_) {}
-
-    // 5. Send automated confirmation in chat
-    try {
-      await supabase.from('marketplace_messages').insert({
-        order_id: orderId,
-        sender_id: buyerId,
-        message_type: 'text',
-        content: `💳 Payment of ₦${amount.toLocaleString()} was successful! (Ref: ${ref}). Please provide the product details and verification code.`
-      });
-    } catch (_) {}
-
-    return true;
   },
 
-  // Seller sends verification code
-  async sendVerificationCode(orderId: string, senderId: string, code: string) {
-    const { error } = await supabase
-      .from('marketplace_messages')
-      .insert({
-        order_id: orderId,
-        sender_id: senderId,
-        message_type: 'verification_code',
-        content: 'Here is your official verification code:',
-        code_value: code.trim()
-      });
-
-    if (error) throw error;
+  // Admin/Seller sends verification code in chat (optionally completing the deal & auto-debiting buyer wallet)
+  async sendVerificationCode(orderId: string, _senderId: string, code: string, autoCompleteDeal = false): Promise<{ order: MarketplaceOrder; dealCompleted: boolean }> {
+    return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/send-code`, {
+      method: 'POST',
+      body: JSON.stringify({ code: code.trim(), autoCompleteDeal }),
+    });
   },
 
-  // Buyer verifies code and completes order
-  async verifyAndComplete(orderId: string, code: string) {
-    // 1. Get the latest verification message
-    const { data: message, error: messageError } = await supabase
-      .from('marketplace_messages')
-      .select('*')
-      .eq('order_id', orderId)
-      .eq('message_type', 'verification_code')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (messageError) throw messageError;
-    if (!message || message.code_value?.trim().toLowerCase() !== code.trim().toLowerCase()) {
-      throw new Error('Invalid verification code. Please check the code sent by the seller.');
-    }
-
-    // 2. Mark order as completed
-    const { data: order, error: orderError } = await supabase
-      .from('marketplace_orders')
-      .select('id, listing_id, seller_id, price')
-      .eq('id', orderId)
-      .single();
-
-    if (orderError) throw orderError;
-
-    const { error: completeError } = await supabase
-      .from('marketplace_orders')
-      .update({
-        status: 'completed',
-        verification_code: code.trim(),
-        verified_at: new Date().toISOString(),
-        completed_at: new Date().toISOString()
-      })
-      .eq('id', orderId);
-
-    if (completeError) throw completeError;
-
-    // 3. Mark listing as sold
-    if (order.listing_id) {
-      await supabase
-        .from('marketplace_listings')
-        .update({ status: 'sold' })
-        .eq('id', order.listing_id);
-    }
-
-    // 4. Credit the seller's wallet with the sale amount (minus small 2% commission)
-    try {
-      const sellerPayout = Math.floor(Number(order.price) * 0.98);
-      await supabase.rpc('increment_balance', {
-        user_uuid: order.seller_id,
-        amount: sellerPayout
-      });
-      await supabase.from('transactions').insert({
-        user_id: order.seller_id,
-        type: 'marketplace_payout',
-        amount: sellerPayout,
-        status: 'success',
-        reference: `PAYOUT-${Date.now()}`,
-        description: `Marketplace sale payout for order #${orderId.slice(0, 8)}`,
-        created_at: new Date().toISOString()
-      });
-    } catch (_) {}
-
-    // 5. Send order completion announcement in chat
-    try {
-      await supabase.from('marketplace_messages').insert({
-        order_id: orderId,
-        sender_id: order.seller_id,
-        message_type: 'text',
-        content: `🎉 Order marked COMPLETED! The product has been verified successfully. Funds have been released to the seller.`
-      });
-    } catch (_) {}
-
-    return true;
+  // Complete deal & automatically debit buyer's wallet
+  async verifyAndComplete(orderId: string, code?: string): Promise<{ order: MarketplaceOrder; newBuyerBalance?: number; reference?: string }> {
+    return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/complete-deal`, {
+      method: 'POST',
+      body: JSON.stringify({ code: code?.trim() || '' }),
+    });
   },
 
-  // Real-time chat subscription
+  // Poll chat updates (works across all serverless & browser sessions without needing Supabase Realtime publication)
   subscribeToMessages(orderId: string, callback: (msg: any) => void) {
-    const channelName = `marketplace-order-${orderId}-${Date.now()}`;
-    const subscription = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'marketplace_messages',
-          filter: `order_id=eq.${orderId}`
-        },
-        (payload) => callback(payload.new)
-      )
-      .subscribe();
+    let active = true;
+    const interval = setInterval(async () => {
+      if (!active) return;
+      try {
+        const data = await marketplaceService.getOrderDetails(orderId);
+        if (data.messages) {
+          data.messages.forEach((m) => callback(m));
+        }
+      } catch (_) {}
+    }, 3500);
 
     return () => {
-      supabase.removeChannel(subscription);
+      active = false;
+      clearInterval(interval);
     };
   },
 
-  // Get user's seller listings
-  async getMyListings(userId: string) {
-    const { data, error } = await supabase
-      .from('marketplace_listings')
-      .select(`
-        *,
-        marketplace_categories(name, icon, type)
-      `)
-      .eq('seller_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('[marketplaceService.getMyListings]', error.message);
+  async getMyListings(userId: string): Promise<MarketplaceListing[]> {
+    try {
+      const data = await marketplaceFetch<{ listings: MarketplaceListing[] }>('/api/marketplace/listings?includeSold=true');
+      return (data.listings || []).filter((l) => l.seller_id === userId || (l as any).created_by_id === userId || l.is_admin_listing);
+    } catch (_) {
       return [];
     }
-    return data || [];
   },
 
-  // Get user's purchases (orders where user is buyer)
-  async getMyPurchases(userId: string) {
-    const { data, error } = await supabase
-      .from('marketplace_orders')
-      .select(`
-        *,
-        marketplace_listings(title, price, product_details, image_url),
-        profiles:seller_id(full_name, name, marketplace_seller_rating)
-      `)
-      .eq('buyer_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('[marketplaceService.getMyPurchases]', error.message);
+  async getMyPurchases(_userId: string): Promise<MarketplaceOrder[]> {
+    try {
+      const data = await marketplaceFetch<{ orders: MarketplaceOrder[] }>('/api/marketplace/orders?role=buyer');
+      return data.orders || [];
+    } catch (_) {
       return [];
     }
-    return data || [];
   },
 
-  // Get user's sales (orders where user is seller)
-  async getMySales(userId: string) {
-    const { data, error } = await supabase
-      .from('marketplace_orders')
-      .select(`
-        *,
-        marketplace_listings(title, price, product_details, image_url),
-        profiles:buyer_id(full_name, name)
-      `)
-      .eq('seller_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('[marketplaceService.getMySales]', error.message);
+  async getMySales(_userId: string): Promise<MarketplaceOrder[]> {
+    try {
+      const data = await marketplaceFetch<{ orders: MarketplaceOrder[] }>('/api/marketplace/orders?role=seller');
+      return data.orders || [];
+    } catch (_) {
       return [];
     }
-    return data || [];
+  },
+
+  async getAdminOrders(): Promise<MarketplaceOrder[]> {
+    try {
+      const data = await marketplaceFetch<{ orders: MarketplaceOrder[] }>('/api/marketplace/orders?role=admin');
+      return data.orders || [];
+    } catch (_) {
+      return [];
+    }
   }
 };
