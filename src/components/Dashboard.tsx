@@ -726,9 +726,10 @@ function DashboardOverview({
 
   // Fund modal state
   const [showFundModal, setShowFundModal] = React.useState(false);
-  const [fundingTab, setFundingTab] = React.useState<'bank' | 'gateway' | 'manual'>('bank');
+  const [fundingTab, setFundingTab] = React.useState<'gateway' | 'manual'>('gateway');
   const [opayAmount, setOpayAmount] = React.useState('2000');
   const [manualAmount, setManualAmount] = React.useState('');
+  const [manualSenderName, setManualSenderName] = React.useState('');
   const [copiedAccount, setCopiedAccount] = React.useState(false);
   const [fwLoading, setFwLoading] = React.useState(false);
 
@@ -1177,184 +1178,35 @@ function DashboardOverview({
                 </button>
               </div>
 
-              {/* Tabs */}
-              <div className="flex p-2 mx-4 mt-4 bg-gray-100 rounded-xl gap-1">
-                {(['bank', 'gateway', 'manual'] as const).map((t) => (
+              {/* Tabs: Bachs Payment & Manual Payment only */}
+              <div className="flex p-1.5 mx-4 mt-4 bg-gray-100 rounded-2xl gap-1">
+                {(['gateway', 'manual'] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setFundingTab(t)}
-                    className={cn('flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all',
-                      fundingTab === t ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700')}
+                    className={cn(
+                      'flex-1 py-2.5 px-3 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-1.5',
+                      fundingTab === t
+                        ? 'bg-white shadow-sm text-gray-900 border border-gray-200/60'
+                        : 'text-gray-500 hover:text-gray-800'
+                    )}
                   >
-                    {t === 'bank' ? 'Bank Transfer' : t === 'gateway' ? 'Bachs.io Checkout' : 'Manual Request'}
+                    {t === 'gateway' ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <span>Bachs Payment</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wallet size={13} className="shrink-0 text-amber-600" />
+                        <span>Manual Payment</span>
+                      </>
+                    )}
                   </button>
                 ))}
               </div>
 
               <div className="p-6">
-                {fundingTab === 'bank' && (
-                  <div className="space-y-4">
-                    {/* OPay Bank Transfer */}
-                    <div className="rounded-2xl p-5 border-2 border-green-200 bg-green-50 space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg" style={{ backgroundColor: '#3B7A3B' }}>
-                          🏦
-                        </div>
-                        <div>
-                          <p className="font-black text-gray-900 text-sm">OPay Bank Transfer</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Send money directly to our account</p>
-                        </div>
-                      </div>
-
-                      {/* Account Details */}
-                      <div className="bg-white rounded-xl p-4 space-y-3 border border-green-100">
-                        <div>
-                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Bank Name</p>
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-gray-900">OPay</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText('OPay');
-                                setCopiedAccount(true);
-                                toast.success('Bank copied!');
-                                setTimeout(() => setCopiedAccount(false), 2000);
-                              }}
-                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
-                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
-                            >
-                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Number</p>
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono font-black text-gray-900 text-lg">8143889102</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText('8143889102');
-                                setCopiedAccount(true);
-                                toast.success('Account number copied!');
-                                setTimeout(() => setCopiedAccount(false), 2000);
-                              }}
-                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
-                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
-                            >
-                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Name</p>
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-gray-900">Ibrahim Faruq OLAMILEKAN</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText('Ibrahim Faruq OLAMILEKAN');
-                                setCopiedAccount(true);
-                                toast.success('Account name copied!');
-                                setTimeout(() => setCopiedAccount(false), 2000);
-                              }}
-                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
-                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
-                            >
-                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Instructions */}
-                      <div className="bg-white rounded-xl p-4 space-y-2 border border-green-100">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">NEXT STEPS:</p>
-                        <ol className="space-y-2 text-sm text-gray-700">
-                          <li className="flex gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
-                            <span>Transfer money to the account above</span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
-                            <span>Take a screenshot of the payment proof</span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
-                            <span>Message Admin on WhatsApp with the proof</span>
-                          </li>
-                        </ol>
-                      </div>
-
-                      {/* All Admin WhatsApp contacts */}
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Contact Admin via WhatsApp</p>
-                        {ADMIN_CONTACTS.map((admin) => (
-                          <a
-                            key={admin.number}
-                            href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Admin,%20I%20have%20sent%20money%20to%20the%20OPay%20account%208143889102.%20Please%20find%20attached%20proof%20of%20payment.`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
-                            style={{ backgroundColor: '#25D366' }}
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-                              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
-                            </svg>
-                            {admin.label} — {admin.number}
-                          </a>
-                        ))}
-                      </div>
-
-                      {/* Live Bachs.io Virtual Account (if active on merchant account) */}
-                      {bachsVirtualAccount && (
-                        <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
-                              ⚡ Instant Automated Virtual Account (Bachs.io)
-                            </span>
-                            <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
-                              {bachsVirtualAccount.status}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between pt-1">
-                            <div>
-                              <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
-                              <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
-                              {bachsVirtualAccount.account_name && (
-                                <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(bachsVirtualAccount.account_number);
-                                toast.success('Bachs Virtual Account copied!');
-                              }}
-                              className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-xs font-bold transition"
-                            >
-                              Copy
-                            </button>
-                          </div>
-                          <p className="text-[11px] text-emerald-200/90">
-                            Include your email ({user.email}) in the transfer narration for automatic instant wallet credit.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Bachs.io Gateway notice */}
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1">
-                        <p className="text-xs font-bold text-emerald-900 flex items-center gap-2">
-                          <AlertCircle size={14} />
-                          Instant Automated Checkout Available
-                        </p>
-                        <p className="text-xs text-emerald-700">
-                          Switch to the <strong>Bachs.io Checkout</strong> tab above to fund your wallet automatically via Card or Instant Bank Transfer with real-time webhook confirmation.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {fundingTab === 'gateway' && (
                   <form onSubmit={handleBachsFundSubmit} className="space-y-4">
                     <div className="rounded-2xl p-4 bg-emerald-50/70 border border-emerald-200 space-y-1">
@@ -1368,7 +1220,7 @@ function DashboardOverview({
                         </span>
                       </div>
                       <p className="text-xs text-emerald-800">
-                        Pay securely via Bank Transfer or Card on Bachs.io. Your wallet is credited automatically once payment succeeds.
+                        Pay securely via Card or Instant Bank Transfer on Bachs.io. Your wallet is credited automatically once payment succeeds.
                       </p>
                       {bachsConfigStatus && !bachsConfigStatus.configured && (
                         <p className="text-[11px] text-amber-800 bg-amber-100/80 rounded-lg p-2 font-medium">
@@ -1376,6 +1228,43 @@ function DashboardOverview({
                         </p>
                       )}
                     </div>
+
+                    {/* Live Bachs.io Virtual Account (if active on merchant account) */}
+                    {bachsVirtualAccount && (
+                      <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                            ⚡ Instant Automated Virtual Account (Bachs.io)
+                          </span>
+                          <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
+                            {bachsVirtualAccount.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1">
+                          <div>
+                            <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
+                            <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
+                            {bachsVirtualAccount.account_name && (
+                              <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(bachsVirtualAccount.account_number);
+                              toast.success('Bachs Virtual Account copied!');
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-xs font-bold transition"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-emerald-200/90">
+                          Include your email ({user?.email}) in the transfer narration for automatic instant wallet credit.
+                        </p>
+                      </div>
+                    )}
+
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
                       <input
@@ -1400,7 +1289,7 @@ function DashboardOverview({
                     <button
                       type="submit"
                       disabled={fwLoading || !opayAmount || Number(opayAmount) < 100}
-                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer"
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer shadow-lg hover:shadow-xl"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
                       {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${Number(opayAmount || 0).toLocaleString()} via Bachs.io`}
@@ -1410,35 +1299,113 @@ function DashboardOverview({
 
                 {fundingTab === 'manual' && (
                   <div className="space-y-4">
+                    {/* Bank Details Card */}
+                    <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold text-sm">
+                          🏦
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-amber-950 uppercase tracking-wider">Manual Deposit Account</p>
+                          <p className="text-[11px] text-amber-800">Transfer directly to our verified OPay business account</p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-xl p-3 space-y-2.5 border border-amber-100 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 font-bold uppercase text-[10px]">Bank</span>
+                          <span className="font-extrabold text-gray-900">OPay</span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-gray-50 pt-2">
+                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account No.</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-gray-900 text-sm">8143889102</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText('8143889102');
+                                setCopiedAccount(true);
+                                toast.success('Account number copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 transition"
+                            >
+                              {copiedAccount ? 'Copied ✓' : 'Copy'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-gray-50 pt-2">
+                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account Name</span>
+                          <span className="font-bold text-gray-900 text-right">Ibrahim Faruq OLAMILEKAN</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Amount Transferred */}
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount Transferred (₦)</label>
                       <input
-                        type="number" value={manualAmount}
+                        type="number"
+                        value={manualAmount}
                         onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
                         placeholder="e.g. 5000"
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
                       />
+                      <div className="flex gap-2 mt-2">
+                        {['1000', '2000', '5000', '10000'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setManualAmount(preset)}
+                            className="flex-1 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 transition"
+                          >
+                            ₦{Number(preset).toLocaleString()}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-                      <p className="text-xs font-bold text-blue-900">ℹ️ Manual Transfer Request</p>
-                      <p className="text-xs text-blue-800">Enter the amount you transferred to our OPay account. Our admin will verify your payment proof on WhatsApp and top up your wallet within minutes.</p>
+
+                    {/* Sender Name / Narration (optional) */}
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Sender Name or Bank (Optional)</label>
+                      <input
+                        type="text"
+                        value={manualSenderName}
+                        onChange={(e) => setManualSenderName(e.target.value)}
+                        placeholder="e.g. John Doe (Access Bank)"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 font-medium text-gray-900 focus:outline-none focus:border-green-500 text-sm"
+                      />
                     </div>
-                    <button
-                      onClick={() => {
-                        if (!manualAmount) {
-                          toast.error('Enter amount');
-                          return;
-                        }
-                        navigator.clipboard.writeText(`Manual transfer request: ₦${manualAmount}\nPlease verify and credit my account.`);
-                        toast.success('Request info copied! Send to admin on WhatsApp.');
-                        setShowFundModal(false);
-                        setManualAmount('');
-                      }}
-                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all"
-                      style={{ backgroundColor: '#3B7A3B' }}
-                    >
-                      Copy & Send to Admin
-                    </button>
+
+                    {/* Send Proof to Admin on WhatsApp */}
+                    <div className="space-y-2 pt-1">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Send Payment Proof to Admin</p>
+                      {ADMIN_CONTACTS.map((admin) => {
+                        const amtStr = manualAmount ? `₦${Number(manualAmount).toLocaleString()}` : 'money';
+                        const senderPart = manualSenderName.trim() ? ` (Sender: ${manualSenderName.trim()})` : '';
+                        const waMsg = encodeURIComponent(
+                          `Hello ${admin.label}, I have sent ${amtStr} to your OPay account 8143889102 for my NORODATA wallet (${user?.email || (user as any)?.name || 'User'})${senderPart}. Please find attached my proof of payment.`
+                        );
+                        return (
+                          <a
+                            key={admin.number}
+                            href={`https://wa.me/${admin.number}?text=${waMsg}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-white text-xs font-bold transition-all hover:brightness-110 active:scale-95"
+                            style={{ backgroundColor: '#25D366' }}
+                          >
+                            <span className="flex items-center gap-2">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
+                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                              </svg>
+                              Message {admin.label}
+                            </span>
+                            <span className="font-mono text-[11px] opacity-90">+{admin.number}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
