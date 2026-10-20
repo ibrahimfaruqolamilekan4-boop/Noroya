@@ -42,10 +42,21 @@ const ensureUUID = (strId: string): string => {
 // In-memory cache for provider secrets so dynamic admin saves take effect immediately
 const providerSecretsCache = new Map<string, string>();
 
+// Strip accidental quotes (" ' `), KEY= prefixes, Bearer prefixes, and whitespace when copied into Vercel/Admin UI
+const sanitizeSecretValue = (raw: string = ''): string => {
+  return String(raw || '')
+    .trim()
+    .replace(/^[A-Za-z0-9_]+\s*=\s*/, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/^Bearer\s+/i, '')
+    .replace(/["'`\r\n\s]/g, '')
+    .trim();
+};
+
 const resolveProviderSecret = async (identifier: string, envKeys: string[]): Promise<string> => {
   // 1. Check in-memory cache first (populated by dynamic admin saves in this session)
   if (providerSecretsCache.has(identifier)) {
-    const cached = providerSecretsCache.get(identifier);
+    const cached = sanitizeSecretValue(providerSecretsCache.get(identifier) || '');
     if (cached && !cached.includes('PASTE_YOUR') && !cached.includes('dummy') && cached.length > 5) return cached;
   }
   // 2. Check provider_secrets table in database (authoritative persisted store)
@@ -55,9 +66,10 @@ const resolveProviderSecret = async (identifier: string, envKeys: string[]): Pro
       .select('secret')
       .eq('identifier', identifier)
       .maybeSingle();
-    if (data?.secret && !data.secret.includes('PASTE_YOUR') && !data.secret.includes('dummy') && data.secret.trim().length > 5) {
-      providerSecretsCache.set(identifier, data.secret.trim());
-      return data.secret.trim();
+    const dbVal = sanitizeSecretValue(data?.secret || '');
+    if (dbVal && !dbVal.includes('PASTE_YOUR') && !dbVal.includes('dummy') && dbVal.length > 5) {
+      providerSecretsCache.set(identifier, dbVal);
+      return dbVal;
     }
   } catch (_) { /* provider_secrets may not exist until the hardening migration runs */ }
   // 3. Check services_config table in database
@@ -67,14 +79,15 @@ const resolveProviderSecret = async (identifier: string, envKeys: string[]): Pro
       .select('item_name')
       .or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`)
       .maybeSingle();
-    if (legacy?.item_name && !legacy.item_name.includes('PASTE_YOUR') && !legacy.item_name.includes('dummy') && legacy.item_name.trim().length > 5) {
-      providerSecretsCache.set(identifier, legacy.item_name.trim());
-      return legacy.item_name.trim();
+    const legVal = sanitizeSecretValue(legacy?.item_name || '');
+    if (legVal && !legVal.includes('PASTE_YOUR') && !legVal.includes('dummy') && legVal.length > 5) {
+      providerSecretsCache.set(identifier, legVal);
+      return legVal;
     }
   } catch (_) {}
   // 4. Fallback to environment variables
   for (const envKey of envKeys) {
-    const val = (process.env[envKey] || "").trim();
+    const val = sanitizeSecretValue(process.env[envKey] || '');
     if (val && !val.includes('PASTE_YOUR') && !val.includes('dummy') && !val.includes('connect_030660') && val.length > 5) {
       return val;
     }
@@ -83,7 +96,7 @@ const resolveProviderSecret = async (identifier: string, envKeys: string[]): Pro
 };
 
 const setProviderSecret = async (identifier: string, secretValue: string): Promise<boolean> => {
-  const clean = secretValue.trim();
+  const clean = sanitizeSecretValue(secretValue);
   providerSecretsCache.set(identifier, clean);
   try {
     await supabase
@@ -172,20 +185,35 @@ const resolveBachsWebhookSecret = async (): Promise<string> =>
   resolveProviderSecret('bachs_webhook_secret', ['BACHS_WEBHOOK_SECRET', 'BACHS_SIGNING_SECRET']);
 
 const resolveBachsBaseUrl = (secretKey = ''): string => {
-  const explicitUrl = (process.env.BACHS_BASE_URL || '').trim();
-  if (explicitUrl) {
-    // Strip trailing slashes and any trailing /v1 so we never double-append /v1
-    return explicitUrl.replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
-  }
-  const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+  const cleanKey = sanitizeSecretValue(secretKey);
+  // Sandbox keys always target sandbox-api.bachs.io; live keys always target api.bachs.io
   if (cleanKey.startsWith('sk_sandbox_') || cleanKey.startsWith('sk_test_')) {
     return 'https://sandbox-api.bachs.io';
+  }
+  if (cleanKey.startsWith('sk_live_')) {
+    return 'https://api.bachs.io';
+  }
+  const rawUrl = sanitizeSecretValue(process.env.BACHS_BASE_URL || '');
+  if (rawUrl) {
+    const stripped = rawUrl.replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
+    try {
+      const parsed = new URL(stripped.startsWith('http') ? stripped : `https://${stripped}`);
+      return parsed.origin;
+    } catch (_) {
+      if (stripped.toLowerCase().includes('sandbox')) return 'https://sandbox-api.bachs.io';
+    }
   }
   return 'https://api.bachs.io';
 };
 
 const getBachsEndpoint = (baseUrl: string, subPath: string): string => {
-  const cleanBase = (baseUrl || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
+  let cleanBase = sanitizeSecretValue(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/i, '').replace(/\/+$/, '');
+  try {
+    const parsed = new URL(cleanBase.startsWith('http') ? cleanBase : `https://${cleanBase}`);
+    cleanBase = parsed.origin;
+  } catch (_) {
+    cleanBase = 'https://api.bachs.io';
+  }
   const cleanPath = subPath.startsWith('/') ? subPath : `/${subPath}`;
   const v1Path = cleanPath.startsWith('/v1/') ? cleanPath : `/v1${cleanPath}`;
   return `${cleanBase}${v1Path}`;
@@ -4564,20 +4592,38 @@ if (Object.keys(updateData).length <= 1) {
       const reference = `NRY-BACHS-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
       const baseUrl = resolveBachsBaseUrl(secretKey);
 
-      const appOrigin =
-        String(redirectUrl || "").trim() ||
-        String(req.headers.origin || "").trim() ||
-        String(process.env.APP_URL || "").trim() ||
+      const rawOrigin =
+        sanitizeSecretValue(String(redirectUrl || "")) ||
+        sanitizeSecretValue(String(req.headers.origin || "")) ||
+        sanitizeSecretValue(String(process.env.APP_URL || "")) ||
         `${req.protocol}://${req.get("host")}`;
-      const cleanOrigin = appOrigin.replace(/\/+$/, "");
+      let cleanOrigin = rawOrigin.replace(/\/+$/, "");
+      try {
+        cleanOrigin = new URL(cleanOrigin.startsWith("http") ? cleanOrigin : `https://${cleanOrigin}`).origin;
+      } catch (_) {
+        cleanOrigin = "https://noroya.vercel.app";
+      }
 
       // Per Bachs.io OpenAPI specification:
       // Money is always a decimal string at the currency's precision (e.g. "2000.00")
       const amountDecimalString = numericAmount.toFixed(2);
 
       const customerPayload: Record<string, any> = { email: customerEmail };
-      if (name && String(name).trim()) customerPayload.name = String(name).trim();
-      if (phone && String(phone).trim()) customerPayload.phone_number = String(phone).trim();
+      if (name && String(name).trim()) {
+        customerPayload.name = String(name).trim();
+      }
+      if (phone && String(phone).trim()) {
+        const digits = String(phone).replace(/[^\d+]/g, "");
+        let e164 = digits;
+        if (/^0[789][01]\d{8}$/.test(digits)) {
+          e164 = `+234${digits.slice(1)}`;
+        } else if (/^234[789][01]\d{8}$/.test(digits)) {
+          e164 = `+${digits}`;
+        }
+        if (/^\+[1-9]\d{7,14}$/.test(e164)) {
+          customerPayload.phone_number = e164;
+        }
+      }
 
       const checkoutPayload = {
         customer: customerPayload,
@@ -4598,7 +4644,7 @@ if (Object.keys(updateData).length <= 1) {
         },
       };
 
-      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+      const cleanKey = sanitizeSecretValue(secretKey);
       const checkoutEndpoint = getBachsEndpoint(baseUrl, '/v1/checkout-sessions');
 
       const resp = await fetch(checkoutEndpoint, {

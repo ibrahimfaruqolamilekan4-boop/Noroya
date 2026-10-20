@@ -476,29 +476,34 @@ var ensureUUID = (strId) => {
   return `${part1}-${part2}-${part3}-${part4}-${part5}`;
 };
 var providerSecretsCache = /* @__PURE__ */ new Map();
+var sanitizeSecretValue = (raw = "") => {
+  return String(raw || "").trim().replace(/^[A-Za-z0-9_]+\s*=\s*/, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer\s+/i, "").replace(/["'`\r\n\s]/g, "").trim();
+};
 var resolveProviderSecret = async (identifier, envKeys) => {
   if (providerSecretsCache.has(identifier)) {
-    const cached = providerSecretsCache.get(identifier);
+    const cached = sanitizeSecretValue(providerSecretsCache.get(identifier) || "");
     if (cached && !cached.includes("PASTE_YOUR") && !cached.includes("dummy") && cached.length > 5) return cached;
   }
   try {
     const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", identifier).maybeSingle();
-    if (data?.secret && !data.secret.includes("PASTE_YOUR") && !data.secret.includes("dummy") && data.secret.trim().length > 5) {
-      providerSecretsCache.set(identifier, data.secret.trim());
-      return data.secret.trim();
+    const dbVal = sanitizeSecretValue(data?.secret || "");
+    if (dbVal && !dbVal.includes("PASTE_YOUR") && !dbVal.includes("dummy") && dbVal.length > 5) {
+      providerSecretsCache.set(identifier, dbVal);
+      return dbVal;
     }
   } catch (_) {
   }
   try {
     const { data: legacy } = await supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`).maybeSingle();
-    if (legacy?.item_name && !legacy.item_name.includes("PASTE_YOUR") && !legacy.item_name.includes("dummy") && legacy.item_name.trim().length > 5) {
-      providerSecretsCache.set(identifier, legacy.item_name.trim());
-      return legacy.item_name.trim();
+    const legVal = sanitizeSecretValue(legacy?.item_name || "");
+    if (legVal && !legVal.includes("PASTE_YOUR") && !legVal.includes("dummy") && legVal.length > 5) {
+      providerSecretsCache.set(identifier, legVal);
+      return legVal;
     }
   } catch (_) {
   }
   for (const envKey of envKeys) {
-    const val = (process.env[envKey] || "").trim();
+    const val = sanitizeSecretValue(process.env[envKey] || "");
     if (val && !val.includes("PASTE_YOUR") && !val.includes("dummy") && !val.includes("connect_030660") && val.length > 5) {
       return val;
     }
@@ -506,7 +511,7 @@ var resolveProviderSecret = async (identifier, envKeys) => {
   return "";
 };
 var setProviderSecret = async (identifier, secretValue) => {
-  const clean = secretValue.trim();
+  const clean = sanitizeSecretValue(secretValue);
   providerSecretsCache.set(identifier, clean);
   try {
     await supabase.from("provider_secrets").upsert({ identifier, secret: clean, updated_at: (/* @__PURE__ */ new Date()).toISOString() });
@@ -558,18 +563,33 @@ var resolveNifexApiKey = async () => resolveProviderSecret("nifex_api_key", ["NI
 var resolveBachsSecretKey = async () => resolveProviderSecret("bachs_secret_key", ["BACHS_SECRET_KEY", "BACHS_API_KEY", "BACHS_LIVE_SECRET_KEY", "BACHS_SANDBOX_SECRET_KEY"]);
 var resolveBachsWebhookSecret = async () => resolveProviderSecret("bachs_webhook_secret", ["BACHS_WEBHOOK_SECRET", "BACHS_SIGNING_SECRET"]);
 var resolveBachsBaseUrl = (secretKey = "") => {
-  const explicitUrl = (process.env.BACHS_BASE_URL || "").trim();
-  if (explicitUrl) {
-    return explicitUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
-  }
-  const cleanKey = secretKey.replace(/^Bearer\s+/i, "").trim();
+  const cleanKey = sanitizeSecretValue(secretKey);
   if (cleanKey.startsWith("sk_sandbox_") || cleanKey.startsWith("sk_test_")) {
     return "https://sandbox-api.bachs.io";
+  }
+  if (cleanKey.startsWith("sk_live_")) {
+    return "https://api.bachs.io";
+  }
+  const rawUrl = sanitizeSecretValue(process.env.BACHS_BASE_URL || "");
+  if (rawUrl) {
+    const stripped = rawUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+    try {
+      const parsed = new URL(stripped.startsWith("http") ? stripped : `https://${stripped}`);
+      return parsed.origin;
+    } catch (_) {
+      if (stripped.toLowerCase().includes("sandbox")) return "https://sandbox-api.bachs.io";
+    }
   }
   return "https://api.bachs.io";
 };
 var getBachsEndpoint = (baseUrl, subPath) => {
-  const cleanBase = (baseUrl || "").trim().replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+  let cleanBase = sanitizeSecretValue(baseUrl || "").replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+  try {
+    const parsed = new URL(cleanBase.startsWith("http") ? cleanBase : `https://${cleanBase}`);
+    cleanBase = parsed.origin;
+  } catch (_) {
+    cleanBase = "https://api.bachs.io";
+  }
   const cleanPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
   const v1Path = cleanPath.startsWith("/v1/") ? cleanPath : `/v1${cleanPath}`;
   return `${cleanBase}${v1Path}`;
@@ -3947,12 +3967,30 @@ AI:`;
       }
       const reference = `NRY-BACHS-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const appOrigin = String(redirectUrl || "").trim() || String(req.headers.origin || "").trim() || String(process.env.APP_URL || "").trim() || `${req.protocol}://${req.get("host")}`;
-      const cleanOrigin = appOrigin.replace(/\/+$/, "");
+      const rawOrigin = sanitizeSecretValue(String(redirectUrl || "")) || sanitizeSecretValue(String(req.headers.origin || "")) || sanitizeSecretValue(String(process.env.APP_URL || "")) || `${req.protocol}://${req.get("host")}`;
+      let cleanOrigin = rawOrigin.replace(/\/+$/, "");
+      try {
+        cleanOrigin = new URL(cleanOrigin.startsWith("http") ? cleanOrigin : `https://${cleanOrigin}`).origin;
+      } catch (_) {
+        cleanOrigin = "https://noroya.vercel.app";
+      }
       const amountDecimalString = numericAmount.toFixed(2);
       const customerPayload = { email: customerEmail };
-      if (name && String(name).trim()) customerPayload.name = String(name).trim();
-      if (phone && String(phone).trim()) customerPayload.phone_number = String(phone).trim();
+      if (name && String(name).trim()) {
+        customerPayload.name = String(name).trim();
+      }
+      if (phone && String(phone).trim()) {
+        const digits = String(phone).replace(/[^\d+]/g, "");
+        let e164 = digits;
+        if (/^0[789][01]\d{8}$/.test(digits)) {
+          e164 = `+234${digits.slice(1)}`;
+        } else if (/^234[789][01]\d{8}$/.test(digits)) {
+          e164 = `+${digits}`;
+        }
+        if (/^\+[1-9]\d{7,14}$/.test(e164)) {
+          customerPayload.phone_number = e164;
+        }
+      }
       const checkoutPayload = {
         customer: customerPayload,
         pricing: {
@@ -3971,7 +4009,7 @@ AI:`;
           purpose: "wallet_funding"
         }
       };
-      const cleanKey = secretKey.replace(/^Bearer\s+/i, "").trim();
+      const cleanKey = sanitizeSecretValue(secretKey);
       const checkoutEndpoint = getBachsEndpoint(baseUrl, "/v1/checkout-sessions");
       const resp = await fetch(checkoutEndpoint, {
         method: "POST",
