@@ -186,69 +186,85 @@ function EsimChatModalInner({
     } catch (_) {}
 
     try {
-      await fetch('/api/esim/inquiries', {
+      const res = await fetch('/api/esim/inquiries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      const data = await res.json().catch(() => ({}));
+      if (data?.inquiry && Array.isArray(data.inquiry.messages)) {
+        const mapped: ChatMsg[] = data.inquiry.messages.map((m: any) => ({
+          id: String(m.id),
+          sender: m.sender === 'admin' ? 'admin' : 'user',
+          text: String(m.text || ''),
+          time: safeFormatTime(m.created_at),
+          hasQr: Boolean(m.activation_code || m.has_qr),
+        }));
+        setMessages((prev) => {
+          const welcome = prev.find((p) => p.id === 'msg-welcome-1');
+          return welcome ? [welcome, ...mapped] : mapped;
+        });
+      }
     } catch (_) {}
   };
 
-  // Poll for real-time replies from Admin (jeffholland299@gmail.com or other admins)
+  // Poll permanent chat history & real-time replies from backend (/api/esim/inquiries/my)
   useEffect(() => {
     if (!isOpen) return;
-    const checkAdminReplies = () => {
+    const checkAdminReplies = async () => {
       try {
-        const raw = localStorage.getItem('noroya_esim_inquiries');
-        if (!raw) return;
-        let list: any[] = [];
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) list = parsed;
-        } catch (_) {}
-        if (!list.length) return;
-
         const myEmail = (currentUser?.email || '').toLowerCase().trim();
         const myId = String(currentUser?.uid || currentUser?.id || '');
-        const myInquiry = list.find((i: any) => 
-          (myEmail && (i.user_email || '').toLowerCase().trim() === myEmail) ||
-          (myId && String(i.user_id) === myId)
-        );
+        const params = new URLSearchParams();
+        if (myId) params.set('userId', myId);
+        if (myEmail) params.set('email', myEmail);
 
-        if (myInquiry && Array.isArray(myInquiry.messages)) {
-          const adminMsgs = myInquiry.messages.filter((m: any) => m && m.sender === 'admin');
-          if (adminMsgs.length > 0) {
-            setMessages(prev => {
-              const existingIds = new Set(prev.map(p => p.id));
-              const newReplies: ChatMsg[] = [];
-              for (const adm of adminMsgs) {
-                const msgId = String(adm.id || `adm-reply-${Date.now()}`);
-                if (!existingIds.has(msgId)) {
-                  newReplies.push({
-                    id: msgId,
-                    sender: 'admin',
-                    text: String(adm.text || ''),
-                    time: safeFormatTime(adm.created_at),
-                    hasQr: Boolean(adm.activation_code || adm.has_qr)
-                  });
-                }
-              }
-              return newReplies.length > 0 ? [...prev, ...newReplies] : prev;
+        const res = await fetch(`/api/esim/inquiries/my?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          const myInquiry = Array.isArray(data?.inquiries) ? data.inquiries[0] : null;
+          if (myInquiry && Array.isArray(myInquiry.messages) && myInquiry.messages.length > 0) {
+            const mapped: ChatMsg[] = myInquiry.messages.map((m: any) => ({
+              id: String(m.id),
+              sender: m.sender === 'admin' ? 'admin' : 'user',
+              text: String(m.text || ''),
+              time: safeFormatTime(m.created_at),
+              hasQr: Boolean(m.activation_code || m.has_qr),
+            }));
+            setMessages((prev) => {
+              const welcome = prev.find((p) => p.id === 'msg-welcome-1');
+              return welcome ? [welcome, ...mapped] : mapped;
             });
+            return;
           }
         }
       } catch (_) {}
     };
 
     checkAdminReplies();
-    const interval = setInterval(checkAdminReplies, 4000);
+    const interval = setInterval(checkAdminReplies, 3500);
     return () => clearInterval(interval);
   }, [isOpen, currentUser]);
+
+  const userWalletBalance = Number(currentUser?.wallet_balance ?? currentUser?.balance ?? 0);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
     if (!trimmed) return;
+
+    const numericPrice = Number(String(currentPkgObj.price || '').replace(/[^\d.]/g, '')) || 0;
+    const isAdminUser =
+      currentUser?.role === 'admin' ||
+      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+        String(currentUser?.email || '').toLowerCase().trim()
+      );
+
+    if (!isAdminUser && numericPrice > 0 && userWalletBalance < numericPrice) {
+      toast.error(
+        `Insufficient Balance! ${currentPkgObj.label} costs ₦${numericPrice.toLocaleString()}, but your wallet balance is ₦${userWalletBalance.toLocaleString()}. Please fund your wallet first.`
+      );
+    }
 
     const userMsg: ChatMsg = {
       id: `usr-${Date.now()}`,
@@ -260,41 +276,34 @@ function EsimChatModalInner({
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
 
-    // Sync directly to Admin Desk
+    // Save permanently to Backend & Supabase
     syncInquiryWithBackend(trimmed, currentPkgObj);
-
-    // Provide friendly instant assistance
-    setTimeout(() => {
-      const lower = trimmed.toLowerCase();
-      let replyText = `Thanks for your inquiry! Your request has been logged with the eSIM Admin Desk for ${currentPkgObj.label} on device "${deviceModel || 'your smartphone'}".`;
-      let hasQr = false;
-
-      if (lower.includes('price') || lower.includes('cost') || lower.includes('how much')) {
-        replyText = `Our current rate for ${currentPkgObj.label} is ${currentPkgObj.price}. It delivers instant high-speed 4G/5G data with zero roaming charges. You can fund your wallet to activate, or copy our admin contact for immediate setup!`;
-      } else if (lower.includes('iphone') || lower.includes('samsung') || lower.includes('pixel') || lower.includes('device')) {
-        replyText = `Excellent! That device supports full digital eSIM profiles. We will send you an activation QR code. Once scanned under Settings > Cellular / SIMs, it activates in under 60 seconds!`;
-      } else if (lower.includes('qr') || lower.includes('code') || lower.includes('buy') || lower.includes('setup') || lower.includes('pay')) {
-        replyText = `Great! Here is the eSIM QR preview profile for ${currentPkgObj.label}. You can scan it directly in your device Cellular Settings or enter the SM-DP+ code below.`;
-        hasQr = true;
-      } else {
-        replyText = `Got it! The eSIM desk is reviewing your request. For fastest instant activation and QR code dispatch, you can also reach our eSIM direct desk at +2348143889102.`;
-      }
-
-      const adminReply: ChatMsg = {
-        id: `adm-${Date.now()}`,
-        sender: 'admin',
-        text: replyText,
-        time: safeFormatTime(new Date().toISOString()),
-        hasQr
-      };
-
-      setMessages(prev => [...prev, adminReply]);
-    }, 800);
   };
 
   const handleSendPresetInquiry = (pkg: typeof PRESET_PACKAGES[0]) => {
     setSelectedPkg(pkg.id);
-    const msgText = `Hello Admin, I want to purchase and activate: ${pkg.label} (${pkg.price}). My device is ${deviceModel || 'iPhone / Android'}. Please guide me on activation.`;
+    const numericPrice = Number(String(pkg.price || '').replace(/[^\d.]/g, '')) || 0;
+    const isAdminUser =
+      currentUser?.role === 'admin' ||
+      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+        String(currentUser?.email || '').toLowerCase().trim()
+      );
+
+    if (!isAdminUser && numericPrice > 0 && userWalletBalance < numericPrice) {
+      toast.error(
+        `Insufficient Balance! ${pkg.label} requires ₦${numericPrice.toLocaleString()}, but your wallet balance is ₦${userWalletBalance.toLocaleString()}. Please fund your wallet before requesting to buy.`
+      );
+      const errMsg: ChatMsg = {
+        id: `adm-insuff-${Date.now()}`,
+        sender: 'admin',
+        text: `⚠️ INSUFFICIENT BALANCE: ${pkg.label} costs ₦${numericPrice.toLocaleString()}, and your current wallet balance is ₦${userWalletBalance.toLocaleString()}. Please fund your wallet before requesting to buy this eSIM.`,
+        time: safeFormatTime(new Date().toISOString()),
+      };
+      setMessages(prev => [...prev, errMsg]);
+      return;
+    }
+
+    const msgText = `Hello Admin, I want to purchase and activate: ${pkg.label} (${pkg.price}). My wallet is funded (₦${userWalletBalance.toLocaleString()}) and my device is ${deviceModel || 'iPhone / Android'}. Please send my activation code.`;
     const userMsg: ChatMsg = {
       id: `usr-${Date.now()}`,
       sender: 'user',
@@ -304,17 +313,6 @@ function EsimChatModalInner({
     setMessages(prev => [...prev, userMsg]);
 
     syncInquiryWithBackend(msgText, pkg);
-
-    setTimeout(() => {
-      const adminReply: ChatMsg = {
-        id: `adm-${Date.now()}`,
-        sender: 'admin',
-        text: `Received! ${pkg.label} is available right now for ${pkg.price}. It connects to top tier networks with fast 5G speeds. Our eSIM desk will issue your digital QR code.`,
-        time: safeFormatTime(new Date().toISOString()),
-        hasQr: true
-      };
-      setMessages(prev => [...prev, adminReply]);
-    }, 700);
   };
 
   const copyIccid = (text: string) => {

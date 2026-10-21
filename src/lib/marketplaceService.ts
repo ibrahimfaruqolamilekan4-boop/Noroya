@@ -12,6 +12,8 @@ export interface MarketplaceCategory {
 export interface MarketplaceListing {
   id: string;
   seller_id: string;
+  created_by_id?: string;
+  created_by_email?: string;
   category_id: string;
   title: string;
   description: string;
@@ -41,6 +43,7 @@ export interface MarketplaceOrder {
   listing_id: string;
   buyer_id: string;
   seller_id: string;
+  clicked_number?: string;
   price: number;
   status: 'pending' | 'code_requested' | 'code_sent' | 'paid' | 'completed' | 'refunded';
   is_foreign_number?: boolean;
@@ -49,6 +52,8 @@ export interface MarketplaceOrder {
   paid_at?: string;
   verification_code?: string;
   verified_at?: string;
+  last_message?: string;
+  last_message_at?: string;
   created_at: string;
   updated_at?: string;
   completed_at?: string;
@@ -91,6 +96,8 @@ export interface MarketplaceMessage {
   id: string;
   order_id: string;
   sender_id: string;
+  sender_name?: string;
+  sender_email?: string;
   sender_role?: 'buyer' | 'admin' | 'seller';
   message_type: 'text' | 'verification_code';
   content: string;
@@ -116,7 +123,7 @@ export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [
     seller_id: 'admin',
     category_id: 'cat-us-phone',
     title: '🇺🇸 Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)',
-    description: 'Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, request your verification code, and your wallet will be debited automatically once the deal is done.',
+    description: 'Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, receive your login code, and your wallet will be debited automatically once the deal is done.',
     price: 4500,
     product_details: { item_identifier: '+1 (555) 234-8901', phone_number: '+1 (555) 234-8901', country: 'United States', carrier: 'AT&T / T-Mobile Non-VoIP' },
     status: 'available',
@@ -131,7 +138,7 @@ export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [
     seller_id: 'admin',
     category_id: 'cat-uk-phone',
     title: '🇬🇧 Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)',
-    description: 'Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and request your code — automatic wallet debit once completed.',
+    description: 'Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and receive your login code — automatic wallet debit once completed.',
     price: 5000,
     product_details: { item_identifier: '+44 7700 900412', phone_number: '+44 7700 900412', country: 'United Kingdom', carrier: 'Vodafone UK Physical SIM' },
     status: 'available',
@@ -146,7 +153,7 @@ export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [
     seller_id: 'admin',
     category_id: 'cat-ca-phone',
     title: '🇨🇦 Clean Canada +1 Phone Number (WhatsApp / Global Apps)',
-    description: 'Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, request OTP code, and complete your deal.',
+    description: 'Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, receive your login code, and complete your deal.',
     price: 4800,
     product_details: { item_identifier: '+1 (416) 555-0184', phone_number: '+1 (416) 555-0184', country: 'Canada', carrier: 'Rogers Canada SIM' },
     status: 'available',
@@ -173,12 +180,40 @@ async function marketplaceFetch<T>(url: string, options?: RequestInit): Promise<
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(json?.error || json?.message || `Request failed (${res.status})`);
+    const err: any = new Error(json?.error || json?.message || `Request failed (${res.status})`);
+    err.code = json?.code;
+    err.required = json?.required;
+    err.balance = json?.balance;
+    throw err;
   }
   return json as T;
 }
 
 export const marketplaceService = {
+  async getMarketplaceAdmins(): Promise<{ admins: string[]; isCallerAdmin: boolean }> {
+    try {
+      return await marketplaceFetch<{ admins: string[]; isCallerAdmin: boolean }>('/api/marketplace/admins');
+    } catch (_) {
+      return {
+        admins: ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'],
+        isCallerAdmin: false,
+      };
+    }
+  },
+
+  async promoteAdminEmail(email: string): Promise<{ success: boolean; email: string; admins: string[]; message: string }> {
+    return marketplaceFetch('/api/marketplace/admins/promote', {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+  },
+
+  async removeAdminEmail(email: string): Promise<{ success: boolean; admins: string[] }> {
+    return marketplaceFetch(`/api/marketplace/admins/${encodeURIComponent(email.trim().toLowerCase())}`, {
+      method: 'DELETE',
+    });
+  },
+
   async getCategories(): Promise<MarketplaceCategory[]> {
     try {
       const data = await marketplaceFetch<{ categories: MarketplaceCategory[] }>('/api/marketplace/categories');
@@ -237,7 +272,7 @@ export const marketplaceService = {
     });
   },
 
-  // Start buying process (immediately creates/opens order & chat with Admin)
+  // Start buying process (validates wallet balance, then immediately opens order & permanent chat with Admin)
   async initiatePurchase(_buyerId: string, listingId: string, listingSnapshot?: MarketplaceListing): Promise<MarketplaceOrder> {
     const res = await marketplaceFetch<{ order: MarketplaceOrder }>('/api/marketplace/orders/initiate', {
       method: 'POST',
@@ -270,7 +305,7 @@ export const marketplaceService = {
   },
 
   // Admin/Seller sends verification code in chat (optionally completing the deal & auto-debiting buyer wallet)
-  async sendVerificationCode(orderId: string, _senderId: string, code: string, autoCompleteDeal = false): Promise<{ order: MarketplaceOrder; dealCompleted: boolean }> {
+  async sendVerificationCode(orderId: string, _senderId: string, code: string, autoCompleteDeal = false): Promise<{ order: MarketplaceOrder; dealCompleted: boolean; newBuyerBalance?: number }> {
     return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/send-code`, {
       method: 'POST',
       body: JSON.stringify({ code: code.trim(), autoCompleteDeal }),
@@ -290,7 +325,7 @@ export const marketplaceService = {
     return res.order;
   },
 
-  // Poll chat updates (works across all serverless & browser sessions without needing Supabase Realtime publication)
+  // Poll chat updates (works across all serverless & browser sessions)
   subscribeToMessages(orderId: string, callback: (msg: any) => void) {
     let active = true;
     const interval = setInterval(async () => {
@@ -301,7 +336,7 @@ export const marketplaceService = {
           data.messages.forEach((m) => callback(m));
         }
       } catch (_) {}
-    }, 3500);
+    }, 3000);
 
     return () => {
       active = false;
@@ -312,7 +347,7 @@ export const marketplaceService = {
   async getMyListings(userId: string): Promise<MarketplaceListing[]> {
     try {
       const data = await marketplaceFetch<{ listings: MarketplaceListing[] }>('/api/marketplace/listings?includeSold=true');
-      return (data.listings || []).filter((l) => l.seller_id === userId || (l as any).created_by_id === userId || l.is_admin_listing);
+      return (data.listings || []).filter((l) => l.seller_id === userId || l.created_by_id === userId || l.is_admin_listing);
     } catch (_) {
       return [];
     }

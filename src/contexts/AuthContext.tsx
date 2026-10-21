@@ -194,11 +194,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUserProfile(prev => {
                 const base = prev || defaultProfile;
                 const latestBalance = data.wallet_balance !== undefined ? data.wallet_balance : (data.balance ?? base.balance);
+                const resolvedRole = isAnyAdminEmail(sbUser.email) ? 'admin' : (data.role || base.role);
                 const updatedProfile = {
                   ...base,
                   fullName: data.name || data.username || base.fullName,
                   balance: latestBalance,
                   wallet_balance: latestBalance,
+                  role: resolvedRole,
                   phoneNumber: data.phone_number || base.phoneNumber,
                   transactionPin: data.transaction_pin || base.transactionPin,
                 };
@@ -210,6 +212,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.warn("Error background polling user profile from Supabase:", err);
           }
         };
+
+        // Also check promoted marketplace admins from backend on login
+        fetch('/api/marketplace/admins', {
+          headers: { 'x-admin-email': sbUser.email || '' }
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then(admData => {
+            if (admData?.isCallerAdmin || (Array.isArray(admData?.admins) && sbUser.email && admData.admins.includes(sbUser.email.toLowerCase().trim()))) {
+              setUserProfile(prev => prev ? { ...prev, role: 'admin' } : prev);
+            }
+          })
+          .catch(() => {});
 
         // 1. Establish a real-time Postgres changes listener in Supabase for immediate balance updates
         const channel = supabase
@@ -229,11 +243,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUserProfile(prev => {
                   const base = prev || defaultProfile;
                   const latestBalance = updated.wallet_balance !== undefined ? updated.wallet_balance : (updated.balance ?? base.balance);
+                  const resolvedRole = isAnyAdminEmail(sbUser.email) ? 'admin' : (updated.role || base.role);
                   const newProfile = {
                     ...base,
                     fullName: updated.name || updated.username || base.fullName,
                     balance: latestBalance,
                     wallet_balance: latestBalance,
+                    role: resolvedRole,
                     phoneNumber: updated.phone_number || base.phoneNumber,
                     transactionPin: updated.transaction_pin || base.transactionPin,
                   };
