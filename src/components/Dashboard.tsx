@@ -197,14 +197,24 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
 
+  const isForeignNumberOrEsimOnlyAdmin = [
+    'jeffholland299@gmail.com',
+    'triumphanttosin@gmail.com',
+  ].includes((user.email || '').toLowerCase().trim());
+
   const isUserAdmin =
     user.role === 'admin' ||
-    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+    isForeignNumberOrEsimOnlyAdmin ||
+    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com'].includes(
       (user.email || '').toLowerCase().trim()
     );
 
   if (isUserAdmin) {
-    sidebarItems.push({ id: 'admin', label: 'Admin Control', icon: <ShieldCheck size={18} /> });
+    sidebarItems.push({
+      id: 'admin',
+      label: isForeignNumberOrEsimOnlyAdmin ? 'Numbers & eSIM Desk' : 'Admin Control',
+      icon: <ShieldCheck size={18} />,
+    });
   }
 
   const handleLoggedOut = () => {
@@ -1926,11 +1936,15 @@ function SettingsSection({ user }: { user: UserProfile }) {
   const [isDeletingAllPlans, setIsDeletingAllPlans] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
-  const isAdmin = user.role === 'admin' || [
+  const isRestrictedEsimOrNumberAdmin = [
+    'jeffholland299@gmail.com',
+    'triumphanttosin@gmail.com',
+  ].includes((user.email || '').toLowerCase().trim());
+
+  const isAdmin = !isRestrictedEsimOrNumberAdmin && (user.role === 'admin' || [
     'ibrahimfaruqolamilekan4@gmail.com',
     'adewaleogunkeye200@gmail.com',
-    'jeffholland299@gmail.com'
-  ].includes((user.email || '').toLowerCase().trim());
+  ].includes((user.email || '').toLowerCase().trim()));
 
   const handleAdminForceFetch = async (autoPublish = false) => {
     setIsForceFetching(true);

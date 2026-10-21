@@ -41,7 +41,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
 
   const userRoleIsAdmin =
     currentUser?.role === 'admin' ||
-    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
       String(currentUser?.email || '').toLowerCase().trim()
     );
   const isAdmin = isAdminServer || userRoleIsAdmin;

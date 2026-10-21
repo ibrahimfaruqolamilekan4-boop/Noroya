@@ -70,12 +70,17 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
     'ibrahimfaruqolamilekan4@gmail.com',
     'adewaleogunkeye200@gmail.com',
     'jeffholland299@gmail.com',
+    'triumphanttosin@gmail.com',
   ]);
   const [isCallerAdminFromServer, setIsCallerAdminFromServer] = useState(false);
   const [promoteEmailInput, setPromoteEmailInput] = useState('');
   const [promotingEmail, setPromotingEmail] = useState(false);
 
   const userEmailNormalized = String(currentUser?.email || '').toLowerCase().trim();
+  const isSuperOrGeneralAdmin = [
+    'ibrahimfaruqolamilekan4@gmail.com',
+    'adewaleogunkeye200@gmail.com',
+  ].includes(userEmailNormalized);
   const isAdmin =
     isCallerAdminFromServer ||
     currentUser?.role === 'admin' ||
@@ -599,10 +604,14 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     label: `💬 Buyer Chats & Trace History (${adminOrders.length})`,
                     badge: pendingAdminOrdersCount,
                   },
-                  {
-                    id: 'manage-admins',
-                    label: `👑 Promote / Manage Admins (${promotedAdmins.length})`,
-                  },
+                  ...(isSuperOrGeneralAdmin
+                    ? [
+                        {
+                          id: 'manage-admins',
+                          label: `👑 Promote / Manage Admins (${promotedAdmins.length})`,
+                        },
+                      ]
+                    : []),
                 ]
               : []),
             { id: 'my-orders', label: '📦 My Purchases & Chat History' },
@@ -1033,8 +1042,8 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
           </div>
         )}
 
-        {/* Promote / Manage Foreign Number Admins Tab */}
-        {activeTab === 'manage-admins' && isAdmin && (
+                {/* Promote / Manage Foreign Number Admins Tab */}
+        {activeTab === 'manage-admins' && isSuperOrGeneralAdmin && (
           <div className="space-y-6">
             <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
@@ -1080,6 +1089,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                       'ibrahimfaruqolamilekan4@gmail.com',
                       'adewaleogunkeye200@gmail.com',
                       'jeffholland299@gmail.com',
+                      'triumphanttosin@gmail.com',
                     ].includes(email.toLowerCase());
                     return (
                       <div

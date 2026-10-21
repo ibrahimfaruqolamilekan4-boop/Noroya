@@ -91,7 +91,9 @@ export default function AdminPanelSection() {
   const { user } = useAuth();
   const isSuperAdmin = user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
   const isAccountantAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
-  const isEsimAdmin = user?.email?.toLowerCase() === 'jeffholland299@gmail.com';
+  const isEsimAdmin = ['jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
+    (user?.email || '').toLowerCase().trim()
+  );
   const isRestrictedAdmin = isAccountantAdmin || isEsimAdmin;
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
@@ -973,7 +975,7 @@ export default function AdminPanelSection() {
             </h4>
             <p className="text-xs text-slate-400 font-semibold font-sans uppercase">
               {isEsimAdmin 
-                ? "Logged in as jeffholland299@gmail.com · Foreign Numbers, Buyer Chats & eSIM Fulfillment"
+                ? `Logged in as ${user?.email?.toLowerCase()} · Restricted to Foreign Numbers & eSIM Only`
                 : "Continuous Whitelisted Bypass Mode"}
             </p>
           </div>

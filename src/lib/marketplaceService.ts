@@ -195,7 +195,7 @@ export const marketplaceService = {
       return await marketplaceFetch<{ admins: string[]; isCallerAdmin: boolean }>('/api/marketplace/admins');
     } catch (_) {
       return {
-        admins: ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'],
+        admins: ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com', 'triumphanttosin@gmail.com'],
         isCallerAdmin: false,
       };
     }
