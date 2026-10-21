@@ -7,6 +7,7 @@ import {
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { MarketplaceHome } from './Marketplace/MarketplaceHome';
 
 export interface EsimInquiry {
   id: string;
@@ -103,6 +104,7 @@ const DEFAULT_INQUIRIES: EsimInquiry[] = [
 
 export function AdminEsimMessages() {
   const { user } = useAuth();
+  const [deskMode, setDeskMode] = useState<'esim' | 'foreign-numbers'>('foreign-numbers');
   const [inquiries, setInquiries] = useState<EsimInquiry[]>([]);
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -302,6 +304,43 @@ export function AdminEsimMessages() {
 
   return (
     <div className="space-y-6">
+      {/* ── Mode Switcher: Foreign Numbers Admin vs eSIM Customer Inquiries ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 p-3 rounded-2xl border border-emerald-500/30 shadow-lg">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setDeskMode('foreign-numbers')}
+            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
+              deskMode === 'foreign-numbers'
+                ? 'bg-emerald-600 text-white shadow-lg'
+                : 'bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+          >
+            <Phone size={15} />
+            <span>📱 Foreign Numbers, Buyer Chats & Promote Admins</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeskMode('esim')}
+            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
+              deskMode === 'esim'
+                ? 'bg-teal-600 text-white shadow-lg'
+                : 'bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+          >
+            <MessageSquare size={15} />
+            <span>📶 eSIM Customer Inquiries ({inquiries.length})</span>
+          </button>
+        </div>
+        <span className="text-xs font-mono text-emerald-400 font-bold px-2">
+          Admin: {adminEmail}
+        </span>
+      </div>
+
+      {deskMode === 'foreign-numbers' ? (
+        <MarketplaceHome currentUser={user} user={user} />
+      ) : (
+        <>
       {/* ── Top Overview Banner ── */}
       <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
         <div className="space-y-1.5">
@@ -638,6 +677,8 @@ export function AdminEsimMessages() {
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

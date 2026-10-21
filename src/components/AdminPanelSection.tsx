@@ -969,18 +969,18 @@ export default function AdminPanelSection() {
           </div>
           <div>
             <h4 className="font-extrabold text-slate-800 text-lg">
-              {isEsimAdmin ? "eSIM Operator Desk" : "Platform Admin Control"}
+              {isEsimAdmin ? "Foreign Numbers & eSIM Admin Desk" : "Platform Admin Control"}
             </h4>
             <p className="text-xs text-slate-400 font-semibold font-sans uppercase">
               {isEsimAdmin 
-                ? "Logged in as jeffholland299@gmail.com · Restricted to eSIM Messages & Fulfillment"
+                ? "Logged in as jeffholland299@gmail.com · Foreign Numbers, Buyer Chats & eSIM Fulfillment"
                 : "Continuous Whitelisted Bypass Mode"}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Dedicated eSIM Messages quick button available on ALL THREE admin accounts */}
+          {/* Dedicated Foreign Numbers & eSIM Desk quick button available on ALL admin accounts */}
           <button
             type="button"
             onClick={() => setAdminSubTab('esim-messages')}
@@ -992,7 +992,7 @@ export default function AdminPanelSection() {
             )}
           >
             <MessageSquare size={14} />
-            <span>📶 eSIM Messages</span>
+            <span>📱 Foreign Numbers & eSIM Desk</span>
           </button>
 
           <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
@@ -1003,7 +1003,7 @@ export default function AdminPanelSection() {
 
       {/* Tab Switcher */}
       <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1.5 rounded-2xl max-w-5xl select-none font-bold">
-        {/* On all 3 accounts, eSIM Messages button is always available */}
+        {/* On all admin accounts, Foreign Numbers & eSIM Desk button is always available */}
         <button
           type="button"
           onClick={() => setAdminSubTab('esim-messages')}
@@ -1014,7 +1014,7 @@ export default function AdminPanelSection() {
               : "text-teal-700 hover:text-teal-900 hover:bg-teal-50"
           )}
         >
-          <span>📶 eSIM Messages</span>
+          <span>📱 Foreign Numbers & eSIM Desk</span>
         </button>
 
         {!isEsimAdmin && !isRestrictedAdmin && (

@@ -140,6 +140,20 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     if (storedAnn) setBroadcastAlert(storedAnn);
   }, [activeTab]);
 
+  // Ensure Deposit Funds button / Marketplace "Fund Wallet First" works from any tab
+  React.useEffect(() => {
+    const handleOpenFundFromAnyTab = () => {
+      if (activeTab !== 'dashboard') {
+        setActiveTab('dashboard');
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('open-fund-modal'));
+        }, 120);
+      }
+    };
+    window.addEventListener('open-fund-modal', handleOpenFundFromAnyTab);
+    return () => window.removeEventListener('open-fund-modal', handleOpenFundFromAnyTab);
+  }, [activeTab]);
+
   // Auto-logout after 15 minutes
   React.useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -183,7 +197,13 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
 
-  if (user.role === 'admin') {
+  const isUserAdmin =
+    user.role === 'admin' ||
+    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+      (user.email || '').toLowerCase().trim()
+    );
+
+  if (isUserAdmin) {
     sidebarItems.push({ id: 'admin', label: 'Admin Control', icon: <ShieldCheck size={18} /> });
   }
 
@@ -442,7 +462,15 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               onSelectTx={setSelectedReceiptTx}
             />
           )}
-          {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
+          {activeTab === 'marketplace' && (
+            <MarketplaceHome
+              currentUser={user}
+              user={user}
+              onBalanceUpdate={(newBal) => {
+                window.dispatchEvent(new CustomEvent('wallet-balance-updated', { detail: { balance: newBal } }));
+              }}
+            />
+          )}
           {activeTab === 'buy-data' && <ServicePurchase type="data" />}
           {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
           {activeTab === 'electricity' && <ElectricitySection />}

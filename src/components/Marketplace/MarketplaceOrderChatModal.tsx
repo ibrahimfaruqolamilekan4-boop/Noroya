@@ -2,75 +2,91 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { 
   X, Send, ShieldCheck, CheckCircle2, Key, Copy, Check, 
-  Clock, Loader2, Sparkles, BellRing, Wallet, Phone
+  Clock, Loader2, Sparkles, BellRing, Wallet, Phone, AlertTriangle, History
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { marketplaceService, MarketplaceMessage } from '../../lib/marketplaceService';
+import { marketplaceService, MarketplaceOrder, MarketplaceMessage } from '../../lib/marketplaceService';
 
 interface MarketplaceOrderChatModalProps {
-  orderId: string;
+  order: MarketplaceOrder;
   currentUser: any;
+  isOpen: boolean;
   onClose: () => void;
-  onOrderUpdated?: () => void;
+  onPaymentComplete: (newBalance: number) => void;
 }
 
-export function MarketplaceOrderChatModal({
-  orderId,
+export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps> = ({
+  order: initialOrder,
   currentUser,
+  isOpen,
   onClose,
-  onOrderUpdated
-}: MarketplaceOrderChatModalProps) {
-  const [order, setOrder] = useState<any | null>(null);
-  const [messages, setMessages] = useState<MarketplaceMessage[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [verificationInput, setVerificationInput] = useState('');
-  const [sellerCodeInput, setSellerCodeInput] = useState('');
-  const [walletBalance, setWalletBalance] = useState<number>(0);
-  const [isAdminUser, setIsAdminUser] = useState<boolean>(false);
-
-  const [loading, setLoading] = useState(true);
-  const [sendingMsg, setSendingMsg] = useState(false);
+  onPaymentComplete,
+}) => {
+  const [order, setOrder] = useState<MarketplaceOrder>(initialOrder);
+  const [messages, setMessages] = useState<MarketplaceMessage[]>(initialOrder.messages || []);
+  const [newMessage, setNewMessage] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [buyerConfirmCode, setBuyerConfirmCode] = useState('');
+  const [sending, setSending] = useState(false);
   const [requestingCode, setRequestingCode] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [sendingCode, setSendingCode] = useState(false);
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
-
+  const [completingDeal, setCompletingDeal] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedPhone, setCopiedPhone] = useState(false);
+  const [buyerBalance, setBuyerBalance] = useState<number>(
+    Number(initialOrder?.buyer?.wallet_balance ?? currentUser?.wallet_balance ?? currentUser?.balance ?? 0)
+  );
+  const [isAdminServer, setIsAdminServer] = useState<boolean>(false);
+  const [insufficientError, setInsufficientError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const currentUserId = currentUser?.id || currentUser?.uid;
-  const userRoleIsAdmin = currentUser?.role === 'admin' || ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(String(currentUser?.email || '').toLowerCase().trim());
 
-  const refreshOrderAndMessages = async (silent = false) => {
-    try {
-      const data = await marketplaceService.getOrderDetails(orderId);
-      if (data.order) {
-        setOrder(data.order);
-      }
-      if (Array.isArray(data.messages)) {
-        setMessages(data.messages);
-      }
-      if (typeof data.buyerBalance === 'number') {
-        setWalletBalance(data.buyerBalance);
-      }
-      if (typeof data.isAdmin === 'boolean') {
-        setIsAdminUser(data.isAdmin || userRoleIsAdmin);
-      }
-    } catch (err: any) {
-      if (!silent) {
-        console.error('[refreshOrderAndMessages] Error:', err);
-        toast.error(err.message || 'Failed to load chat details.');
-      }
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+  const userRoleIsAdmin =
+    currentUser?.role === 'admin' ||
+    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+      String(currentUser?.email || '').toLowerCase().trim()
+    );
+  const isAdmin = isAdminServer || userRoleIsAdmin;
+
+  const currentUserId = String(currentUser?.id || currentUser?.uid || '');
+  const isBuyer = String(order.buyer_id) === currentUserId && !isAdmin;
+  const isSellerOrAdmin = isAdmin || String(order.seller_id) === currentUserId;
+
+  const phoneNumber =
+    order.clicked_number ||
+    order.marketplace_listings?.product_details?.phone_number ||
+    order.marketplace_listings?.product_details?.item_identifier ||
+    '';
 
   useEffect(() => {
-    refreshOrderAndMessages(false);
-    const interval = setInterval(() => {
-      refreshOrderAndMessages(true);
-    }, 3500);
-    return () => clearInterval(interval);
-  }, [orderId]);
+    setOrder(initialOrder);
+    if (initialOrder.messages?.length) {
+      setMessages(initialOrder.messages);
+    }
+  }, [initialOrder]);
+
+  useEffect(() => {
+    if (!isOpen || !order?.id) return;
+    let active = true;
+
+    const syncOrder = async () => {
+      try {
+        const details = await marketplaceService.getOrderDetails(order.id);
+        if (!active) return;
+        if (details.order) setOrder(details.order);
+        if (Array.isArray(details.messages)) setMessages(details.messages);
+        if (typeof details.buyerBalance === 'number') setBuyerBalance(details.buyerBalance);
+        if (typeof details.isAdmin === 'boolean') setIsAdminServer(details.isAdmin);
+      } catch (err) {
+        console.warn('[MarketplaceOrderChatModal] poll warning:', err);
+      }
+    };
+
+    syncOrder();
+    const interval = setInterval(syncOrder, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isOpen, order?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,402 +94,490 @@ export function MarketplaceOrderChatModal({
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || sendingMsg) return;
+    if (!newMessage.trim()) return;
 
-    const text = inputText.trim();
-    setInputText('');
-    setSendingMsg(true);
     try {
-      await marketplaceService.sendMessage(orderId, currentUserId, text);
-      await refreshOrderAndMessages(true);
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to send message.');
-      setInputText(text);
+      setSending(true);
+      await marketplaceService.sendMessage(order.id, currentUserId, newMessage);
+      setNewMessage('');
+      const details = await marketplaceService.getOrderDetails(order.id);
+      setOrder(details.order);
+      setMessages(details.messages || []);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to send message');
     } finally {
-      setSendingMsg(false);
+      setSending(false);
     }
   };
 
-  // Buyer clicks "Request Verification Code"
   const handleRequestCode = async () => {
-    setRequestingCode(true);
+    setInsufficientError(null);
+    const price = Number(order.price || 0);
+    if (buyerBalance < price && order.status !== 'paid') {
+      const msg = `Insufficient Balance! This number requires ₦${price.toLocaleString()}, but your wallet balance is ₦${buyerBalance.toLocaleString()}. Please fund your wallet first.`;
+      setInsufficientError(msg);
+      toast.error('Insufficient Balance! Please fund your wallet.');
+      return;
+    }
+
     try {
-      await marketplaceService.requestVerificationCode(orderId);
-      toast.success('📲 Code request sent to Admin! Admin will send your verification code here.');
-      await refreshOrderAndMessages(true);
-      onOrderUpdated?.();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to request code.');
+      setRequestingCode(true);
+      const res = await marketplaceService.requestVerificationCode(order.id);
+      setOrder(res.order);
+      if (res.order.messages) setMessages(res.order.messages);
+      toast.success('Login code request sent to Admin!');
+    } catch (error: any) {
+      if (error.code === 'INSUFFICIENT_BALANCE' || String(error.message || '').toLowerCase().includes('insufficient')) {
+        setInsufficientError(error.message);
+      }
+      toast.error(error.message || 'Failed to request code');
     } finally {
       setRequestingCode(false);
     }
   };
 
-  // Admin/Seller sends verification code (optionally completing deal & auto-debiting buyer wallet)
-  const handleSendCode = async (autoCompleteDeal: boolean) => {
-    if (!sellerCodeInput.trim()) {
-      toast.error('Please enter the verification OTP code or credential.');
+  const handleAdminSendCode = async (autoCompleteDeal: boolean) => {
+    if (!verificationCode.trim()) {
+      toast.error('Please enter the login/verification OTP code to send');
       return;
     }
 
-    setSendingCode(true);
     try {
+      setSending(true);
       const res = await marketplaceService.sendVerificationCode(
-        orderId,
+        order.id,
         currentUserId,
-        sellerCodeInput.trim(),
+        verificationCode,
         autoCompleteDeal
       );
+      setVerificationCode('');
+      setOrder(res.order);
+      if (res.order.messages) setMessages(res.order.messages);
       if (res.dealCompleted) {
-        toast.success(`✅ Code sent & ₦${Number(order.price).toLocaleString()} auto-debited from buyer's wallet!`);
+        if (typeof res.newBuyerBalance === 'number') {
+          setBuyerBalance(res.newBuyerBalance);
+        }
+        toast.success(`Code sent & ₦${Number(order.price).toLocaleString()} automatically debited from buyer's wallet!`);
       } else {
-        toast.success('🔑 Verification code sent to buyer in chat!');
+        toast.success('Verification code sent in chat!');
       }
-      setSellerCodeInput('');
-      await refreshOrderAndMessages(true);
-      onOrderUpdated?.();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to send verification code.');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to send verification code');
     } finally {
-      setSendingCode(false);
+      setSending(false);
     }
   };
 
-  // Complete deal & automatically debit buyer's wallet (callable by Admin or Buyer)
-  const handleCompleteDealWithAutoDebit = async () => {
-    setVerifying(true);
+  const handleCompleteDealAndDebit = async () => {
+    setInsufficientError(null);
+    const price = Number(order.price || 0);
+    if (!isAdmin && buyerBalance < price && order.status !== 'paid') {
+      const msg = `Insufficient Balance! Required: ₦${price.toLocaleString()}, Available: ₦${buyerBalance.toLocaleString()}. Please fund your wallet.`;
+      setInsufficientError(msg);
+      toast.error('Insufficient Balance!');
+      return;
+    }
+
     try {
-      const res = await marketplaceService.verifyAndComplete(orderId, verificationInput.trim());
-      toast.success(`🎉 Deal completed! ₦${Number(order.price).toLocaleString()} debited automatically from wallet.`);
-      setVerificationInput('');
-      await refreshOrderAndMessages(true);
-      onOrderUpdated?.();
-      if (res.newBuyerBalance !== undefined) {
-        window.dispatchEvent(new CustomEvent('wallet-balance-updated', { detail: { balance: res.newBuyerBalance } }));
+      setCompletingDeal(true);
+      const res = await marketplaceService.verifyAndComplete(order.id, buyerConfirmCode);
+      setOrder(res.order);
+      if (res.order.messages) setMessages(res.order.messages);
+      if (typeof res.newBuyerBalance === 'number') {
+        setBuyerBalance(res.newBuyerBalance);
+        if (isBuyer) {
+          onPaymentComplete(res.newBuyerBalance);
+        }
       }
-    } catch (err: any) {
-      toast.error(err.message || 'Could not complete deal.');
+      toast.success(`🎉 Deal completed! ₦${Number(order.price).toLocaleString()} has been debited from the wallet.`);
+    } catch (error: any) {
+      if (error.code === 'INSUFFICIENT_BALANCE' || String(error.message || '').toLowerCase().includes('insufficient')) {
+        setInsufficientError(error.message);
+      }
+      toast.error(error.message || 'Failed to complete deal');
     } finally {
-      setVerifying(false);
+      setCompletingDeal(false);
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedCode(text);
-    toast.success('Copied to clipboard!');
-    setTimeout(() => setCopiedCode(null), 2500);
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(true);
+    toast.success('Login code copied!');
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  if (loading) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-        <div className="bg-white rounded-3xl p-8 flex flex-col items-center gap-3 shadow-2xl">
-          <Loader2 size={32} className="animate-spin text-emerald-600" />
-          <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Opening Live Admin Chat…</p>
-        </div>
-      </div>
-    );
-  }
+  const copyPhoneNumber = (phone: string) => {
+    navigator.clipboard.writeText(phone);
+    setCopiedPhone(true);
+    toast.success('Foreign number copied!');
+    setTimeout(() => setCopiedPhone(false), 2000);
+  };
 
-  if (!order) return null;
+  if (!isOpen) return null;
 
-  const isBuyer = String(currentUserId) === String(order.buyer_id);
-  const isSellerOrAdmin = !isBuyer && (isAdminUser || userRoleIsAdmin || String(currentUserId) === String(order.seller_id));
-  const listing = order.marketplace_listings;
-  const phonePreview = listing?.product_details?.phone_number || listing?.product_details?.item_identifier || '';
-  const hasCodeMessage = messages.some((m) => m.message_type === 'verification_code') || Boolean(order.verification_code);
-
-  const otherPartyName = isBuyer
-    ? (order.seller?.full_name || order.seller?.name || 'NORODATA Official Admin')
-    : `${order.buyer?.full_name || order.buyer?.name || 'Customer'}${order.buyer?.email ? ` (${order.buyer.email})` : ''}`;
+  const latestCodeMsg = [...messages].reverse().find((m) => m.message_type === 'verification_code');
+  const formatTimestamp = (iso?: string) => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} • ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } catch (_) {
+      return '';
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+    >
       <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        className="bg-white rounded-3xl max-w-2xl w-full h-[92vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden"
+        initial={{ scale: 0.95, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.95, opacity: 0, y: 20 }}
+        className="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-2xl w-full h-[92vh] flex flex-col overflow-hidden shadow-2xl"
       >
-        {/* ── 1. Header ──────────────────────────────────────────── */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/90 flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600/10 text-emerald-700 flex items-center justify-center text-lg font-bold shrink-0">
-              {listing?.marketplace_categories?.icon || '📱'}
+        {/* Header */}
+        <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-900 border-b border-emerald-500/20 p-4 flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                {order.status === 'completed' ? '✓ Deal Completed & Paid' : '● Live Admin Order Chat'}
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                <History className="w-3 h-3 text-emerald-400" />
+                Permanent Trace ID: {order.id}
+              </span>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm sm:text-base font-black text-slate-900 truncate">
-                  {listing?.title || 'Foreign Number'}
-                </h3>
-                {order.status !== 'completed' ? (
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                    order.code_requested
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {hasCodeMessage ? 'Code Sent' : order.code_requested ? 'Code Requested' : 'Live Chat'}
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider">
-                    Deal Completed & Auto-Debited
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-500 font-medium truncate">
-                Chatting with <b className="text-slate-800">{otherPartyName}</b>
-                {phonePreview ? ` • ${phonePreview}` : ''}
-              </p>
+            <h2 className="text-base sm:text-lg font-black text-white truncate mt-1">
+              {order.marketplace_listings?.title || 'Foreign Number Purchase'}
+            </h2>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 mt-1">
+              <span className="font-black text-emerald-400">
+                Price: ₦{Number(order.price).toLocaleString()}
+              </span>
+              <span className={`flex items-center gap-1 font-semibold px-2 py-0.5 rounded-md border ${
+                buyerBalance >= Number(order.price || 0) || order.status === 'completed'
+                  ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300'
+                  : 'bg-red-950/80 border-red-500/40 text-red-300'
+              }`}>
+                <Wallet className="w-3.5 h-3.5" />
+                {isSellerOrAdmin ? "Buyer's Wallet:" : 'Your Wallet:'} ₦{Number(buyerBalance).toLocaleString()}
+                {buyerBalance < Number(order.price || 0) && order.status !== 'completed' && ' (Insufficient Balance)'}
+              </span>
+              {isSellerOrAdmin && order.buyer?.email && (
+                <span className="text-slate-400 truncate">
+                  Buyer: <strong className="text-white">{order.buyer.full_name || order.buyer.email}</strong> ({order.buyer.email})
+                </span>
+              )}
             </div>
           </div>
+
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-xl bg-slate-200/60 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition cursor-pointer shrink-0"
+            className="text-slate-400 hover:text-white transition p-2 rounded-lg hover:bg-slate-800 shrink-0"
           >
-            <X size={18} />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* ── 2. Order Action / Request Code / Auto-Debit Bar ─────────────────────── */}
-        <div className="px-4 py-3 bg-slate-100/70 border-b border-slate-200/60 text-xs space-y-2.5">
-          {order.status !== 'completed' && (
-            <>
-              {/* Top status strip showing Number, Price, and Wallet Balance */}
-              <div className="flex flex-wrap items-center justify-between gap-2 bg-white border border-slate-200/80 px-3.5 py-2.5 rounded-2xl">
-                <div className="flex items-center gap-2">
-                  <Phone size={14} className="text-emerald-600 shrink-0" />
-                  <span className="font-mono font-black text-slate-900 text-xs">
-                    {phonePreview || listing?.title}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 font-black font-mono text-xs">
-                    ₦{Number(order.price).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
-                  <Wallet size={13} className="text-emerald-600" />
-                  <span>{isBuyer ? 'Your Wallet:' : 'Buyer Wallet:'}</span>
-                  <span className={`font-mono font-black ${walletBalance >= Number(order.price) ? 'text-emerald-700' : 'text-rose-600'}`}>
-                    ₦{Number(walletBalance || 0).toLocaleString()}
-                  </span>
-                </div>
+        {/* Prominent Clicked Foreign Number Banner */}
+        {phoneNumber && (
+          <div className="bg-emerald-950/70 border-b border-emerald-500/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-300 shrink-0">
+                <Phone className="w-5 h-5" />
               </div>
-
-              {/* BUYER CONTROLS: Request Code & Complete Deal (Auto-Debit Wallet) */}
-              {isBuyer && (
-                <div className="bg-emerald-50/90 border border-emerald-200/80 p-3 rounded-2xl space-y-2.5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                    <div>
-                      <p className="font-black text-emerald-950 text-xs flex items-center gap-1.5">
-                        <ShieldCheck size={15} className="text-emerald-600 shrink-0" />
-                        <span>Auto-Wallet Debit on Deal Completion</span>
-                      </p>
-                      <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                        Request the verification code from Admin below. Your wallet (₦{Number(order.price).toLocaleString()}) will be debited automatically once the deal is done!
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={handleRequestCode}
-                        disabled={requestingCode}
-                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-                      >
-                        {requestingCode ? <Loader2 size={13} className="animate-spin" /> : <BellRing size={13} />}
-                        <span>{order.code_requested ? 'Request Code Again' : 'Request Code'}</span>
-                      </button>
-
-                      {hasCodeMessage && (
-                        <button
-                          type="button"
-                          onClick={handleCompleteDealWithAutoDebit}
-                          disabled={verifying}
-                          className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow-sm flex items-center gap-1.5 transition cursor-pointer"
-                        >
-                          {verifying ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                          <span>Deal Done (Auto-Debit ₦{Number(order.price).toLocaleString()})</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ADMIN / SELLER CONTROLS: Send Code & Auto-Debit Buyer Wallet */}
-              {isSellerOrAdmin && (
-                <div className="bg-blue-50 border border-blue-200/80 p-3 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-blue-950 text-xs flex items-center gap-1.5">
-                      <Key size={14} className="text-blue-600" />
-                      <span>Admin Code Dispatch & Auto-Wallet Debit</span>
-                    </span>
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
-                      Auto-Debit: ₦{Number(order.price).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="text"
-                      value={sellerCodeInput}
-                      onChange={(e) => setSellerCodeInput(e.target.value)}
-                      placeholder="Enter OTP verification code (e.g. 582-910) to send to buyer…"
-                      className="flex-1 bg-white border border-blue-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleSendCode(false)}
-                      disabled={sendingCode || !sellerCodeInput.trim()}
-                      className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      {sendingCode ? <Loader2 size={13} className="animate-spin" /> : <Key size={13} />}
-                      <span>Send Code</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSendCode(true)}
-                      disabled={sendingCode || !sellerCodeInput.trim()}
-                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      {sendingCode ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                      <span>Send Code & Complete Deal (Auto-Debit)</span>
-                    </button>
-                  </div>
-
-                  {hasCodeMessage && (
-                    <div className="pt-1 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleCompleteDealWithAutoDebit}
-                        disabled={verifying}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow flex items-center gap-1.5 transition cursor-pointer"
-                      >
-                        {verifying ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                        <span>Mark Deal Done & Auto-Debit Buyer Wallet (₦{Number(order.price).toLocaleString()})</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {order.status === 'completed' && (
-            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200/80 p-3 rounded-2xl text-emerald-900">
-              <div className="flex items-center gap-2 font-bold">
-                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                <span>
-                  Deal Completed! ₦{Number(order.price).toLocaleString()} was automatically debited from wallet.
-                </span>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                  Selected Foreign Number (Use this number to login & receive code)
+                </p>
+                <p className="font-mono font-black text-white text-base sm:text-lg tracking-wide">
+                  {phoneNumber}
+                </p>
               </div>
-              <Sparkles size={16} className="text-emerald-600 shrink-0" />
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => copyPhoneNumber(phoneNumber)}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 transition shrink-0 shadow"
+            >
+              {copiedPhone ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copiedPhone ? 'Number Copied!' : 'Copy Number'}
+            </button>
+          </div>
+        )}
+
+        {/* Insufficient Balance Alert Banner */}
+        {insufficientError && order.status !== 'completed' && (
+          <div className="bg-red-950/90 border-b border-red-500/50 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs text-red-200 font-bold">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{insufficientError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                window.dispatchEvent(new CustomEvent('open-fund-modal'));
+              }}
+              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-black shrink-0"
+            >
+              Fund Wallet Now
+            </button>
+          </div>
+        )}
+
+        {/* Permanent Traceability Notice */}
+        <div className="bg-slate-800/80 border-b border-slate-700/60 px-4 py-2 flex items-center justify-between text-[11px] text-slate-300">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              {order.status === 'completed'
+                ? `Deal completed! ₦${Number(order.price).toLocaleString()} was automatically debited from wallet.`
+                : `Auto-Debit Protection: ₦${Number(order.price).toLocaleString()} is debited automatically once you receive the code & deal is done.`}
+            </span>
+          </div>
+          <span className="hidden sm:inline text-[10px] text-emerald-400 font-bold shrink-0 ml-2">
+            ● Permanent Chat Log Saved
+          </span>
         </div>
 
-        {/* ── 3. Chat Messages Stream ────────────────────────────── */}
-        <div className="flex-1 p-4 sm:p-5 overflow-y-auto space-y-3 bg-slate-50/50">
+        {/* Messages Container */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950/60">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
-              <Clock size={28} className="mb-2 stroke-[1.5]" />
-              <p className="text-xs font-bold uppercase tracking-wider">No messages yet</p>
-              <p className="text-[11px] max-w-xs mt-1">
-                Click "Request Code" above or send a message to Admin to receive your verification code.
-              </p>
+            <div className="flex items-center justify-center h-full text-slate-400">
+              <div className="text-center">
+                <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p>Chat connected! Ask Admin for your login verification code below.</p>
+              </div>
             </div>
           ) : (
             messages.map((msg) => {
-              const isMe = isBuyer
-                ? String(msg.sender_id) === String(currentUserId)
-                : (msg.sender_id === 'admin' || msg.sender_role === 'admin' || String(msg.sender_id) === String(currentUserId));
-              const isCodeMsg = msg.message_type === 'verification_code';
+              const isOwn =
+                (isSellerOrAdmin && (msg.sender_id === 'admin' || msg.sender_role === 'admin' || msg.sender_id === currentUserId)) ||
+                (!isSellerOrAdmin && msg.sender_id === currentUserId && msg.sender_role !== 'admin');
+
+              const senderLabel =
+                msg.sender_name ||
+                (msg.sender_role === 'admin' || msg.sender_id === 'admin'
+                  ? '👑 NORODATA Official Admin'
+                  : order.buyer?.full_name || order.buyer?.email || 'Customer');
 
               return (
-                <div
+                <motion.div
                   key={msg.id}
-                  className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-3.5 shadow-sm ${
-                      isCodeMsg
-                        ? 'bg-gradient-to-r from-emerald-900 to-teal-900 text-white border border-emerald-500/40'
-                        : isMe
+                    className={`max-w-md px-4 py-3 rounded-2xl text-sm ${
+                      msg.message_type === 'verification_code'
+                        ? 'bg-emerald-950/90 border-2 border-emerald-500/60 text-emerald-100 shadow-lg'
+                        : isOwn
                         ? 'bg-emerald-600 text-white rounded-br-none'
-                        : 'bg-white text-slate-800 border border-slate-200/80 rounded-bl-none'
+                        : 'bg-slate-800 text-slate-100 rounded-bl-none border border-slate-700'
                     }`}
                   >
-                    {isCodeMsg ? (
-                      <div className="space-y-2.5">
-                        <div className="flex items-center gap-1.5 text-emerald-300 text-[10px] font-black uppercase tracking-widest">
-                          <Key size={12} />
-                          <span>Official Verification Code / OTP</span>
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider opacity-85">
+                        {senderLabel}
+                      </span>
+                      {msg.sender_email && isSellerOrAdmin && (
+                        <span className="text-[9px] opacity-60 font-mono">{msg.sender_email}</span>
+                      )}
+                    </div>
+
+                    {msg.message_type === 'verification_code' ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 font-black text-emerald-300 text-xs uppercase tracking-wider">
+                          <Key className="w-4 h-4" />
+                          Official Login Verification Code
                         </div>
-                        <p className="text-xs text-emerald-100 font-medium">{msg.content}</p>
-                        {msg.code_value && (
-                          <div className="p-2.5 rounded-xl bg-black/40 border border-white/15 flex items-center justify-between gap-3">
-                            <code className="font-mono font-black text-sm text-emerald-300 select-all break-all">
-                              {msg.code_value}
-                            </code>
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(msg.code_value!)}
-                              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition shrink-0 cursor-pointer"
-                              title="Copy verification code"
-                            >
-                              {copiedCode === msg.code_value ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                            </button>
-                          </div>
-                        )}
+                        <p className="text-xs text-slate-300">{msg.content}</p>
+                        <div className="flex items-center gap-2 bg-slate-900 p-2.5 rounded-xl font-mono text-lg font-black border border-emerald-500/40">
+                          <span className="flex-1 text-emerald-400 tracking-widest">{msg.code_value}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyCode(msg.code_value || '')}
+                            className="p-1.5 hover:bg-slate-800 rounded-lg transition text-emerald-300 flex items-center gap-1 text-xs font-sans font-bold"
+                          >
+                            {copiedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                            {copiedCode ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words font-medium">
-                        {msg.content}
-                      </p>
+                      <p className=" whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                     )}
-
-                    <div
-                      className={`text-[9px] mt-1.5 flex items-center justify-end gap-1 font-semibold ${
-                        isCodeMsg || isMe ? 'text-emerald-100/80' : 'text-slate-400'
-                      }`}
-                    >
-                      <span>
-                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
+                    <span className="text-[10px] opacity-60 mt-1.5 block text-right">
+                      {formatTimestamp(msg.created_at)}
+                    </span>
                   </div>
-                </div>
+                </motion.div>
               );
             })
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* ── 4. Chat Input Footer ───────────────────────────────── */}
-        <form
-          onSubmit={handleSendMessage}
-          className="p-3.5 sm:p-4 bg-white border-t border-slate-100 flex items-center gap-2.5"
-        >
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder={
-              isBuyer
-                ? "Type a message to Admin (e.g. 'I entered the number on WhatsApp, send code')…"
-                : "Reply to buyer or guide them on entering the number…"
-            }
-            className="flex-1 bg-slate-100/80 border border-slate-200/80 rounded-2xl px-4 py-3 text-xs sm:text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
-          />
-          <button
-            type="submit"
-            disabled={!inputText.trim() || sendingMsg}
-            className="px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider shadow-md shadow-emerald-600/10 flex items-center gap-1.5 transition cursor-pointer"
-          >
-            {sendingMsg ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-            <span className="hidden sm:inline">Send</span>
-          </button>
-        </form>
+        {/* Action & Deal Controls Footer */}
+        <div className="border-t border-slate-700/60 bg-slate-900 p-4 space-y-3">
+          {/* BUYER CONTROLS */}
+          {!isSellerOrAdmin && order.status !== 'completed' && (
+            <div className="bg-slate-800/90 border border-slate-700 rounded-xl p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-slate-300">
+                  <span className="font-bold text-white block">Step 1: Enter Number & Request Login Code</span>
+                  <span>
+                    Enter <strong className="text-emerald-400 font-mono">{phoneNumber || 'the number'}</strong> in your app, then request the code from Admin.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRequestCode}
+                  disabled={requestingCode}
+                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow"
+                >
+                  {requestingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
+                  {order.code_requested ? 'Request Code Again' : 'Request Verification Code'}
+                </button>
+              </div>
+
+              {/* Step 2: Confirm Code & Auto-Debit */}
+              <div className="pt-2 border-t border-slate-700/70 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                <div className="text-xs text-slate-300">
+                  <span className="font-bold text-emerald-400 block">
+                    Step 2: Logged In? Complete Deal (Auto-Debit ₦{Number(order.price).toLocaleString()})
+                  </span>
+                  <span>
+                    {latestCodeMsg?.code_value
+                      ? `Code ${latestCodeMsg.code_value} received! Click to complete & auto-debit your wallet.`
+                      : 'Once Admin gives you the login code and you log in, click to finalize & auto-debit your wallet.'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCompleteDealAndDebit}
+                  disabled={completingDeal}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow-lg"
+                >
+                  {completingDeal ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Debiting Wallet...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      Code Received — Complete Deal (₦{Number(order.price).toLocaleString()})
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ADMIN / SELLER CONTROLS */}
+          {isSellerOrAdmin && order.status !== 'completed' && (
+            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5" />
+                  Admin Verification Code & Auto-Debit Panel
+                </span>
+                <span className="text-slate-300 font-semibold">
+                  Buyer Wallet: <strong className={buyerBalance >= Number(order.price) ? 'text-emerald-400' : 'text-red-400'}>
+                    ₦{Number(buyerBalance).toLocaleString()}
+                  </strong>
+                  {buyerBalance < Number(order.price) && ' (Insufficient)'}
+                </span>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  placeholder="Enter OTP / Login verification code (e.g. 849-201)..."
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-xs font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAdminSendCode(false)}
+                  disabled={sending || !verificationCode.trim()}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-bold text-xs transition disabled:opacity-50"
+                >
+                  Send Code Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAdminSendCode(true)}
+                  disabled={sending || !verificationCode.trim()}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-lg"
+                >
+                  Send Code & Auto-Debit ₦{Number(order.price).toLocaleString()}
+                </button>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20">
+                <span className="text-[11px] text-slate-400">
+                  Already sent the login code in chat? Click to mark deal done & auto-debit buyer's wallet:
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCompleteDealAndDebit}
+                  disabled={completingDeal}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition disabled:opacity-50"
+                >
+                  {completingDeal ? 'Debiting...' : `Complete Deal & Debit ₦${Number(order.price).toLocaleString()}`}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {order.status === 'completed' && (
+            <div className="bg-emerald-500/15 border border-emerald-500/40 rounded-xl p-3 text-emerald-300 text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  Deal Completed! ₦{Number(order.price).toLocaleString()} was automatically debited from wallet. Full chat history is permanently saved.
+                </span>
+              </div>
+              {order.payment_reference && (
+                <span className="font-mono text-[10px] bg-slate-900 px-2 py-1 rounded border border-emerald-500/30">
+                  {order.payment_reference}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Message Input */}
+          <form onSubmit={handleSendMessage} className="flex gap-2">
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder={
+                isSellerOrAdmin
+                  ? 'Reply to buyer or paste login instructions (permanently saved)...'
+                  : 'Type a message to Admin (permanently saved in chat history)...'
+              }
+              disabled={sending}
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 disabled:opacity-50 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={sending || !newMessage.trim()}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl transition disabled:opacity-50 flex items-center gap-1.5 font-bold text-sm"
+            >
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </button>
+          </form>
+        </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
-}
+};

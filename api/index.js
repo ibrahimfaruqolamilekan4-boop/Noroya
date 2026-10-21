@@ -778,10 +778,15 @@ async function startServer() {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
     let userEmail = "";
+    let isRoleAdmin = false;
     if (token) {
       try {
         const { data: { user } } = await supabase.auth.getUser(token);
         if (user?.email) userEmail = user.email.toLowerCase().trim();
+        if (user?.id) {
+          const { data: prof } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+          if (prof?.role === "admin") isRoleAdmin = true;
+        }
       } catch (_) {
       }
     }
@@ -789,11 +794,12 @@ async function startServer() {
       userEmail = adminEmailHeader;
     }
     const ALLOWED_ESIM_ADMINS = [
-      ADMIN_EMAIL.toLowerCase(),
+      ADMIN_EMAIL.toLowerCase().trim(),
+      "ibrahimfaruqolamilekan4@gmail.com",
       "adewaleogunkeye200@gmail.com",
       "jeffholland299@gmail.com"
-    ];
-    if (!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) {
+    ].filter(Boolean);
+    if ((!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) && !isRoleAdmin) {
       res.status(403).json({ error: "Forbidden: unauthorized eSIM admin access." });
       return false;
     }
@@ -5379,17 +5385,57 @@ AI:`;
     }
   } catch (_) {
   }
-  const saveEsimInquiries = () => {
+  const loadEsimInquiriesStore = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_inquiries_store_v2").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          serverEsimInquiries = parsed;
+          return serverEsimInquiries;
+        }
+      }
+    } catch (_) {
+    }
+    return serverEsimInquiries;
+  };
+  const saveEsimInquiries = async (inquiriesToSave) => {
+    if (Array.isArray(inquiriesToSave)) {
+      serverEsimInquiries = inquiriesToSave;
+    }
     try {
       const dataDir = path.join(process.cwd(), ".data");
       if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
       fs.writeFileSync(path.join(dataDir, "esim_inquiries.json"), JSON.stringify(serverEsimInquiries, null, 2));
     } catch (_) {
     }
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "esim_inquiries_store_v2",
+        secret: JSON.stringify(serverEsimInquiries),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.warn("[saveEsimInquiries Supabase warning]:", err?.message || err);
+    }
   };
   app.get("/api/esim/inquiries", async (req, res) => {
     if (!await requireEsimAdmin(req, res)) return;
-    return res.json({ inquiries: serverEsimInquiries });
+    const inquiries = await loadEsimInquiriesStore();
+    return res.json({ inquiries });
+  });
+  app.get("/api/esim/inquiries/my", async (req, res) => {
+    try {
+      const userId = String(req.query.userId || "").trim();
+      const email = String(req.query.email || "").toLowerCase().trim();
+      const inquiries = await loadEsimInquiriesStore();
+      const mine = inquiries.filter(
+        (i) => email && String(i.user_email || "").toLowerCase().trim() === email || userId && userId !== "visitor" && String(i.user_id) === userId
+      );
+      return res.json({ inquiries: mine });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
   });
   app.post("/api/esim/inquiries", async (req, res) => {
     try {
@@ -5403,26 +5449,47 @@ AI:`;
         package_price = "\u20A68,500",
         destination_country = "United States",
         device_model = "Smartphone",
-        message = ""
+        message = "",
+        check_balance = false
       } = req.body;
-      const newMsg = {
-        id: `msg-${Date.now()}`,
-        sender: "user",
-        text: String(message || "Inquiry initiated").trim(),
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      const existingIdx = serverEsimInquiries.findIndex(
-        (i) => user_email && i.user_email === user_email || user_id !== "visitor" && i.user_id === user_id
+      const inquiries = await loadEsimInquiriesStore();
+      const numericPrice = Number(String(package_price || "").replace(/[^\d.]/g, "")) || 0;
+      let buyerBalance = 0;
+      if (user_id && user_id !== "visitor") {
+        const { data: prof } = await supabase.from("profiles").select("wallet_balance, balance").eq("id", user_id).maybeSingle();
+        buyerBalance = Number(prof?.wallet_balance ?? prof?.balance ?? 0);
+      }
+      const existingIdx = inquiries.findIndex(
+        (i) => user_email && String(i.user_email || "").toLowerCase().trim() === String(user_email).toLowerCase().trim() || user_id !== "visitor" && i.user_id === user_id
       );
+      if (check_balance && numericPrice > 0 && buyerBalance < numericPrice) {
+        return res.status(400).json({
+          error: `Insufficient Balance! This eSIM (${package_label}) costs \u20A6${numericPrice.toLocaleString()}, but your wallet balance is \u20A6${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy.`,
+          code: "INSUFFICIENT_BALANCE",
+          required: numericPrice,
+          balance: buyerBalance
+        });
+      }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const newMsg = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        sender: "user",
+        sender_name: user_name || "Customer",
+        sender_email: user_email || "",
+        text: String(message || "Inquiry initiated").trim(),
+        created_at: nowIso
+      };
       let inquiryObj;
       if (existingIdx >= 0) {
-        serverEsimInquiries[existingIdx].messages.push(newMsg);
-        serverEsimInquiries[existingIdx].last_message = newMsg.text;
-        serverEsimInquiries[existingIdx].last_message_at = newMsg.created_at;
-        serverEsimInquiries[existingIdx].updated_at = (/* @__PURE__ */ new Date()).toISOString();
-        if (device_model) serverEsimInquiries[existingIdx].device_model = device_model;
-        if (package_label) serverEsimInquiries[existingIdx].package_label = package_label;
-        inquiryObj = serverEsimInquiries[existingIdx];
+        if (!Array.isArray(inquiries[existingIdx].messages)) inquiries[existingIdx].messages = [];
+        inquiries[existingIdx].messages.push(newMsg);
+        inquiries[existingIdx].last_message = newMsg.text;
+        inquiries[existingIdx].last_message_at = newMsg.created_at;
+        inquiries[existingIdx].updated_at = nowIso;
+        if (device_model) inquiries[existingIdx].device_model = device_model;
+        if (package_label) inquiries[existingIdx].package_label = package_label;
+        if (package_price) inquiries[existingIdx].package_price = package_price;
+        inquiryObj = inquiries[existingIdx];
       } else {
         inquiryObj = {
           id: `inq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -5436,15 +5503,15 @@ AI:`;
           destination_country,
           device_model,
           status: "pending",
-          created_at: (/* @__PURE__ */ new Date()).toISOString(),
-          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+          created_at: nowIso,
+          updated_at: nowIso,
           last_message: newMsg.text,
           last_message_at: newMsg.created_at,
           messages: [newMsg]
         };
-        serverEsimInquiries.unshift(inquiryObj);
+        inquiries.unshift(inquiryObj);
       }
-      saveEsimInquiries();
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry: inquiryObj });
     } catch (err) {
       console.error("[POST /api/esim/inquiries Error]:", err);
@@ -5455,29 +5522,32 @@ AI:`;
     try {
       const { id } = req.params;
       const { text, sender = "admin", sender_name = "eSIM Desk", sender_email = "jeffholland299@gmail.com", activation_code } = req.body;
-      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      const inquiries = await loadEsimInquiriesStore();
+      const inquiry = inquiries.find((i) => i.id === id);
       if (!inquiry) {
         return res.status(404).json({ error: "eSIM inquiry not found" });
       }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const msg = {
-        id: `msg-${Date.now()}`,
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         sender,
         sender_name,
         sender_email,
         text: String(text || "").trim(),
         activation_code: activation_code || void 0,
         has_qr: Boolean(activation_code),
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
+        created_at: nowIso
       };
+      if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
       inquiry.messages.push(msg);
       inquiry.last_message = msg.text;
       inquiry.last_message_at = msg.created_at;
-      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      inquiry.updated_at = nowIso;
       if (activation_code) inquiry.activation_code = activation_code;
       if (sender === "admin" && inquiry.status === "pending") {
         inquiry.status = "in_progress";
       }
-      saveEsimInquiries();
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -5488,11 +5558,56 @@ AI:`;
     try {
       const { id } = req.params;
       const { status } = req.body;
-      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      const inquiries = await loadEsimInquiriesStore();
+      const inquiry = inquiries.find((i) => i.id === id);
       if (!inquiry) return res.status(404).json({ error: "eSIM inquiry not found" });
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const numericPrice = Number(String(inquiry.package_price || "").replace(/[^\d.]/g, "")) || 0;
+      if (status === "completed" && !inquiry.payment_debited && numericPrice > 0 && inquiry.user_id && inquiry.user_id !== "visitor") {
+        const { data: buyerProf } = await supabase.from("profiles").select("id, email, wallet_balance, balance").eq("id", inquiry.user_id).maybeSingle();
+        const currentBal = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
+        if (currentBal < numericPrice) {
+          return res.status(400).json({
+            error: `Insufficient Balance! Customer wallet has \u20A6${currentBal.toLocaleString()}, required \u20A6${numericPrice.toLocaleString()}.`,
+            code: "INSUFFICIENT_BALANCE"
+          });
+        }
+        const newBal = Number((currentBal - numericPrice).toFixed(2));
+        const paymentRef = `ESIM-DEAL-${Date.now()}`;
+        await supabase.from("profiles").update({
+          wallet_balance: newBal,
+          balance: newBal,
+          available_balance: newBal,
+          updated_at: nowIso
+        }).eq("id", inquiry.user_id);
+        try {
+          await supabase.from("transactions").insert({
+            user_id: String(inquiry.user_id),
+            user_email: buyerProf?.email || inquiry.user_email || null,
+            type: "esim",
+            amount: numericPrice,
+            status: "completed",
+            reference: paymentRef,
+            description: `eSIM Purchase: ${inquiry.package_label || "International eSIM"}`,
+            gateway: "wallet_auto_debit",
+            created_at: nowIso
+          });
+        } catch (_) {
+        }
+        inquiry.payment_debited = true;
+        inquiry.payment_reference = paymentRef;
+        if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
+        inquiry.messages.push({
+          id: `msg-${Date.now()}-done`,
+          sender: "admin",
+          sender_name: "NORODATA eSIM Desk",
+          text: `\u{1F389} eSIM DEAL COMPLETED! \u20A6${numericPrice.toLocaleString()} has been automatically debited from your wallet (Ref: ${paymentRef}).`,
+          created_at: nowIso
+        });
+      }
       inquiry.status = status;
-      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      saveEsimInquiries();
+      inquiry.updated_at = nowIso;
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -5514,7 +5629,7 @@ AI:`;
       seller_id: "admin",
       category_id: "cat-us-phone",
       title: "\u{1F1FA}\u{1F1F8} Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)",
-      description: "Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, request your verification code, and your wallet will be debited automatically once the deal is done.",
+      description: "Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, receive your login code, and your wallet will be debited automatically once the deal is done.",
       price: 4500,
       product_details: { item_identifier: "+1 (555) 234-8901", phone_number: "+1 (555) 234-8901", country: "United States", carrier: "AT&T / T-Mobile Non-VoIP" },
       status: "available",
@@ -5529,7 +5644,7 @@ AI:`;
       seller_id: "admin",
       category_id: "cat-uk-phone",
       title: "\u{1F1EC}\u{1F1E7} Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)",
-      description: "Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and request your code \u2014 automatic wallet debit once completed.",
+      description: "Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and receive your login code \u2014 automatic wallet debit once completed.",
       price: 5e3,
       product_details: { item_identifier: "+44 7700 900412", phone_number: "+44 7700 900412", country: "United Kingdom", carrier: "Vodafone UK Physical SIM" },
       status: "available",
@@ -5544,7 +5659,7 @@ AI:`;
       seller_id: "admin",
       category_id: "cat-ca-phone",
       title: "\u{1F1E8}\u{1F1E6} Clean Canada +1 Phone Number (WhatsApp / Global Apps)",
-      description: "Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, request OTP code, and complete your deal.",
+      description: "Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, receive your login code, and complete your deal.",
       price: 4800,
       product_details: { item_identifier: "+1 (416) 555-0184", phone_number: "+1 (416) 555-0184", country: "Canada", carrier: "Rogers Canada SIM" },
       status: "available",
@@ -5569,45 +5684,161 @@ AI:`;
       profiles: { full_name: "DigitalAssets Hub", name: "DigitalAssets Hub", marketplace_seller_rating: 4.9, marketplace_seller_reviews: 65 }
     }
   ];
+  const CORE_MARKETPLACE_ADMIN_EMAILS = [
+    ADMIN_EMAIL.toLowerCase().trim(),
+    "ibrahimfaruqolamilekan4@gmail.com",
+    "adewaleogunkeye200@gmail.com",
+    "jeffholland299@gmail.com"
+  ].filter(Boolean);
+  let memoryMarketplaceAdmins = [...new Set(CORE_MARKETPLACE_ADMIN_EMAILS)];
+  const loadMarketplaceAdmins = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "marketplace_admins_store_v2").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          memoryMarketplaceAdmins = Array.from(/* @__PURE__ */ new Set([
+            ...CORE_MARKETPLACE_ADMIN_EMAILS,
+            ...parsed.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
+          ]));
+        }
+      }
+    } catch (_) {
+    }
+    return memoryMarketplaceAdmins;
+  };
+  const saveMarketplaceAdmins = async (emails) => {
+    const normalized = Array.from(/* @__PURE__ */ new Set([
+      ...CORE_MARKETPLACE_ADMIN_EMAILS,
+      ...emails.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
+    ]));
+    memoryMarketplaceAdmins = normalized;
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "marketplace_admins_store_v2",
+        secret: JSON.stringify(normalized),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (_) {
+    }
+    for (const email of normalized) {
+      try {
+        await supabase.from("profiles").update({ role: "admin" }).ilike("email", email);
+      } catch (_) {
+      }
+    }
+    return normalized;
+  };
+  saveMarketplaceAdmins(CORE_MARKETPLACE_ADMIN_EMAILS).catch(() => {
+  });
   const isCallerAdminUser = async (req, authUser) => {
-    const ALLOWED_ADMIN_EMAILS = [
-      ADMIN_EMAIL.toLowerCase().trim(),
-      "ibrahimfaruqolamilekan4@gmail.com",
-      "adewaleogunkeye200@gmail.com",
-      "jeffholland299@gmail.com"
-    ].filter(Boolean);
+    const allowedAdmins = await loadMarketplaceAdmins();
     const headerEmail = String(req.headers["x-admin-email"] || "").toLowerCase().trim();
     const userEmail = String(authUser?.email || headerEmail || "").toLowerCase().trim();
-    if (userEmail && ALLOWED_ADMIN_EMAILS.includes(userEmail)) return true;
+    if (userEmail && allowedAdmins.includes(userEmail)) return true;
     if (authUser?.user_metadata?.role === "admin") return true;
     if (authUser?.id) {
       try {
         const { data: prof } = await supabase.from("profiles").select("role, email").eq("id", authUser.id).maybeSingle();
         if (prof?.role === "admin") return true;
-        if (prof?.email && ALLOWED_ADMIN_EMAILS.includes(String(prof.email).toLowerCase().trim())) return true;
+        if (prof?.email && allowedAdmins.includes(String(prof.email).toLowerCase().trim())) return true;
       } catch (_) {
       }
     }
     return false;
   };
+  app.get("/api/marketplace/admins", async (req, res) => {
+    try {
+      let authUser = null;
+      const authHeader = String(req.headers.authorization || "");
+      if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice(7).trim();
+        const { data } = await supabase.auth.getUser(token);
+        authUser = data?.user || null;
+      }
+      const admins = await loadMarketplaceAdmins();
+      const isCallerAdmin = await isCallerAdminUser(req, authUser);
+      return res.json({ admins, isCallerAdmin });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/admins/promote", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Only an existing Admin can promote new Admin emails." });
+      }
+      const emailToPromote = String(req.body?.email || "").toLowerCase().trim();
+      if (!emailToPromote || !emailToPromote.includes("@")) {
+        return res.status(400).json({ error: "Please enter a valid email address to promote." });
+      }
+      const currentAdmins = await loadMarketplaceAdmins();
+      const updatedAdmins = await saveMarketplaceAdmins([...currentAdmins, emailToPromote]);
+      return res.json({
+        success: true,
+        email: emailToPromote,
+        admins: updatedAdmins,
+        message: `${emailToPromote} has been promoted to Foreign Number & Marketplace Admin!`
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || "Failed to promote email." });
+    }
+  });
+  app.delete("/api/marketplace/admins/:email", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      const targetEmail = decodeURIComponent(String(req.params.email || "")).toLowerCase().trim();
+      if (CORE_MARKETPLACE_ADMIN_EMAILS.includes(targetEmail)) {
+        return res.status(400).json({ error: "Core platform admin email cannot be demoted." });
+      }
+      const currentAdmins = await loadMarketplaceAdmins();
+      const filtered = currentAdmins.filter((e) => e !== targetEmail);
+      const updatedAdmins = await saveMarketplaceAdmins(filtered);
+      try {
+        await supabase.from("profiles").update({ role: "user" }).ilike("email", targetEmail);
+      } catch (_) {
+      }
+      return res.json({ success: true, admins: updatedAdmins });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
   let memoryMarketplaceListings = null;
   let memoryMarketplaceOrders = null;
+  try {
+    const dataDir = path.join(process.cwd(), ".data");
+    const mpFile = path.join(dataDir, "marketplace_store.json");
+    if (fs.existsSync(mpFile)) {
+      const parsed = JSON.parse(fs.readFileSync(mpFile, "utf-8"));
+      if (Array.isArray(parsed?.listings)) memoryMarketplaceListings = parsed.listings;
+      if (Array.isArray(parsed?.orders)) memoryMarketplaceOrders = parsed.orders;
+    }
+  } catch (_) {
+  }
   const loadMarketplaceStore = async () => {
     try {
-      const { data: rows } = await supabase.from("services_config").select("bigisub_identifier_id, item_name").in("bigisub_identifier_id", ["marketplace_listings_store_v1", "marketplace_orders_store_v1"]);
+      const { data: rows } = await supabase.from("provider_secrets").select("identifier, secret").in("identifier", ["marketplace_listings_store_v2", "marketplace_orders_store_v2"]);
       let listings = null;
       let orders = null;
       if (rows && rows.length > 0) {
         for (const r of rows) {
-          if (r.bigisub_identifier_id === "marketplace_listings_store_v1" && r.item_name) {
+          if (r.identifier === "marketplace_listings_store_v2" && r.secret) {
             try {
-              listings = JSON.parse(r.item_name);
+              listings = JSON.parse(r.secret);
             } catch (_) {
             }
           }
-          if (r.bigisub_identifier_id === "marketplace_orders_store_v1" && r.item_name) {
+          if (r.identifier === "marketplace_orders_store_v2" && r.secret) {
             try {
-              orders = JSON.parse(r.item_name);
+              orders = JSON.parse(r.secret);
             } catch (_) {
             }
           }
@@ -5632,24 +5863,28 @@ AI:`;
     memoryMarketplaceListings = listings;
     memoryMarketplaceOrders = orders;
     try {
-      await supabase.from("services_config").upsert([
+      const dataDir = path.join(process.cwd(), ".data");
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dataDir, "marketplace_store.json"),
+        JSON.stringify({ listings, orders, updated_at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)
+      );
+    } catch (_) {
+    }
+    try {
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      await supabase.from("provider_secrets").upsert([
         {
-          bigisub_identifier_id: "marketplace_listings_store_v1",
-          item_name: JSON.stringify(listings),
-          name: "Marketplace Listings Store",
-          cost_price: 0,
-          selling_price: 0,
-          is_active: false
+          identifier: "marketplace_listings_store_v2",
+          secret: JSON.stringify(listings),
+          updated_at: nowIso
         },
         {
-          bigisub_identifier_id: "marketplace_orders_store_v1",
-          item_name: JSON.stringify(orders),
-          name: "Marketplace Orders Store",
-          cost_price: 0,
-          selling_price: 0,
-          is_active: false
+          identifier: "marketplace_orders_store_v2",
+          secret: JSON.stringify(orders),
+          updated_at: nowIso
         }
-      ], { onConflict: "bigisub_identifier_id" });
+      ]);
     } catch (err) {
       console.warn("[Marketplace Store Save Warning]:", err.message);
     }
@@ -5704,6 +5939,7 @@ AI:`;
         id: `lst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         seller_id: isForeignNumber ? "admin" : authUser.id,
         created_by_id: authUser.id,
+        created_by_email: authUser.email || sellerProf?.email || "",
         category_id: cat.id,
         title: String(title).trim(),
         description: String(description || "").trim(),
@@ -5768,16 +6004,31 @@ AI:`;
         return res.status(404).json({ error: "Listing not found." });
       }
       const isForeignNumber = listing.marketplace_categories?.type === "foreign_number" || String(listing.category_id || "").includes("phone");
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { data: buyerProf } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", buyerId).maybeSingle();
+      const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split("@")[0] || "Buyer";
+      const buyerEmail = buyerProf?.email || authUser.email || "";
+      const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
+      const requiredPrice = Number(listing.price || 0);
       const existingOrder = orders.find(
         (o) => o.listing_id === listing.id && o.buyer_id === buyerId && ["pending", "code_requested", "code_sent", "paid"].includes(o.status)
       );
+      if (!isAdmin && (!existingOrder || existingOrder.status !== "paid") && requiredPrice > 0 && buyerBalance < requiredPrice) {
+        return res.status(400).json({
+          error: `Insufficient Balance! This number costs \u20A6${requiredPrice.toLocaleString()}, but your wallet balance is \u20A6${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy this number.`,
+          code: "INSUFFICIENT_BALANCE",
+          required: requiredPrice,
+          balance: buyerBalance
+        });
+      }
       if (existingOrder) {
+        existingOrder.buyer = {
+          ...existingOrder.buyer,
+          wallet_balance: buyerBalance
+        };
         return res.json({ order: existingOrder });
       }
-      const { data: buyerProf } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", buyerId).maybeSingle();
-      const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split("@")[0] || "Buyer";
-      const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
-      const phonePreview = listing.product_details?.phone_number || listing.product_details?.item_identifier || "";
+      const phonePreview = listing.product_details?.phone_number || listing.product_details?.item_identifier || listing.title || "";
       const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const initialMessages = [
@@ -5785,9 +6036,11 @@ AI:`;
           id: `msg-${Date.now()}-1`,
           order_id: orderId,
           sender_id: buyerId,
+          sender_name: buyerName,
+          sender_email: buyerEmail,
           sender_role: "buyer",
           message_type: "text",
-          content: isForeignNumber ? `\u{1F44B} Hi Admin! I want to buy the foreign number "${listing.title}" ${phonePreview ? `(${phonePreview})` : ""} for \u20A6${Number(listing.price).toLocaleString()}.` : `Hi! I'm interested in purchasing: "${listing.title}". Let's finalize the details here.`,
+          content: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. My wallet is funded (\u20A6${buyerBalance.toLocaleString()}). Please send me the verification code to login!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}). Let's finalize the details here.`,
           created_at: nowIso
         }
       ];
@@ -5796,14 +6049,18 @@ AI:`;
           id: `msg-${Date.now()}-2`,
           order_id: orderId,
           sender_id: "admin",
+          sender_name: "NORODATA Official Admin",
+          sender_email: "ibrahimfaruqolamilekan4@gmail.com",
           sender_role: "admin",
           message_type: "text",
           content: `\u2705 Connected to NORODATA Official Admin Desk!
 
-\u{1F4F1} Number: ${phonePreview || listing.title}
-\u{1F4B0} Price: \u20A6${Number(listing.price).toLocaleString()}
+\u{1F4F1} Clicked Foreign Number: ${phonePreview}
+\u{1F4B0} Price: \u20A6${requiredPrice.toLocaleString()} (Your Wallet: \u20A6${buyerBalance.toLocaleString()} Verified)
 
-Click "Request Verification Code" below when you are ready for the OTP code. Once Admin gives you the code and the deal is done, \u20A6${Number(listing.price).toLocaleString()} will be debited from your wallet automatically!`,
+1\uFE0F\u20E3 Copy the phone number above (${phonePreview}) and enter it into the app/account you want to login.
+2\uFE0F\u20E3 Click "Request Verification Code" below or message Admin here as soon as the app sends the code.
+3\uFE0F\u20E3 Immediately after Admin gives you the code and the deal is done, \u20A6${requiredPrice.toLocaleString()} will be debited from your wallet automatically!`,
           created_at: nowIso
         });
       }
@@ -5812,7 +6069,8 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
         listing_id: listing.id,
         buyer_id: buyerId,
         seller_id: isForeignNumber ? "admin" : listing.seller_id || "admin",
-        price: Number(listing.price),
+        clicked_number: phonePreview,
+        price: requiredPrice,
         status: "pending",
         is_foreign_number: isForeignNumber,
         code_requested: false,
@@ -5821,9 +6079,13 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
         marketplace_listings: {
           id: listing.id,
           title: listing.title,
-          price: Number(listing.price),
+          price: requiredPrice,
           description: listing.description,
-          product_details: listing.product_details || {},
+          product_details: {
+            ...listing.product_details || {},
+            phone_number: phonePreview,
+            item_identifier: phonePreview
+          },
           image_url: listing.image_url || null,
           marketplace_categories: listing.marketplace_categories || { name: "Foreign Number", icon: "\u{1F4F1}", type: "foreign_number" }
         },
@@ -5837,7 +6099,7 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
           id: buyerId,
           full_name: buyerName,
           name: buyerName,
-          email: buyerProf?.email || authUser.email || "",
+          email: buyerEmail,
           phone_number: buyerProf?.phone_number || "",
           wallet_balance: buyerBalance
         },
@@ -5946,19 +6208,27 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
       const { listings, orders } = await loadMarketplaceStore();
       const order = orders.find((o) => o.id === id);
       if (!order) return res.status(404).json({ error: "Order not found." });
-      const senderId = isAdmin && authUser.id !== order.buyer_id ? "admin" : authUser.id;
+      const senderIsBuyer = authUser.id === order.buyer_id && (!isAdmin || req.body?.asRole === "buyer");
+      const senderId = senderIsBuyer ? authUser.id : isAdmin ? "admin" : authUser.id;
+      const senderRole = senderIsBuyer ? "buyer" : "admin";
+      const senderName = senderRole === "admin" ? `Admin (${authUser.email || "Official Desk"})` : order.buyer?.full_name || order.buyer?.name || authUser.email || "Buyer";
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const msg = {
         id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         order_id: id,
         sender_id: senderId,
-        sender_role: senderId === order.buyer_id ? "buyer" : "admin",
+        sender_name: senderName,
+        sender_email: authUser.email || "",
+        sender_role: senderRole,
         message_type: "text",
         content,
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
+        created_at: nowIso
       };
       if (!Array.isArray(order.messages)) order.messages = [];
       order.messages.push(msg);
-      order.updated_at = msg.created_at;
+      order.last_message = content;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
       await saveMarketplaceStore(listings, orders);
       return res.json({ message: msg, order });
     } catch (err) {
@@ -5978,23 +6248,31 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
       const requiredPrice = Number(order.price || 0);
       if (buyerBalance < requiredPrice && order.status !== "paid") {
         return res.status(400).json({
-          error: `Insufficient wallet balance (\u20A6${buyerBalance.toLocaleString()}). Please fund your wallet with at least \u20A6${requiredPrice.toLocaleString()} before requesting the code \u2014 your wallet will be debited automatically once the deal is done.`
+          error: `Insufficient Balance! Your wallet balance is \u20A6${buyerBalance.toLocaleString()}, but this number requires \u20A6${requiredPrice.toLocaleString()}. Please fund your wallet before requesting the login code.`,
+          code: "INSUFFICIENT_BALANCE",
+          required: requiredPrice,
+          balance: buyerBalance
         });
       }
-      const phonePreview = order.marketplace_listings?.product_details?.phone_number || order.marketplace_listings?.title || "this number";
+      const phonePreview = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || order.marketplace_listings?.title || "this number";
       const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const msg = {
         id: `msg-${Date.now()}-req`,
         order_id: id,
         sender_id: order.buyer_id,
+        sender_name: order.buyer?.full_name || authUser.email || "Buyer",
+        sender_email: authUser.email || order.buyer?.email || "",
         sender_role: "buyer",
         message_type: "text",
-        content: `\u{1F514} CODE REQUEST: Admin, I am ready to receive the verification OTP code for ${phonePreview}. (Wallet balance \u20A6${buyerBalance.toLocaleString()} verified \u2014 \u20A6${requiredPrice.toLocaleString()} will be auto-debited once deal is done).`,
+        content: `\u{1F514} LOGIN CODE REQUEST: Admin, I have entered the number ${phonePreview} to login. Please send me the verification OTP code now! (Wallet balance \u20A6${buyerBalance.toLocaleString()} verified \u2014 \u20A6${requiredPrice.toLocaleString()} will be auto-debited once done).`,
         created_at: nowIso
       };
       if (!Array.isArray(order.messages)) order.messages = [];
       order.messages.push(msg);
       order.code_requested = true;
+      order.status = order.status === "pending" ? "code_requested" : order.status;
+      order.last_message = msg.content;
+      order.last_message_at = nowIso;
       order.updated_at = nowIso;
       await saveMarketplaceStore(listings, orders);
       return res.json({ order, message: msg });
@@ -6017,7 +6295,7 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
       }
       const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
       if (currentBalance < price) {
-        throw new Error(`Buyer has insufficient wallet balance (Available: \u20A6${currentBalance.toLocaleString()}, Price: \u20A6${price.toLocaleString()}). Please fund wallet to complete the deal.`);
+        throw new Error(`Insufficient Balance! Buyer wallet balance is \u20A6${currentBalance.toLocaleString()}, but \u20A6${price.toLocaleString()} is required to complete the deal.`);
       }
       newBuyerBalance = Number((currentBalance - price).toFixed(2));
       const { error: deductErr } = await supabase.from("profiles").update({
@@ -6033,6 +6311,7 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
         await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
       } catch (_) {
       }
+      const phoneNum = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "";
       try {
         await supabase.from("transactions").insert({
           user_id: String(order.buyer_id),
@@ -6041,7 +6320,7 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
           amount: price,
           status: "completed",
           reference: paymentRef,
-          description: `Foreign Number Purchase: ${order.marketplace_listings?.title || "Foreign Number"}`,
+          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
           gateway: "wallet_auto_debit",
           created_at: nowIso
         });
@@ -6091,16 +6370,20 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
     if (listingObj && !["num-us-clean", "num-uk-clean", "num-ca-clean"].includes(listingObj.id)) {
       listingObj.status = "sold";
     }
+    const doneContent = `\u{1F389} DEAL COMPLETED! \u20A6${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Login code delivered and permanently recorded in chat history.`;
     if (!Array.isArray(order.messages)) order.messages = [];
     order.messages.push({
       id: `msg-${Date.now()}-done`,
       order_id: order.id,
       sender_id: "admin",
+      sender_name: "NORODATA Official Admin",
       sender_role: "admin",
       message_type: "text",
-      content: `\u{1F389} DEAL COMPLETED! \u20A6${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Thank you for using NORODATA!`,
+      content: doneContent,
       created_at: nowIso
     });
+    order.last_message = doneContent;
+    order.last_message_at = nowIso;
     order.updated_at = nowIso;
     await saveMarketplaceStore(listings, orders);
     return { order, newBuyerBalance, reference: paymentRef };
@@ -6125,19 +6408,24 @@ Click "Request Verification Code" below when you are ready for the OTP code. Onc
         id: `msg-${Date.now()}-code`,
         order_id: id,
         sender_id: isAdmin ? "admin" : authUser.id,
+        sender_name: `Admin (${authUser.email || "Official Desk"})`,
+        sender_email: authUser.email || "",
         sender_role: "admin",
         message_type: "verification_code",
-        content: "Here is your official verification code:",
+        content: `Here is your login verification code for ${order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "your number"}:`,
         code_value: code,
         created_at: nowIso
       };
       if (!Array.isArray(order.messages)) order.messages = [];
       order.messages.push(msg);
       order.verification_code = code;
+      order.status = order.status === "pending" || order.status === "code_requested" ? "code_sent" : order.status;
+      order.last_message = `Login Verification Code Sent: ${code}`;
+      order.last_message_at = nowIso;
       order.updated_at = nowIso;
       if (autoCompleteDeal) {
         const result = await executeOrderDealCompletion(order, listings, orders, code);
-        return res.json({ success: true, order: result.order, message: msg, dealCompleted: true });
+        return res.json({ success: true, order: result.order, message: msg, dealCompleted: true, newBuyerBalance: result.newBuyerBalance });
       }
       await saveMarketplaceStore(listings, orders);
       return res.json({ success: true, order, message: msg, dealCompleted: false });

@@ -1,855 +1,1302 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, Plus, ShieldCheck, ExternalLink, Eye, Star, 
-  Package, Tag, MessageSquare, Loader2, Trash2, BellRing, Wallet
+  Package, Tag, MessageSquare, Loader2, Trash2, BellRing, Wallet,
+  AlertTriangle, UserPlus, CheckCircle2, Phone, History, X, Info
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { marketplaceService, MarketplaceListing, MarketplaceCategory, MarketplaceOrder } from '../../lib/marketplaceService';
+import { 
+  marketplaceService, 
+  MarketplaceCategory, 
+  MarketplaceListing, 
+  MarketplaceOrder 
+} from '../../lib/marketplaceService';
+import { fetchWalletSnapshot } from '../../lib/walletApi';
 import { CreateListingModal } from './CreateListingModal';
 import { ListingDetailsModal } from './ListingDetailsModal';
 import { MarketplaceOrderChatModal } from './MarketplaceOrderChatModal';
 import { EsimChatModal } from './EsimChatModal';
 
 interface MarketplaceHomeProps {
-  user: any;
-  onOpenListing?: (id: string) => void;
+  currentUser?: any;
+  user?: any;
+  onBalanceUpdate?: (newBalance: number) => void;
 }
 
-export function MarketplaceHome({ user, onOpenListing }: MarketplaceHomeProps) {
-  const [listings, setListings] = useState<MarketplaceListing[]>([]);
+export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
+  currentUser: currentUserProp,
+  user: userProp,
+  onBalanceUpdate,
+}) => {
+  const currentUser = currentUserProp || userProp;
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<'all' | 'foreign_number' | 'social_account' | 'esim'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [connectingListingId, setConnectingListingId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'browse' | 'purchases' | 'my-listings' | 'admin-chats'>('browse');
-
-  // User purchases, listings & admin orders
-  const [myPurchases, setMyPurchases] = useState<MarketplaceOrder[]>([]);
-  const [myListings, setMyListings] = useState<MarketplaceListing[]>([]);
-  const [adminOrders, setAdminOrders] = useState<MarketplaceOrder[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalDefaultType, setModalDefaultType] = useState<'foreign_number' | 'social_account' | undefined>(undefined);
-  const [isEsimModalOpen, setIsEsimModalOpen] = useState(false);
-  const [selectedEsimPackage, setSelectedEsimPackage] = useState<string>('us-5gb');
+  const [loading, setLoading] = useState(true);
+  const [openingListingId, setOpeningListingId] = useState<string | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createDefaultType, setCreateDefaultType] = useState<'foreign_number' | 'social_account'>('foreign_number');
   const [selectedListing, setSelectedListing] = useState<MarketplaceListing | null>(null);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [activeOrder, setActiveOrder] = useState<MarketplaceOrder | null>(null);
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [esimChatOpen, setEsimChatOpen] = useState(false);
+  const [selectedEsimPackage, setSelectedEsimPackage] = useState<string>('us-5gb');
+  const [activeTab, setActiveTab] = useState<'browse' | 'my-listings' | 'my-orders' | 'admin-orders' | 'manage-admins'>('browse');
+  const [myListings, setMyListings] = useState<MarketplaceListing[]>([]);
+  const [myOrders, setMyOrders] = useState<MarketplaceOrder[]>([]);
+  const [adminOrders, setAdminOrders] = useState<MarketplaceOrder[]>([]);
+  const [traceSearchQuery, setTraceSearchQuery] = useState('');
 
-  const isAdmin = Boolean(
-    user?.role === 'admin' ||
-    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
-      String(user?.email || '').toLowerCase().trim()
-    )
+  // Popup message shown once user clicks on Marketplace
+  const [showMarketplacePopup, setShowMarketplacePopup] = useState(true);
+
+  // Insufficient Balance Modal state
+  const [insufficientModal, setInsufficientModal] = useState<{
+    isOpen: boolean;
+    itemTitle: string;
+    phoneNumber?: string;
+    requiredAmount: number;
+    currentBalance: number;
+  } | null>(null);
+
+  // Live wallet balance & Admin list state
+  const [liveWalletBalance, setLiveWalletBalance] = useState<number>(
+    Number(currentUser?.wallet_balance ?? currentUser?.balance ?? 0)
   );
+  const [promotedAdmins, setPromotedAdmins] = useState<string[]>([
+    'ibrahimfaruqolamilekan4@gmail.com',
+    'adewaleogunkeye200@gmail.com',
+    'jeffholland299@gmail.com',
+  ]);
+  const [isCallerAdminFromServer, setIsCallerAdminFromServer] = useState(false);
+  const [promoteEmailInput, setPromoteEmailInput] = useState('');
+  const [promotingEmail, setPromotingEmail] = useState(false);
 
-  // Load categories and initial data
+  const userEmailNormalized = String(currentUser?.email || '').toLowerCase().trim();
+  const isAdmin =
+    isCallerAdminFromServer ||
+    currentUser?.role === 'admin' ||
+    promotedAdmins.includes(userEmailNormalized);
+
   useEffect(() => {
-    loadCategories();
-    loadMyPurchases(true);
-    if (isAdmin) {
-      loadAdminOrders(true);
-    }
-  }, [isAdmin]);
+    setLiveWalletBalance(Number(currentUser?.wallet_balance ?? currentUser?.balance ?? 0));
+  }, [currentUser?.wallet_balance, currentUser?.balance]);
 
   useEffect(() => {
-    if (activeTab === 'browse') {
-      loadListings();
-    } else if (activeTab === 'purchases') {
-      loadMyPurchases();
-    } else if (activeTab === 'my-listings') {
-      loadMyListings();
-    } else if (activeTab === 'admin-chats') {
-      loadAdminOrders();
-    }
-  }, [selectedCategory, selectedType, activeTab]);
+    const syncInitial = async () => {
+      try {
+        const [adminRes, snap] = await Promise.all([
+          marketplaceService.getMarketplaceAdmins(),
+          fetchWalletSnapshot().catch(() => null),
+        ]);
+        if (adminRes.admins?.length) setPromotedAdmins(adminRes.admins);
+        if (adminRes.isCallerAdmin) setIsCallerAdminFromServer(true);
+        if (snap && typeof snap.balance === 'number') {
+          setLiveWalletBalance(snap.balance);
+        }
+      } catch (_) {}
+    };
+    syncInitial();
+  }, [currentUser?.id, currentUser?.email]);
 
-  // Poll admin orders when Admin is viewing
+  useEffect(() => {
+    loadData();
+  }, [selectedCategory, selectedType, searchQuery, activeTab, isAdmin]);
+
   useEffect(() => {
     if (!isAdmin) return;
+    marketplaceService.getAdminOrders().then(setAdminOrders).catch(() => {});
     const interval = setInterval(() => {
-      loadAdminOrders(true);
+      marketplaceService.getAdminOrders().then(setAdminOrders).catch(() => {});
     }, 6000);
     return () => clearInterval(interval);
   }, [isAdmin]);
 
-  const loadCategories = async () => {
-    const cats = await marketplaceService.getCategories();
-    setCategories(cats);
-  };
-
-  const loadListings = async () => {
-    setLoading(true);
+  const loadData = async () => {
     try {
-      const filters: any = {};
-      if (selectedCategory !== 'all') filters.category = selectedCategory;
-      if (selectedType !== 'all') filters.type = selectedType;
-      if (searchQuery.trim()) filters.search = searchQuery.trim();
+      setLoading(true);
+      const cats = await marketplaceService.getCategories();
+      setCategories(cats);
 
-      const data = await marketplaceService.getListings(filters);
-      setListings(data);
+      const userId = currentUser?.id || currentUser?.uid || '';
+
+      if (activeTab === 'browse') {
+        const filters: any = {};
+        if (selectedCategory !== 'all') filters.category = selectedCategory;
+        if (selectedType !== 'all' && selectedType !== 'esim') filters.type = selectedType;
+        if (searchQuery) filters.search = searchQuery;
+
+        const [items, buyerOrders] = await Promise.all([
+          marketplaceService.getListings(filters),
+          userId ? marketplaceService.getMyPurchases(userId).catch(() => []) : Promise.resolve([]),
+        ]);
+        setListings(items);
+        if (buyerOrders.length) setMyOrders(buyerOrders);
+      } else if (activeTab === 'my-listings' && userId) {
+        const items = await marketplaceService.getMyListings(userId);
+        setMyListings(items);
+      } else if (activeTab === 'my-orders' && userId) {
+        const purchases = await marketplaceService.getMyPurchases(userId);
+        const sales = await marketplaceService.getMySales(userId);
+        const map = new Map<string, MarketplaceOrder>();
+        [...purchases, ...sales].forEach((o) => map.set(o.id, o));
+        setMyOrders(Array.from(map.values()));
+      } else if (activeTab === 'admin-orders' && isAdmin) {
+        const allOrders = await marketplaceService.getAdminOrders();
+        setAdminOrders(allOrders);
+      } else if (activeTab === 'manage-admins' && isAdmin) {
+        const res = await marketplaceService.getMarketplaceAdmins();
+        if (res.admins?.length) setPromotedAdmins(res.admins);
+      }
     } catch (error) {
-      console.error('Failed to load listings:', error);
-      toast.error('Could not load marketplace listings.');
+      console.error('Error loading marketplace:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadMyPurchases = async (silent = false) => {
-    if (!user?.id && !user?.uid) return;
-    if (!silent) setLoading(true);
-    try {
-      const data = await marketplaceService.getMyPurchases(user.id || user.uid);
-      setMyPurchases(data);
-    } catch (err) {
-      console.error('Failed to load purchases:', err);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+  // When ANY user clicks on a Foreign Number, check wallet balance first, then immediately open live chat with Admin!
+  const handleListingClick = async (listing: MarketplaceListing) => {
+    const isForeignNumber =
+      listing.marketplace_categories?.type === 'foreign_number' ||
+      listing.category_id?.includes('phone') ||
+      listing.is_admin_listing;
 
-  const loadMyListings = async () => {
-    if (!user?.id && !user?.uid) return;
-    setLoading(true);
-    try {
-      const data = await marketplaceService.getMyListings(user.id || user.uid);
-      setMyListings(data);
-    } catch (err) {
-      console.error('Failed to load my listings:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadAdminOrders = async (silent = false) => {
-    if (!isAdmin) return;
-    if (!silent) setLoading(true);
-    try {
-      const data = await marketplaceService.getAdminOrders();
-      setAdminOrders(data);
-    } catch (err) {
-      console.error('Failed to load admin orders:', err);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    loadListings();
-  };
-
-  // Whenever ANY user clicks on a Foreign Number, immediately open live chat between them and Admin!
-  const handleClickListing = async (item: MarketplaceListing) => {
-    const cat = item.marketplace_categories;
-    const isPhone = cat?.type === 'foreign_number' || String(item.category_id || '').includes('phone');
-    const isEsim = cat?.type === 'esim' || item.id.startsWith('esim-');
-
-    if (isEsim) {
-      setSelectedEsimPackage(item.id.replace('esim-', ''));
-      setIsEsimModalOpen(true);
+    if (!isForeignNumber) {
+      setSelectedListing(listing);
       return;
     }
 
-    if (isPhone) {
-      if (!user?.id && !user?.uid) {
-        toast.error('Please log in to buy a foreign number.');
-        return;
-      }
-      setConnectingListingId(item.id);
-      try {
-        const buyerId = user.id || user.uid;
-        const order = await marketplaceService.initiatePurchase(buyerId, item.id, item);
-        setSelectedOrderId(order.id);
-        loadMyPurchases(true);
-        if (isAdmin) loadAdminOrders(true);
-      } catch (err: any) {
-        toast.error(err.message || 'Could not open chat with Admin.');
-      } finally {
-        setConnectingListingId(null);
-      }
+    const buyerId = currentUser?.id || currentUser?.uid;
+    if (!buyerId) {
+      toast.error('Please log in to buy a foreign number');
       return;
     }
 
-    setSelectedListing(item);
-    onOpenListing?.(item.id);
+    const phoneNum =
+      listing.product_details?.phone_number ||
+      listing.product_details?.item_identifier ||
+      listing.title;
+    const requiredPrice = Number(listing.price || 0);
+
+    // Check if buyer already has an existing order/chat for this number
+    const existingOrder = myOrders.find(
+      (o) =>
+        o.listing_id === listing.id &&
+        ['pending', 'code_requested', 'code_sent', 'paid'].includes(o.status)
+    );
+
+    // Refresh live wallet balance before checking
+    let currentBal = liveWalletBalance;
+    try {
+      const snap = await fetchWalletSnapshot();
+      if (snap && typeof snap.balance === 'number') {
+        currentBal = snap.balance;
+        setLiveWalletBalance(currentBal);
+      }
+    } catch (_) {}
+
+    // STRICT CHECK: If account is not funded with the required amount, write Insufficient Balance!
+    if (!isAdmin && !existingOrder && requiredPrice > 0 && currentBal < requiredPrice) {
+      toast.error(
+        `Insufficient Balance! Required: ₦${requiredPrice.toLocaleString()}, Available: ₦${currentBal.toLocaleString()}. Please fund your wallet first.`
+      );
+      setInsufficientModal({
+        isOpen: true,
+        itemTitle: listing.title,
+        phoneNumber: phoneNum,
+        requiredAmount: requiredPrice,
+        currentBalance: currentBal,
+      });
+      return;
+    }
+
+    try {
+      setOpeningListingId(listing.id);
+      const order = await marketplaceService.initiatePurchase(buyerId, listing.id, listing);
+      setActiveOrder(order);
+      setChatModalOpen(true);
+      toast.success(`Chat opened with Admin for ${phoneNum}!`);
+    } catch (error: any) {
+      if (
+        error?.code === 'INSUFFICIENT_BALANCE' ||
+        String(error?.message || '').toLowerCase().includes('insufficient')
+      ) {
+        const reqAmt = Number(error?.required || requiredPrice);
+        const balAmt = Number(error?.balance ?? currentBal);
+        toast.error('Insufficient Balance! Please fund your wallet before requesting to buy any number.');
+        setInsufficientModal({
+          isOpen: true,
+          itemTitle: listing.title,
+          phoneNumber: phoneNum,
+          requiredAmount: reqAmt,
+          currentBalance: balAmt,
+        });
+      } else {
+        toast.error(error.message || 'Failed to open chat with Admin');
+      }
+    } finally {
+      setOpeningListingId(null);
+    }
+  };
+
+  // When user clicks an eSIM package, also check wallet balance first!
+  const handleEsimClick = async (pkgId: string, pkgTitle: string, pkgPrice: number) => {
+    let currentBal = liveWalletBalance;
+    try {
+      const snap = await fetchWalletSnapshot();
+      if (snap && typeof snap.balance === 'number') {
+        currentBal = snap.balance;
+        setLiveWalletBalance(currentBal);
+      }
+    } catch (_) {}
+
+    if (!isAdmin && pkgPrice > 0 && currentBal < pkgPrice) {
+      toast.error(
+        `Insufficient Balance! ${pkgTitle} requires ₦${pkgPrice.toLocaleString()}, but your wallet balance is ₦${currentBal.toLocaleString()}.`
+      );
+      setInsufficientModal({
+        isOpen: true,
+        itemTitle: pkgTitle,
+        requiredAmount: pkgPrice,
+        currentBalance: currentBal,
+      });
+      return;
+    }
+
+    setSelectedEsimPackage(pkgId);
+    setEsimChatOpen(true);
   };
 
   const handleDeleteListing = async (e: React.MouseEvent, listingId: string) => {
     e.stopPropagation();
     try {
       await marketplaceService.deleteListing(listingId);
-      toast.success('Listing removed.');
-      loadListings();
-      loadMyListings();
+      setListings((prev) => prev.filter((item) => item.id !== listingId));
+      setMyListings((prev) => prev.filter((item) => item.id !== listingId));
+      toast.success('Listing removed');
     } catch (err: any) {
-      toast.error(err.message || 'Failed to delete listing.');
+      toast.error(err.message || 'Failed to delete listing');
     }
   };
 
-  const pendingAdminCodeRequests = adminOrders.filter(o => o.status !== 'completed' && o.code_requested).length;
+  const handlePromoteEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = promoteEmailInput.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+    try {
+      setPromotingEmail(true);
+      const res = await marketplaceService.promoteAdminEmail(email);
+      setPromotedAdmins(res.admins || []);
+      setPromoteEmailInput('');
+      toast.success(res.message || `${email} promoted to Admin!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to promote email');
+    } finally {
+      setPromotingEmail(false);
+    }
+  };
+
+  const handleRemoveAdminEmail = async (email: string) => {
+    try {
+      const res = await marketplaceService.removeAdminEmail(email);
+      setPromotedAdmins(res.admins || []);
+      toast.success(`Removed ${email} from Marketplace Admins`);
+    } catch (err: any) {
+      toast.error(err.message || 'Cannot remove core admin email');
+    }
+  };
+
+  const pendingAdminOrdersCount = adminOrders.filter((o) => o.status !== 'completed').length;
+
+  const filteredAdminOrders = adminOrders.filter((o) => {
+    if (!traceSearchQuery.trim()) return true;
+    const q = traceSearchQuery.toLowerCase().trim();
+    const phone = String(o.clicked_number || o.marketplace_listings?.product_details?.phone_number || '').toLowerCase();
+    const buyerEmail = String(o.buyer?.email || '').toLowerCase();
+    const buyerName = String(o.buyer?.full_name || '').toLowerCase();
+    const orderId = String(o.id || '').toLowerCase();
+    const title = String(o.marketplace_listings?.title || '').toLowerCase();
+    return (
+      phone.includes(q) ||
+      buyerEmail.includes(q) ||
+      buyerName.includes(q) ||
+      orderId.includes(q) ||
+      title.includes(q)
+    );
+  });
 
   return (
-    <div className="space-y-6">
-      {/* ── Top Header Banner ────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-emerald-800 via-emerald-700 to-teal-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-emerald-950/10 relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/10 to-transparent pointer-events-none" />
-        
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-          <div className="space-y-2 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 text-xs font-black uppercase tracking-widest">
-              <ShieldCheck size={14} className="text-emerald-300" />
-              Admin-Verified Foreign Numbers & Digital Assets
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
-              NORODATA Digital Marketplace
-            </h1>
-            <p className="text-emerald-100/80 text-xs sm:text-sm font-medium leading-relaxed">
-              Click any foreign phone number (USA, UK, Canada) to immediately open a live chat with Admin, request your OTP verification code, and your wallet will be debited automatically once the deal is done.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {isAdmin ? (
-              <button
-                onClick={() => {
-                  setModalDefaultType('foreign_number');
-                  setIsModalOpen(true);
-                }}
-                className="px-5 py-3 rounded-2xl bg-white text-emerald-900 hover:bg-emerald-50 font-black text-xs uppercase tracking-wider shadow-lg transition-all flex items-center gap-2 cursor-pointer active:scale-95"
-              >
-                <Plus size={16} className="text-emerald-700" />
-                Post Foreign Number (Admin)
-              </button>
-            ) : selectedType !== 'foreign_number' ? (
-              <button
-                onClick={() => {
-                  setModalDefaultType('social_account');
-                  setIsModalOpen(true);
-                }}
-                className="px-5 py-3 rounded-2xl bg-white text-emerald-900 hover:bg-emerald-50 font-black text-xs uppercase tracking-wider shadow-lg transition-all flex items-center gap-2 cursor-pointer active:scale-95"
-              >
-                <Plus size={16} className="text-emerald-700" />
-                Sell Social Account
-              </button>
-            ) : (
-              <div className="px-4 py-2.5 rounded-2xl bg-emerald-900/50 border border-emerald-400/30 text-emerald-100 text-xs font-bold flex items-center gap-2">
-                <ShieldCheck size={15} className="text-emerald-300" />
-                <span>Official Admin Numbers Only</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Navigation Tabs inside Header */}
-        <div className="flex flex-wrap items-center gap-2 mt-6 pt-6 border-t border-emerald-600/50">
-          <button
-            onClick={() => setActiveTab('browse')}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer ${
-              activeTab === 'browse'
-                ? 'bg-white text-emerald-900 shadow-md'
-                : 'text-emerald-100 hover:bg-emerald-700/50'
-            }`}
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-3xl overflow-hidden border border-emerald-500/20">
+      {/* ── POPUP MESSAGE WHEN USER CLICKS ON MARKETPLACE ──────────────────── */}
+      <AnimatePresence>
+        {showMarketplacePopup && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
           >
-            🛍️ Browse Numbers & Store
-          </button>
-          <button
-            onClick={() => setActiveTab('purchases')}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer ${
-              activeTab === 'purchases'
-                ? 'bg-white text-emerald-900 shadow-md'
-                : 'text-emerald-100 hover:bg-emerald-700/50'
-            }`}
-          >
-            💬 My Number Chats & Orders ({myPurchases.length})
-          </button>
-          {isAdmin && (
-            <button
-              onClick={() => setActiveTab('admin-chats')}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'admin-chats'
-                  ? 'bg-amber-400 text-slate-950 shadow-md'
-                  : 'bg-amber-500/20 border border-amber-300/40 text-amber-200 hover:bg-amber-500/30'
-              }`}
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0, y: 16 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 16 }}
+              className="bg-slate-900 border-2 border-emerald-500/50 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative"
             >
-              <span>🛡️ Admin Buyer Chats ({adminOrders.length})</span>
-              {pendingAdminCodeRequests > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black">
-                  {pendingAdminCodeRequests} Code Req
+              <button
+                type="button"
+                onClick={() => setShowMarketplacePopup(false)}
+                className="absolute top-4 right-4 p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Info className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                    Important Notice
+                  </span>
+                  <h3 className="text-lg font-black text-white mt-1">
+                    Foreign Numbers & eSIM Guide
+                  </h3>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-xs sm:text-sm text-slate-200 bg-slate-800/80 border border-slate-700 rounded-2xl p-4 leading-relaxed">
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </span>
+                  <p>
+                    <strong>Click on any Foreign Number or eSIM</strong> and it will immediately open a live chat between you and the Admin to get your number and receive your login verification code.
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <p>
+                    <strong>Make sure you fund your wallet</strong> before requesting to buy any number or eSIM. If your account is not funded with the required amount, it will write <strong className="text-red-400">Insufficient Balance</strong>.
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-teal-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    3
+                  </span>
+                  <p>
+                    Once you receive the login code and the deal is done, the amount is <strong>automatically debited from your wallet</strong>. All chat messages are permanently saved in your chat history.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-bold flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-emerald-400" />
+                  Your Current Wallet Balance:
                 </span>
-              )}
-            </button>
-          )}
-          <button
-            onClick={() => setActiveTab('my-listings')}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer ${
-              activeTab === 'my-listings'
-                ? 'bg-white text-emerald-900 shadow-md'
-                : 'text-emerald-100 hover:bg-emerald-700/50'
-            }`}
+                <span className="text-base font-black text-emerald-400">
+                  ₦{Number(liveWalletBalance).toLocaleString()}
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMarketplacePopup(false);
+                    window.dispatchEvent(new CustomEvent('open-fund-modal'));
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-black text-xs transition"
+                >
+                  + Fund Wallet First
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMarketplacePopup(false)}
+                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs shadow-lg transition"
+                >
+                  I Understand, Continue →
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── INSUFFICIENT BALANCE MODAL ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {insufficientModal?.isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
           >
-            🏷️ {isAdmin ? 'Manage Posted Numbers' : 'My Listings'} ({myListings.length})
-          </button>
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0, y: 16 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 16 }}
+              className="bg-slate-900 border-2 border-red-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative"
+            >
+              <button
+                type="button"
+                onClick={() => setInsufficientModal(null)}
+                className="absolute top-4 right-4 p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 shrink-0">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30">
+                    Wallet Check Failed
+                  </span>
+                  <h3 className="text-xl font-black text-white mt-1">
+                    Insufficient Balance
+                  </h3>
+                </div>
+              </div>
+
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                Your wallet does not have enough balance to request <strong className="text-white">{insufficientModal.itemTitle}</strong>
+                {insufficientModal.phoneNumber ? ` (${insufficientModal.phoneNumber})` : ''}. Please fund your wallet before requesting to buy any number or eSIM.
+              </p>
+
+              <div className="bg-slate-950/90 border border-red-500/30 rounded-2xl p-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-bold">Required Price:</span>
+                  <span className="font-black text-white text-sm">
+                    ₦{Number(insufficientModal.requiredAmount).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                  <span className="text-slate-400 font-bold">Your Wallet Balance:</span>
+                  <span className="font-black text-red-400 text-sm">
+                    ₦{Number(insufficientModal.currentBalance).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                  <span className="text-amber-300 font-bold">Amount Needed:</span>
+                  <span className="font-black text-amber-400 text-sm">
+                    ₦{Math.max(0, Number(insufficientModal.requiredAmount) - Number(insufficientModal.currentBalance)).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setInsufficientModal(null)}
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInsufficientModal(null);
+                    window.dispatchEvent(new CustomEvent('open-fund-modal'));
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs shadow-lg transition"
+                >
+                  Deposit Funds Now →
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Hero Header */}
+      <div className="relative overflow-hidden bg-gradient-to-r from-emerald-950/90 via-slate-900 to-teal-950/90 border-b border-emerald-500/20 py-10 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+              <div className="inline-flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/30 rounded-full px-3.5 py-1 mb-3">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                  Admin-Verified Foreign Numbers & Digital Assets
+                </span>
+              </div>
+              <h1 className="text-3xl md:text-4xl font-black text-white mb-2 tracking-tight">
+                Foreign Numbers, eSIMs & Socials
+              </h1>
+              <p className="text-slate-300 text-sm md:text-base max-w-2xl">
+                Click any Foreign Number posted by Admin to immediately open a live chat, receive your verification code to login, and your wallet will be debited automatically once the deal is done.
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 bg-slate-900/90 border border-slate-700 px-3.5 py-1.5 rounded-xl text-xs text-slate-200">
+                <Wallet className="w-4 h-4 text-emerald-400" />
+                <span>Your Wallet Balance:</span>
+                <strong className="text-emerald-400 font-black">₦{Number(liveWalletBalance).toLocaleString()}</strong>
+                <button
+                  type="button"
+                  onClick={() => setShowMarketplacePopup(true)}
+                  className="ml-2 text-[11px] text-amber-300 underline hover:text-amber-200 font-bold"
+                >
+                  How it works
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              {/* ONLY ADMIN CAN POST FOREIGN NUMBERS FOR SALE */}
+              {isAdmin && (
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => {
+                    setCreateDefaultType('foreign_number');
+                    setCreateModalOpen(true);
+                  }}
+                  className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black py-3 px-5 rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-600/30 text-sm cursor-pointer"
+                >
+                  <Plus className="w-5 h-5" />
+                  + Post Foreign Number (Admin)
+                </motion.button>
+              )}
+
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  setCreateDefaultType('social_account');
+                  setCreateModalOpen(true);
+                }}
+                className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 font-bold py-3 px-5 rounded-xl transition flex items-center gap-2 text-sm cursor-pointer"
+              >
+                <Plus className="w-4 h-4 text-emerald-400" />
+                Sell Social Account
+              </motion.button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ── BROWSE TAB CONTENT ────────────────────────────────────────── */}
-      {activeTab === 'browse' && (
-        <div className="space-y-6">
-          {/* Filter Bar & Search */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            {/* Type tabs */}
-            <div className="flex items-center gap-1.5 p-1 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-x-auto">
-              <button
-                onClick={() => { setSelectedType('all'); setSelectedCategory('all'); }}
-                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition whitespace-nowrap cursor-pointer ${
-                  selectedType === 'all'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All Digital Assets
-              </button>
-              <button
-                onClick={() => { setSelectedType('foreign_number'); setSelectedCategory('all'); }}
-                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                  selectedType === 'foreign_number'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span>📱</span> Foreign Numbers (Admin Verified)
-              </button>
-              <button
-                onClick={() => { setSelectedType('social_account'); setSelectedCategory('all'); }}
-                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                  selectedType === 'social_account'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span>🌐</span> Social Accounts
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedType('esim');
-                  setSelectedCategory('all');
-                  setIsEsimModalOpen(true);
-                }}
-                className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                  selectedType === 'esim'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <span>📶</span> eSIM (Live Admin Chat)
-              </button>
-            </div>
-
-            {/* Search Input */}
-            <form onSubmit={handleSearch} className="relative min-w-[240px]">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search numbers, countries, accounts…"
-                className="w-full bg-white border border-slate-200/80 rounded-2xl pl-10 pr-4 py-2.5 text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 shadow-sm"
-              />
-            </form>
-          </div>
-
-          {/* Sub-Category Chips */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        {/* Tabs */}
+        <div className="flex gap-2 mb-8 border-b border-slate-800 overflow-x-auto pb-1">
+          {[
+            { id: 'browse', label: '🌍 Browse Foreign Numbers & Assets' },
+            ...(isAdmin
+              ? [
+                  {
+                    id: 'admin-orders',
+                    label: `💬 Buyer Chats & Trace History (${adminOrders.length})`,
+                    badge: pendingAdminOrdersCount,
+                  },
+                  {
+                    id: 'manage-admins',
+                    label: `👑 Promote / Manage Admins (${promotedAdmins.length})`,
+                  },
+                ]
+              : []),
+            { id: 'my-orders', label: '📦 My Purchases & Chat History' },
+            { id: 'my-listings', label: '🏷️ My Listings' },
+          ].map((tab: any) => (
             <button
-              onClick={() => setSelectedCategory('all')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition cursor-pointer ${
-                selectedCategory === 'all'
-                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`px-5 py-3 font-bold transition border-b-2 whitespace-nowrap flex items-center gap-2 text-sm cursor-pointer ${
+                activeTab === tab.id
+                  ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5 rounded-t-xl'
+                  : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
-              All Categories
+              <span>{tab.label}</span>
+              {tab.badge > 0 && (
+                <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-amber-500 text-slate-950">
+                  {tab.badge} Active
+                </span>
+              )}
             </button>
-            {categories
-              .filter(c => selectedType === 'all' || c.type === selectedType)
-              .map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition flex items-center gap-1.5 cursor-pointer ${
-                    selectedCategory === cat.id
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <span>{cat.icon}</span>
-                  <span>{cat.name}</span>
-                </button>
-              ))}
-          </div>
+          ))}
+        </div>
 
-          {/* Listings Grid */}
-          {loading ? (
-            <div className="py-20 text-center">
-              <div className="w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Loading available numbers & assets…</p>
-            </div>
-          ) : listings.length === 0 ? (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-100 shadow-sm space-y-4">
-              <div className="w-16 h-16 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto text-2xl font-bold">
-                📱
+        {/* Browse Tab */}
+        {activeTab === 'browse' && (
+          <div className="space-y-8">
+            {/* Search & Filters */}
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search foreign numbers (+1, +44), countries, WhatsApp, Telegram, or social accounts..."
+                  className="w-full bg-slate-900 border border-slate-700/70 rounded-xl pl-12 pr-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                />
               </div>
-              <div className="max-w-md mx-auto space-y-1.5">
-                <h3 className="text-lg font-black text-slate-900">No Numbers Currently Listed</h3>
-                <p className="text-xs text-slate-500 font-medium">
-                  {isAdmin
-                    ? 'Post a foreign phone number for sale so users can click to chat and buy.'
-                    : 'Check back shortly — Admin is restocking fresh foreign numbers.'}
-                </p>
+
+              <div className="flex flex-wrap gap-3">
+                {[
+                  { value: 'all', label: 'All Offerings' },
+                  { value: 'foreign_number', label: '📱 Foreign Numbers (Admin Verified)' },
+                  { value: 'esim', label: '📶 International eSIM' },
+                  { value: 'social_account', label: '👥 Social Media Accounts' },
+                ].map((type) => (
+                  <button
+                    key={type.value}
+                    onClick={() => {
+                      setSelectedType(type.value as any);
+                      setSelectedCategory('all');
+                    }}
+                    className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
+                      selectedType === type.value
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
+                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {type.label}
+                  </button>
+                ))}
+              </div>
+
+              {selectedType !== 'esim' && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
+                  <button
+                    onClick={() => setSelectedCategory('all')}
+                    className={`p-3 rounded-xl border transition text-center cursor-pointer ${
+                      selectedCategory === 'all'
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-800/40 border-slate-700/50 text-slate-300 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="text-lg mb-1">🌐</div>
+                    <div className="text-xs font-semibold">All</div>
+                  </button>
+
+                  {categories
+                    .filter((cat) => selectedType === 'all' || cat.type === selectedType)
+                    .map((cat) => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setSelectedCategory(cat.id)}
+                        className={`p-3 rounded-xl border transition text-center cursor-pointer ${
+                          selectedCategory === cat.id
+                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                            : 'bg-slate-800/40 border-slate-700/50 text-slate-300 hover:border-slate-600'
+                        }`}
+                      >
+                        <div className="text-lg mb-1">{cat.icon}</div>
+                        <div className="text-xs font-semibold line-clamp-1">{cat.name}</div>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* Banner explaining the Foreign Number instant chat + wallet requirement */}
+            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 font-black">
+                  💬
+                </div>
+                <div className="text-xs text-slate-200 space-y-0.5">
+                  <p className="font-black text-emerald-300 text-sm">
+                    How Foreign Number & eSIM Purchase Works
+                  </p>
+                  <p className="text-slate-300">
+                    1. Fund your wallet first (otherwise it will show <strong className="text-red-400">Insufficient Balance</strong>) • 2. Click any Foreign Number or eSIM to open live chat with Admin • 3. Use the number in chat to receive your login code • 4. Wallet is debited automatically once done!
+                  </p>
+                </div>
               </div>
               {isAdmin && (
                 <button
                   onClick={() => {
-                    setModalDefaultType('foreign_number');
-                    setIsModalOpen(true);
+                    setCreateDefaultType('foreign_number');
+                    setCreateModalOpen(true);
                   }}
-                  className="px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider shadow-md transition cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shrink-0 transition cursor-pointer"
                 >
-                  + Post Foreign Number for Sale
+                  + Post New Number
                 </button>
               )}
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {listings.map((item) => {
-                const cat = item.marketplace_categories;
-                const isPhone = cat?.type === 'foreign_number' || String(item.category_id || '').includes('phone');
-                const isEsim = cat?.type === 'esim' || item.id.startsWith('esim-');
-                const sellerName = isPhone ? 'NORODATA Official Admin' : (item.profiles?.full_name || item.profiles?.name || 'Verified Seller');
-                const rating = item.profiles?.marketplace_seller_rating || 5.0;
-                const isConnecting = connectingListingId === item.id;
 
-                return (
-                  <motion.div
-                    key={item.id}
-                    whileHover={{ y: -4 }}
-                    className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-xl hover:border-emerald-200/60 transition-all flex flex-col justify-between cursor-pointer group"
-                    onClick={() => handleClickListing(item)}
+            {/* eSIM Instant Activation Banner & Packages */}
+            {(selectedType === 'all' || selectedType === 'esim') && (
+              <div className="bg-gradient-to-r from-teal-950/90 via-slate-900 to-emerald-950/90 border border-teal-500/30 rounded-2xl p-6 shadow-xl">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-2 max-w-xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-bold">
+                      <span>📶 Official International eSIM Desk</span>
+                    </div>
+                    <h2 className="text-2xl font-black text-white">
+                      Instant Global eSIM Profiles (USA, UK, Europe & 150+ Countries)
+                    </h2>
+                    <p className="text-slate-300 text-sm leading-relaxed">
+                      Need a travel or business eSIM? Click any package below to open a direct live chat with our eSIM Admin Desk. Make sure your wallet is funded with the package price first.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleEsimClick('us-5gb', '🇺🇸 USA 5GB eSIM (30 Days)', 8500)}
+                    className="bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold px-6 py-3.5 rounded-xl shadow-lg transition flex items-center gap-2 whitespace-nowrap self-start md:self-center cursor-pointer"
                   >
-                    <div>
-                      {/* Category Badge & Icon */}
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 text-[11px] font-bold">
-                          <span>{cat?.icon || (isEsim ? '📶' : isPhone ? '📱' : '🌐')}</span>
-                          <span>{cat?.name || (isEsim ? 'eSIM Profile' : isPhone ? 'Foreign Number' : 'Social Account')}</span>
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1 text-[11px] font-bold text-slate-400">
-                            <Eye size={13} />
-                            <span>{item.views || 0}</span>
+                    <MessageSquare className="w-5 h-5" />
+                    Message Admin for eSIM
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-800/80">
+                  {[
+                    { id: 'us-5gb', flag: '🇺🇸', title: 'USA 5GB (30 Days)', price: '₦8,500', numericPrice: 8500, desc: 'AT&T / T-Mobile 5G • Instant QR Activation' },
+                    { id: 'uk-10gb', flag: '🇬🇧', title: 'UK 10GB + +44 Number', price: '₦12,500', numericPrice: 12500, desc: 'Vodafone / O2 UK • Calls, SMS & 5G Data' },
+                    { id: 'global-5gb', flag: '🌍', title: 'Global 150+ Countries (5GB)', price: '₦16,000', numericPrice: 16000, desc: 'Worldwide roaming coverage • Zero physical SIM' },
+                  ].map((pkg) => (
+                    <div
+                      key={pkg.id}
+                      onClick={() => handleEsimClick(pkg.id, `${pkg.flag} ${pkg.title}`, pkg.numericPrice)}
+                      className="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/60 hover:border-teal-500/50 rounded-xl p-4 cursor-pointer transition group flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-2xl">{pkg.flag}</span>
+                          <span className="text-base font-black text-teal-400">{pkg.price}</span>
+                        </div>
+                        <h4 className="font-bold text-white group-hover:text-teal-300 transition text-sm">
+                          {pkg.title}
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-1">{pkg.desc}</p>
+                      </div>
+                      <div className="mt-4 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-teal-400 font-bold">
+                        <span>Click to Open Chat & Get eSIM</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Listings Grid */}
+            {selectedType !== 'esim' && (
+              <>
+                {loading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                  </div>
+                ) : listings.length === 0 ? (
+                  <div className="text-center py-12 bg-slate-900/40 rounded-2xl border border-slate-800">
+                    <Package className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                    <p className="text-slate-400">No numbers or listings found matching your criteria</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {listings.map((listing) => {
+                      const isForeignNumber =
+                        listing.marketplace_categories?.type === 'foreign_number' ||
+                        listing.category_id?.includes('phone') ||
+                        listing.is_admin_listing;
+                      const isOpening = openingListingId === listing.id;
+                      const phoneDisplay =
+                        listing.product_details?.phone_number ||
+                        listing.product_details?.item_identifier ||
+                        '';
+
+                      return (
+                        <motion.div
+                          key={listing.id}
+                          whileHover={{ y: -4 }}
+                          onClick={() => handleListingClick(listing)}
+                          className="bg-slate-900/80 border border-slate-700/60 hover:border-emerald-500/60 rounded-2xl overflow-hidden cursor-pointer transition group flex flex-col justify-between shadow-lg"
+                        >
+                          <div>
+                            <div className="h-36 bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950/60 flex flex-col items-center justify-center relative overflow-hidden p-4 text-center">
+                              <div className="text-4xl mb-1 group-hover:scale-110 transition">
+                                {listing.marketplace_categories?.icon || '📱'}
+                              </div>
+                              {phoneDisplay && (
+                                <span className="font-mono font-black text-sm text-emerald-300 bg-slate-950/90 px-3 py-1 rounded-lg border border-emerald-500/40 shadow">
+                                  {phoneDisplay}
+                                </span>
+                              )}
+                              <div className="absolute top-3 left-3">
+                                <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  {isForeignNumber ? '✓ Admin Official Number' : 'Verified Asset'}
+                                </span>
+                              </div>
+                              <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                                <div className="bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-full text-xs text-slate-300 flex items-center gap-1">
+                                  <Eye className="w-3 h-3" />
+                                  {listing.views}
+                                </div>
+                                {isAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteListing(e, listing.id)}
+                                    title="Remove Listing (Admin)"
+                                    className="bg-red-600/90 hover:bg-red-600 text-white p-1.5 rounded-full transition shadow"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="p-5 space-y-3">
+                              <div>
+                                <h3 className="font-black text-white group-hover:text-emerald-400 transition line-clamp-2 text-base">
+                                  {listing.title}
+                                </h3>
+                                <p className="text-xs text-slate-400 line-clamp-2 mt-1">
+                                  {listing.description}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                                <div className="text-xs text-slate-300 font-semibold">
+                                  {isForeignNumber
+                                    ? '👑 NORODATA Official Admin'
+                                    : listing.profiles?.full_name || 'Verified Seller'}
+                                </div>
+                                <div className="flex items-center gap-1 text-amber-400 text-xs font-bold">
+                                  <Star className="w-3.5 h-3.5 fill-current" />
+                                  {(listing.profiles?.marketplace_seller_rating || 5.0).toFixed(1)}
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          {isAdmin && (
+
+                          <div className="px-5 pb-5 pt-2 flex items-center justify-between gap-2">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                                Auto-Debit Price
+                              </span>
+                              <div className="text-xl font-black text-emerald-400">
+                                ₦{Number(listing.price).toLocaleString()}
+                              </div>
+                            </div>
                             <button
                               type="button"
-                              onClick={(e) => handleDeleteListing(e, item.id)}
-                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition cursor-pointer"
-                              title="Remove listing (Admin)"
+                              disabled={isOpening}
+                              className="bg-emerald-600 group-hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-black text-xs transition flex items-center gap-1.5 shadow-md"
                             >
-                              <Trash2 size={13} />
+                              {isOpening ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  Opening Chat...
+                                </>
+                              ) : isForeignNumber ? (
+                                <>
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                  Click to Chat & Get Code
+                                </>
+                              ) : (
+                                <>
+                                  <span>View Details</span>
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </>
+                              )}
                             </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Title */}
-                      <h3 className="font-black text-slate-900 text-base leading-snug group-hover:text-emerald-700 transition line-clamp-2 mb-1.5">
-                        {item.title}
-                      </h3>
-
-                      {/* Description */}
-                      <p className="text-xs text-slate-500 font-medium line-clamp-2 mb-4 leading-relaxed">
-                        {item.description}
-                      </p>
-
-                      {/* Product details highlight */}
-                      {item.product_details && (
-                        <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100 mb-4 text-[11px] font-mono text-slate-600 flex items-center justify-between">
-                          <span className="font-bold text-slate-800 truncate">
-                            {item.product_details.phone_number || item.product_details.item_identifier || item.product_details.username || 'Instant OTP Delivery'}
-                          </span>
-                          <span className="text-[10px] uppercase font-black tracking-wider text-emerald-600 shrink-0 ml-2">
-                            {isPhone ? 'Admin Verified' : 'Verified'}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Bottom: Price, Seller & CTA */}
-                    <div className="pt-3 border-t border-slate-100 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider">Price (Auto-Debit on Deal Done)</p>
-                          <p className="text-xl font-black text-emerald-600 font-mono">
-                            ₦{Number(item.price).toLocaleString()}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[11px] font-bold text-slate-800 truncate max-w-[140px]">{sellerName}</p>
-                          <div className="flex items-center justify-end gap-1 text-[10px] text-amber-500 font-bold">
-                            <Star size={11} fill="currentColor" />
-                            <span>{Number(rating).toFixed(1)}</span>
                           </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={isConnecting}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClickListing(item);
-                        }}
-                        className="w-full py-2.5 rounded-2xl bg-slate-900 group-hover:bg-emerald-600 text-white font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 disabled:opacity-50"
-                      >
-                        {isConnecting ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            <span>Opening Admin Chat…</span>
-                          </>
-                        ) : isPhone ? (
-                          <>
-                            <MessageSquare size={14} />
-                            <span>Click to Chat Admin & Request Code</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Chat & Buy</span>
-                            <ExternalLink size={13} />
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── MY PURCHASES / NUMBER CHATS TAB ───────────────────────────── */}
-      {activeTab === 'purchases' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-black text-slate-900">Your Foreign Number Chats & Purchases</h2>
-            <span className="text-xs text-slate-500 font-semibold">{myPurchases.length} orders total</span>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
           </div>
+        )}
 
-          {loading ? (
-            <div className="py-12 text-center text-xs text-slate-500 font-bold uppercase tracking-widest">
-              Loading orders…
-            </div>
-          ) : myPurchases.length === 0 ? (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-100 shadow-sm space-y-3">
-              <Package size={32} className="text-slate-400 mx-auto" />
-              <h3 className="text-base font-black text-slate-900">No active number chats yet</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Click any foreign phone number in the store to immediately open a live chat with Admin and request your verification code.
-              </p>
-              <button
-                onClick={() => setActiveTab('browse')}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-wider cursor-pointer"
-              >
-                Browse Foreign Numbers
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {myPurchases.map(order => (
-                <div
-                  key={order.id}
-                  onClick={() => setSelectedOrderId(order.id)}
-                  className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between hover:border-emerald-200"
+        {/* Admin Dedicated Buyer Chats & Permanent Trace History Tab */}
+        {activeTab === 'admin-orders' && isAdmin && (
+          <div className="space-y-4">
+            <div className="bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="font-black text-white text-base flex items-center gap-2">
+                  <History className="w-5 h-5 text-emerald-400" />
+                  Incoming Foreign Number Chats & Permanent Audit History
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Every message between users and Admin is permanently stored. Click any order to view full chat history, send login code, and auto-debit buyer's wallet.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={traceSearchQuery}
+                  onChange={(e) => setTraceSearchQuery(e.target.value)}
+                  placeholder="Search buyer email, number, order ID..."
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  onClick={loadData}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 border border-emerald-500/30 shrink-0 cursor-pointer"
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-mono text-slate-400">Order #{order.id.slice(0, 10)}</span>
-                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-black uppercase ${
-                        order.status === 'completed'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : order.code_requested
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {order.status === 'completed' ? 'Completed & Debited' : order.code_requested ? 'Code Requested' : 'Live Admin Chat'}
-                      </span>
-                    </div>
-                    <h4 className="font-black text-slate-900 text-sm">
-                      {order.marketplace_listings?.title || 'Foreign Number'}
-                    </h4>
-                    {order.marketplace_listings?.product_details?.phone_number && (
-                      <p className="text-xs font-mono font-bold text-slate-600">
-                        📱 {order.marketplace_listings.product_details.phone_number}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="font-black text-emerald-600 font-mono text-base">
-                      ₦{Number(order.price).toLocaleString()}
-                    </span>
-                    <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                      Open Admin Chat →
-                    </span>
-                  </div>
-                </div>
-              ))}
+                  Refresh
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      )}
 
-      {/* ── ADMIN BUYER CHATS TAB (ADMIN ONLY) ───────────────────────── */}
-      {isAdmin && activeTab === 'admin-chats' && (
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900 text-white p-5 rounded-3xl">
-            <div>
-              <h2 className="text-lg font-black">🛡️ Admin Foreign Number Buyer Chats</h2>
-              <p className="text-xs text-slate-300">
-                Click any buyer order below to open the chat, send the verification OTP code, and automatically debit the buyer's wallet!
-              </p>
-            </div>
-            <button
-              onClick={() => loadAdminOrders(false)}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider cursor-pointer self-start sm:self-auto"
-            >
-              Refresh Chats ({adminOrders.length})
-            </button>
-          </div>
-
-          {adminOrders.length === 0 ? (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-100 shadow-sm space-y-2">
-              <MessageSquare size={32} className="text-slate-400 mx-auto" />
-              <h3 className="text-base font-black text-slate-900">No buyer chats yet</h3>
-              <p className="text-xs text-slate-500">
-                Whenever any user clicks on a foreign number to buy, their live chat will appear right here.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {adminOrders.map(order => {
-                const buyerName = order.buyer?.full_name || order.buyer?.name || 'Customer';
-                const buyerEmail = order.buyer?.email || '';
-                const buyerBalance = Number(order.buyer?.wallet_balance ?? 0);
-                const lastMsg = order.messages?.[order.messages.length - 1]?.content || 'Chat opened';
+            {filteredAdminOrders.length === 0 ? (
+              <div className="text-center py-12 bg-slate-900/40 rounded-2xl border border-slate-800">
+                <MessageSquare className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">No buyer chats matching your filter yet</p>
+              </div>
+            ) : (
+              filteredAdminOrders.map((order) => {
+                const phoneNum =
+                  order.clicked_number ||
+                  order.marketplace_listings?.product_details?.phone_number ||
+                  order.marketplace_listings?.product_details?.item_identifier ||
+                  '';
+                const buyerBal = Number(order.buyer?.wallet_balance ?? 0);
+                const msgCount = Array.isArray(order.messages) ? order.messages.length : 0;
 
                 return (
                   <div
                     key={order.id}
-                    onClick={() => setSelectedOrderId(order.id)}
-                    className={`bg-white rounded-3xl p-5 border shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between ${
-                      order.code_requested && order.status !== 'completed'
-                        ? 'border-amber-400 ring-2 ring-amber-400/20'
-                        : 'border-slate-100 hover:border-emerald-200'
-                    }`}
+                    onClick={() => {
+                      setActiveOrder(order);
+                      setChatModalOpen(true);
+                    }}
+                    className="bg-slate-900/80 border border-slate-700/60 hover:border-emerald-500/50 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer transition"
                   >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-black text-slate-900 truncate">
-                          👤 {buyerName} {buyerEmail ? `(${buyerEmail})` : ''}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                            order.status === 'completed'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          }`}
+                        >
+                          {order.status === 'completed' ? '✓ Completed & Wallet Debited' : '⏳ Awaiting Login Code'}
                         </span>
-                        <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-black uppercase shrink-0 ${
-                          order.status === 'completed'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : order.code_requested
-                            ? 'bg-amber-100 text-amber-900 animate-pulse'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {order.status === 'completed'
-                            ? '✅ Deal Done (Debited)'
-                            : order.code_requested
-                            ? '🔔 Code Requested'
-                            : '💬 Active Chat'}
+                        {order.code_requested && order.status !== 'completed' && (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-500/20 text-red-300 border border-red-500/40 flex items-center gap-1">
+                            <BellRing className="w-3 h-3" /> Buyer Requested Login Code
+                          </span>
+                        )}
+                        <span className="text-[11px] font-mono text-slate-400">
+                          ID: {order.id} • {msgCount} permanent msg{msgCount === 1 ? '' : 's'}
                         </span>
                       </div>
-
-                      <h4 className="font-black text-emerald-800 text-sm">
-                        {order.marketplace_listings?.title || 'Foreign Number'}
-                      </h4>
-
-                      <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                        {lastMsg}
-                      </p>
+                      <h3 className="font-black text-white text-base">
+                        {order.marketplace_listings?.title || 'Foreign Number Order'}
+                      </h3>
+                      {phoneNum && (
+                        <p className="text-xs font-mono text-emerald-300 font-bold flex items-center gap-1.5">
+                          <Phone className="w-3.5 h-3.5" />
+                          Clicked Number: {phoneNum}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                        <span>
+                          Buyer: <strong className="text-white">{order.buyer?.full_name || 'Customer'}</strong> ({order.buyer?.email || 'No email'})
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+                          Buyer Wallet:{' '}
+                          <strong className={buyerBal >= Number(order.price) ? 'text-emerald-400' : 'text-red-400'}>
+                            ₦{buyerBal.toLocaleString()}
+                          </strong>
+                        </span>
+                      </div>
+                      {order.last_message && (
+                        <p className="text-xs text-slate-400 italic line-clamp-1">
+                          Last message: "{order.last_message}"
+                        </p>
+                      )}
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Number Price</span>
-                          <span className="font-black text-emerald-600 font-mono text-sm">
-                            ₦{Number(order.price).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="pl-3 border-l border-slate-200">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Buyer Wallet</span>
-                          <span className={`font-black font-mono text-sm ${buyerBalance >= Number(order.price) ? 'text-slate-900' : 'text-rose-600'}`}>
-                            ₦{buyerBalance.toLocaleString()}
-                          </span>
-                        </div>
+                    <div className="flex sm:flex-col items-end justify-between gap-2 shrink-0">
+                      <div className="text-lg font-black text-emerald-400">
+                        ₦{Number(order.price).toLocaleString()}
                       </div>
+                      <button className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        Open Chat & Send Code
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
 
-                      <span className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider transition">
-                        Open & Send Code →
+        {/* Promote / Manage Foreign Number Admins Tab */}
+        {activeTab === 'manage-admins' && isAdmin && (
+          <div className="space-y-6">
+            <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                  <UserPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white">
+                    Promote Email to Foreign Number & Marketplace Admin
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Promoted emails have full access to post foreign numbers for sale, view all buyer chat histories, send login verification codes, and complete auto-debit deals.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handlePromoteEmail} className="flex flex-col sm:flex-row gap-3 pt-2">
+                <input
+                  type="email"
+                  required
+                  value={promoteEmailInput}
+                  onChange={(e) => setPromoteEmailInput(e.target.value)}
+                  placeholder="Enter user email to promote to Admin (e.g. admin@gmail.com)..."
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={promotingEmail || !promoteEmailInput.trim()}
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                >
+                  {promotingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                  Promote Email to Admin
+                </button>
+              </form>
+
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-400">
+                  Active Foreign Number & Marketplace Admins ({promotedAdmins.length})
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {promotedAdmins.map((email) => {
+                    const isCore = [
+                      'ibrahimfaruqolamilekan4@gmail.com',
+                      'adewaleogunkeye200@gmail.com',
+                      'jeffholland299@gmail.com',
+                    ].includes(email.toLowerCase());
+                    return (
+                      <div
+                        key={email}
+                        className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="text-xs font-bold text-white truncate">{email}</span>
+                          {isCore && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                              Core Admin
+                            </span>
+                          )}
+                        </div>
+                        {!isCore && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdminEmail(email)}
+                            className="text-xs text-red-400 hover:text-red-300 font-bold px-2 py-1 rounded hover:bg-red-950/50 transition"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* My Listings Tab */}
+        {activeTab === 'my-listings' && (
+          <div className="space-y-4">
+            {myListings.length === 0 ? (
+              <div className="text-center py-12 bg-slate-900/40 rounded-2xl border border-slate-800">
+                <Tag className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400 mb-4">You haven't created any listings yet</p>
+                <button
+                  onClick={() => {
+                    setCreateDefaultType(isAdmin ? 'foreign_number' : 'social_account');
+                    setCreateModalOpen(true);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl font-bold transition"
+                >
+                  Create First Listing
+                </button>
+              </div>
+            ) : (
+              myListings.map((listing) => (
+                <div
+                  key={listing.id}
+                  className="bg-slate-900/80 border border-slate-700/50 rounded-xl p-4 flex items-center justify-between gap-4"
+                >
+                  <div>
+                    <h3 className="font-bold text-white">{listing.title}</h3>
+                    <p className="text-sm text-slate-400">{listing.description}</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="text-lg font-black text-emerald-400">
+                        ₦{Number(listing.price).toLocaleString()}
+                      </div>
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full ${
+                          listing.status === 'available'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-slate-700 text-slate-300'
+                        }`}
+                      >
+                        {listing.status}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteListing(e, listing.id)}
+                      className="p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 transition"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* My Orders & Permanent Chat History Tab */}
+        {activeTab === 'my-orders' && (
+          <div className="space-y-4">
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-xs text-slate-300">
+                <History className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  All your Foreign Number chats and verification codes with Admin are permanently saved here for reference and dispute tracing.
+                </span>
+              </div>
+              <button
+                onClick={loadData}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-bold shrink-0"
+              >
+                Refresh History
+              </button>
+            </div>
+
+            {myOrders.length === 0 ? (
+              <div className="text-center py-12 bg-slate-900/40 rounded-2xl border border-slate-800">
+                <MessageSquare className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">No active or past number orders yet. Click any Foreign Number in Browse to open a chat with Admin!</p>
+              </div>
+            ) : (
+              myOrders.map((order) => {
+                const phoneNum =
+                  order.clicked_number ||
+                  order.marketplace_listings?.product_details?.phone_number ||
+                  order.marketplace_listings?.product_details?.item_identifier ||
+                  '';
+                const msgCount = Array.isArray(order.messages) ? order.messages.length : 0;
+
+                return (
+                  <div
+                    key={order.id}
+                    onClick={() => {
+                      setActiveOrder(order);
+                      setChatModalOpen(true);
+                    }}
+                    className="bg-slate-900/80 border border-slate-700/50 hover:border-emerald-500/50 rounded-xl p-4 flex items-center justify-between cursor-pointer transition"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-white">
+                          {order.marketplace_listings?.title || 'Foreign Number Order'}
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+                          {msgCount} saved msg{msgCount === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      {phoneNum && (
+                        <p className="text-xs font-mono text-emerald-400 font-bold">
+                          Number: {phoneNum}
+                        </p>
+                      )}
+                      <p className="text-xs text-slate-400">
+                        Status:{' '}
+                        <span className="capitalize text-emerald-400 font-bold">
+                          {order.status === 'completed' ? 'Completed & Auto-Debited' : 'Chat Open with Admin'}
+                        </span>
+                        {order.verification_code ? ` • Login Code: ${order.verification_code}` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-black text-emerald-400">
+                        ₦{Number(order.price).toLocaleString()}
+                      </div>
+                      <span className="text-xs text-emerald-300 font-bold flex items-center gap-1 justify-end mt-1">
+                        <MessageSquare className="w-3.5 h-3.5" /> Open Saved Chat →
                       </span>
                     </div>
                   </div>
                 );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── MY LISTINGS TAB ──────────────────────────────────────────── */}
-      {activeTab === 'my-listings' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-black text-slate-900">
-              {isAdmin ? 'Admin Posted Numbers & Store Listings' : 'Your Active & Sold Listings'}
-            </h2>
-            <button
-              onClick={() => {
-                setModalDefaultType(isAdmin ? 'foreign_number' : 'social_account');
-                setIsModalOpen(true);
-              }}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus size={14} /> {isAdmin ? 'Post Foreign Number' : 'New Listing'}
-            </button>
+              })
+            )}
           </div>
+        )}
+      </div>
 
-          {loading ? (
-            <div className="py-12 text-center text-xs text-slate-500 font-bold uppercase tracking-widest">
-              Loading listings…
-            </div>
-          ) : myListings.length === 0 ? (
-            <div className="bg-white rounded-3xl p-12 text-center border border-slate-100 shadow-sm space-y-3">
-              <Tag size={32} className="text-slate-400 mx-auto" />
-              <h3 className="text-base font-black text-slate-900">No items listed yet</h3>
-              <button
-                onClick={() => {
-                  setModalDefaultType(isAdmin ? 'foreign_number' : 'social_account');
-                  setIsModalOpen(true);
-                }}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-wider cursor-pointer"
-              >
-                + Create First Listing
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {myListings.map(listing => (
-                <div
-                  key={listing.id}
-                  onClick={() => handleClickListing(listing)}
-                  className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between hover:border-emerald-200"
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-500">
-                        {listing.marketplace_categories?.icon} {listing.marketplace_categories?.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${
-                          listing.status === 'sold'
-                            ? 'bg-slate-200 text-slate-700'
-                            : 'bg-emerald-100 text-emerald-800'
-                        }`}>
-                          {listing.status}
-                        </span>
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteListing(e, listing.id)}
-                            className="p-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <h4 className="font-black text-slate-900 text-sm">{listing.title}</h4>
-                    <p className="text-xs text-slate-500 line-clamp-1">{listing.description}</p>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="font-black text-emerald-600 font-mono text-base">
-                      ₦{Number(listing.price).toLocaleString()}
-                    </span>
-                    <span className="text-xs text-slate-400 font-medium flex items-center gap-1">
-                      <Eye size={12} /> {listing.views || 0} views
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Create Listing Modal ─────────────────────────────────────── */}
+      {/* Modals */}
       <CreateListingModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
         categories={categories}
-        sellerId={user?.id || user?.uid}
+        sellerId={currentUser?.id || currentUser?.uid}
         isAdmin={isAdmin}
-        defaultType={modalDefaultType}
+        defaultType={createDefaultType}
         onSuccess={() => {
-          loadListings();
-          loadMyListings();
+          loadData();
         }}
       />
 
-      {/* ── Listing Details Modal (for non-phone items) ─── */}
       {selectedListing && (
         <ListingDetailsModal
           listing={selectedListing}
-          currentUser={user}
+          currentUser={currentUser}
+          isOpen={!!selectedListing}
           onClose={() => setSelectedListing(null)}
           onStartOrder={(order) => {
+            setActiveOrder(order);
             setSelectedListing(null);
-            setSelectedOrderId(order.id);
-            setActiveTab('purchases');
-            loadMyPurchases();
+            setChatModalOpen(true);
           }}
         />
       )}
 
-      {/* ── Realtime Order Chat, Code Request & Auto-Wallet Debit Modal ─── */}
-      {selectedOrderId && (
+      {activeOrder && (
         <MarketplaceOrderChatModal
-          orderId={selectedOrderId}
-          currentUser={user}
-          onClose={() => setSelectedOrderId(null)}
-          onOrderUpdated={() => {
-            loadMyPurchases(true);
-            loadListings();
-            if (isAdmin) loadAdminOrders(true);
+          order={activeOrder}
+          currentUser={currentUser}
+          isOpen={chatModalOpen}
+          onClose={() => {
+            setChatModalOpen(false);
+            loadData();
+          }}
+          onPaymentComplete={(newBalance) => {
+            setLiveWalletBalance(newBalance);
+            onBalanceUpdate?.(newBalance);
+            loadData();
           }}
         />
       )}
 
-      {/* ── Direct eSIM Live Admin Chat Modal ─── */}
       <EsimChatModal
-        isOpen={isEsimModalOpen}
-        currentUser={user}
+        isOpen={esimChatOpen}
+        onClose={() => setEsimChatOpen(false)}
+        currentUser={{ ...currentUser, wallet_balance: liveWalletBalance }}
         initialPackage={selectedEsimPackage}
-        onClose={() => setIsEsimModalOpen(false)}
       />
     </div>
   );
-}
+};

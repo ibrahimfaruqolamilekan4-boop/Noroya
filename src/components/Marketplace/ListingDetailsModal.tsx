@@ -10,6 +10,7 @@ import { marketplaceService, MarketplaceListing } from '../../lib/marketplaceSer
 interface ListingDetailsModalProps {
   listing: MarketplaceListing | null;
   currentUser: any;
+  isOpen?: boolean;
   onClose: () => void;
   onStartOrder: (order: any) => void;
 }
