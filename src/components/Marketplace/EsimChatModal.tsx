@@ -256,7 +256,7 @@ function EsimChatModalInner({
     const numericPrice = Number(String(currentPkgObj.price || '').replace(/[^\d.]/g, '')) || 0;
     const isAdminUser =
       currentUser?.role === 'admin' ||
-      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
         String(currentUser?.email || '').toLowerCase().trim()
       );
 
@@ -285,7 +285,7 @@ function EsimChatModalInner({
     const numericPrice = Number(String(pkg.price || '').replace(/[^\d.]/g, '')) || 0;
     const isAdminUser =
       currentUser?.role === 'admin' ||
-      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com'].includes(
+      ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
         String(currentUser?.email || '').toLowerCase().trim()
       );
 

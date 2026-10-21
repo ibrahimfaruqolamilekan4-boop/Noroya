@@ -506,9 +506,13 @@ async function startServer() {
       return false;
     }
 
-    // Explicitly deny eSIM agent from general administrative controls
-    if (userEmail === 'jeffholland299@gmail.com') {
-      res.status(403).json({ error: "Forbidden: eSIM agent access only. No administrative control." });
+    // Explicitly deny Foreign Number & eSIM only agents from general administrative controls
+    const FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS = [
+      'jeffholland299@gmail.com',
+      'triumphanttosin@gmail.com',
+    ];
+    if (FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS.includes(userEmail)) {
+      res.status(403).json({ error: "Forbidden: Foreign Number & eSIM agent access only. No general administrative control." });
       return false;
     }
 
@@ -550,7 +554,8 @@ async function startServer() {
       ADMIN_EMAIL.toLowerCase().trim(),
       'ibrahimfaruqolamilekan4@gmail.com',
       'adewaleogunkeye200@gmail.com',
-      'jeffholland299@gmail.com'
+      'jeffholland299@gmail.com',
+      'triumphanttosin@gmail.com',
     ].filter(Boolean);
 
     if ((!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) && !isRoleAdmin) {
@@ -6724,7 +6729,13 @@ if (Object.keys(updateData).length <= 1) {
     'ibrahimfaruqolamilekan4@gmail.com',
     'adewaleogunkeye200@gmail.com',
     'jeffholland299@gmail.com',
+    'triumphanttosin@gmail.com',
   ].filter(Boolean);
+
+  const RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS = [
+    'jeffholland299@gmail.com',
+    'triumphanttosin@gmail.com',
+  ];
 
   let memoryMarketplaceAdmins: string[] = [... new Set(CORE_MARKETPLACE_ADMIN_EMAILS)];
 
@@ -6807,14 +6818,15 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  // POST /api/marketplace/admins/promote — Promote an email to Foreign Number & Marketplace Admin
+  // POST /api/marketplace/admins/promote — Promote an email to Foreign Number & Marketplace Admin (Super Admin only)
   app.post("/api/marketplace/admins/promote", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
+      const callerEmail = String(authUser?.email || '').toLowerCase().trim();
       const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin) {
-        return res.status(403).json({ error: "Only an existing Admin can promote new Admin emails." });
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
+        return res.status(403).json({ error: "Only the platform Super Admin can promote new Admin emails." });
       }
       const emailToPromote = String(req.body?.email || '').toLowerCase().trim();
       if (!emailToPromote || !emailToPromote.includes('@')) {
@@ -6833,13 +6845,14 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  // DELETE /api/marketplace/admins/:email — Remove promoted Admin email
+  // DELETE /api/marketplace/admins/:email — Remove promoted Admin email (Super Admin only)
   app.delete("/api/marketplace/admins/:email", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
+      const callerEmail = String(authUser?.email || '').toLowerCase().trim();
       const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin) {
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
         return res.status(403).json({ error: "Forbidden." });
       }
       const targetEmail = decodeURIComponent(String(req.params.email || '')).toLowerCase().trim();

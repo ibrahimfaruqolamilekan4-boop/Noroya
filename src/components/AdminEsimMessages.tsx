@@ -317,7 +317,7 @@ export function AdminEsimMessages() {
             }`}
           >
             <Phone size={15} />
-            <span>📱 Foreign Numbers, Buyer Chats & Promote Admins</span>
+            <span>📱 Foreign Numbers & Buyer Chats</span>
           </button>
           <button
             type="button"

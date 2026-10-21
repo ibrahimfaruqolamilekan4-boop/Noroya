@@ -758,8 +758,12 @@ async function startServer() {
       res.status(401).json({ error: "Unauthorized: no valid session token." });
       return false;
     }
-    if (userEmail === "jeffholland299@gmail.com") {
-      res.status(403).json({ error: "Forbidden: eSIM agent access only. No administrative control." });
+    const FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS = [
+      "jeffholland299@gmail.com",
+      "triumphanttosin@gmail.com"
+    ];
+    if (FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS.includes(userEmail)) {
+      res.status(403).json({ error: "Forbidden: Foreign Number & eSIM agent access only. No general administrative control." });
       return false;
     }
     const ALLOWED_ADMINS = [
@@ -797,7 +801,8 @@ async function startServer() {
       ADMIN_EMAIL.toLowerCase().trim(),
       "ibrahimfaruqolamilekan4@gmail.com",
       "adewaleogunkeye200@gmail.com",
-      "jeffholland299@gmail.com"
+      "jeffholland299@gmail.com",
+      "triumphanttosin@gmail.com"
     ].filter(Boolean);
     if ((!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) && !isRoleAdmin) {
       res.status(403).json({ error: "Forbidden: unauthorized eSIM admin access." });
@@ -5688,8 +5693,13 @@ AI:`;
     ADMIN_EMAIL.toLowerCase().trim(),
     "ibrahimfaruqolamilekan4@gmail.com",
     "adewaleogunkeye200@gmail.com",
-    "jeffholland299@gmail.com"
+    "jeffholland299@gmail.com",
+    "triumphanttosin@gmail.com"
   ].filter(Boolean);
+  const RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS = [
+    "jeffholland299@gmail.com",
+    "triumphanttosin@gmail.com"
+  ];
   let memoryMarketplaceAdmins = [...new Set(CORE_MARKETPLACE_ADMIN_EMAILS)];
   const loadMarketplaceAdmins = async () => {
     try {
@@ -5767,9 +5777,10 @@ AI:`;
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
+      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
       const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin) {
-        return res.status(403).json({ error: "Only an existing Admin can promote new Admin emails." });
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
+        return res.status(403).json({ error: "Only the platform Super Admin can promote new Admin emails." });
       }
       const emailToPromote = String(req.body?.email || "").toLowerCase().trim();
       if (!emailToPromote || !emailToPromote.includes("@")) {
@@ -5791,8 +5802,9 @@ AI:`;
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
+      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
       const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin) {
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
         return res.status(403).json({ error: "Forbidden." });
       }
       const targetEmail = decodeURIComponent(String(req.params.email || "")).toLowerCase().trim();
