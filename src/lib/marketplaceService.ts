@@ -44,8 +44,9 @@ export interface MarketplaceOrder {
   buyer_id: string;
   seller_id: string;
   clicked_number?: string;
+  phone_number?: string;
   price: number;
-  status: 'pending' | 'code_requested' | 'code_sent' | 'paid' | 'completed' | 'refunded';
+  status: 'open' | 'pending' | 'code_requested' | 'code_sent' | 'paid' | 'completed' | 'refunded';
   is_foreign_number?: boolean;
   code_requested?: boolean;
   payment_reference?: string;
@@ -98,9 +99,10 @@ export interface MarketplaceMessage {
   sender_id: string;
   sender_name?: string;
   sender_email?: string;
-  sender_role?: 'buyer' | 'admin' | 'seller';
+  sender_role?: 'buyer' | 'admin' | 'seller' | 'operator';
   message_type: 'text' | 'verification_code';
   content: string;
+  body?: string;
   code_value?: string;
   read_at?: string;
   created_at: string;
@@ -309,6 +311,14 @@ export const marketplaceService = {
     return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/send-code`, {
       method: 'POST',
       body: JSON.stringify({ code: code.trim(), autoCompleteDeal }),
+    });
+  },
+
+  // Admin clicks "Send Code & Complete (debit ₦PRICE)"
+  async sendCodeAndComplete(orderId: string, code: string): Promise<{ success: boolean; order?: MarketplaceOrder; newBuyerBalance?: number; reference?: string; message?: any }> {
+    return marketplaceFetch(`/api/marketplace/orders/${encodeURIComponent(orderId)}/send-code-and-complete`, {
+      method: 'POST',
+      body: JSON.stringify({ code: code.trim() }),
     });
   },
 

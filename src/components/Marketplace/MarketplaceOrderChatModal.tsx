@@ -136,7 +136,51 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
     }
   };
 
+  const handleSendReady = async () => {
+    try {
+      setSending(true);
+      await marketplaceService.sendMessage(order.id, currentUserId, 'Ready');
+      const details = await marketplaceService.getOrderDetails(order.id);
+      setOrder(details.order);
+      setMessages(details.messages || []);
+      toast.success('Sent "Ready" to Admin Desk!');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send message');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleAdminSendCodeAndComplete = async () => {
+    if (!verificationCode.trim()) {
+      toast.error('Please enter the verification code');
+      return;
+    }
+    const price = Number(order.price || 0);
+    if (buyerBalance < price) {
+      toast.error('Buyer balance too low');
+      return;
+    }
+    try {
+      setSending(true);
+      const res = await marketplaceService.sendCodeAndComplete(order.id, verificationCode);
+      setVerificationCode('');
+      toast.success(`Success! Code delivered and ₦${price.toLocaleString()} debited from buyer wallet.`);
+      const details = await marketplaceService.getOrderDetails(order.id);
+      setOrder(details.order);
+      setMessages(details.messages || []);
+      if (typeof details.buyerBalance === 'number') setBuyerBalance(details.buyerBalance);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to complete order');
+    } finally {
+      setSending(false);
+    }
+  };
+
   const handleAdminSendCode = async (autoCompleteDeal: boolean) => {
+    if (autoCompleteDeal) {
+      return handleAdminSendCodeAndComplete();
+    }
     if (!verificationCode.trim()) {
       toast.error('Please enter the login/verification OTP code to send');
       return;
@@ -311,23 +355,49 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
           </div>
         )}
 
-        {/* Insufficient Balance Alert Banner */}
-        {insufficientError && order.status !== 'completed' && (
-          <div className="bg-red-950/90 border-b border-red-500/50 px-4 py-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs text-red-200 font-bold">
-              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-              <span>{insufficientError}</span>
+        {/* Buyer Status Banner (per specification) */}
+        {!isSellerOrAdmin && order.status !== 'completed' && (
+          <div className={`px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+            buyerBalance >= Number(order.price || 0)
+              ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
+              : 'bg-red-950/95 border-red-500/50 text-red-200'
+          }`}>
+            <div className="flex items-center gap-2 text-xs font-bold flex-1">
+              {buyerBalance >= Number(order.price || 0) ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+              )}
+              <span className="leading-relaxed">
+                {buyerBalance >= Number(order.price || 0)
+                  ? "Your wallet is funded. Copy the number, enter it in your app, then send 'Ready' in this chat to request the code."
+                  : `Your balance is ₦${buyerBalance.toLocaleString()}. You need ₦${(Number(order.price || 0) - buyerBalance).toLocaleString()} more. Fund your wallet, then come back to this chat.`}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                window.dispatchEvent(new CustomEvent('open-fund-modal'));
-              }}
-              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-black shrink-0"
-            >
-              Fund Wallet Now
-            </button>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {buyerBalance >= Number(order.price || 0) ? (
+                <button
+                  type="button"
+                  onClick={handleSendReady}
+                  disabled={sending}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition shadow cursor-pointer"
+                >
+                  Send 'Ready'
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    window.dispatchEvent(new CustomEvent('open-fund-modal'));
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black text-xs transition shadow cursor-pointer"
+                >
+                  Fund Wallet
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -517,9 +587,9 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={() => handleAdminSendCode(true)}
                   disabled={sending || !verificationCode.trim()}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-lg"
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-lg cursor-pointer"
                 >
-                  Send Code & Auto-Debit ₦{Number(order.price).toLocaleString()}
+                  Send Code & Complete (debit ₦{Number(order.price).toLocaleString()})
                 </button>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20">

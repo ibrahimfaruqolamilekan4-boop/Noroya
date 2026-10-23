@@ -6015,27 +6015,22 @@ AI:`;
       if (!listing) {
         return res.status(404).json({ error: "Listing not found." });
       }
-      const isForeignNumber = listing.marketplace_categories?.type === "foreign_number" || String(listing.category_id || "").includes("phone");
-      const isAdmin = await isCallerAdminUser(req, authUser);
+      const isForeignNumber = listing.marketplace_categories?.type === "foreign_number" || String(listing.category_id || "").includes("phone") || listing.is_admin_listing;
       const { data: buyerProf } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", buyerId).maybeSingle();
       const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split("@")[0] || "Buyer";
       const buyerEmail = buyerProf?.email || authUser.email || "";
       const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
       const requiredPrice = Number(listing.price || 0);
       const existingOrder = orders.find(
-        (o) => o.listing_id === listing.id && o.buyer_id === buyerId && ["pending", "code_requested", "code_sent", "paid"].includes(o.status)
+        (o) => o.listing_id === listing.id && o.buyer_id === buyerId
       );
-      if (!isAdmin && (!existingOrder || existingOrder.status !== "paid") && requiredPrice > 0 && buyerBalance < requiredPrice) {
-        return res.status(400).json({
-          error: `Insufficient Balance! This number costs \u20A6${requiredPrice.toLocaleString()}, but your wallet balance is \u20A6${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy this number.`,
-          code: "INSUFFICIENT_BALANCE",
-          required: requiredPrice,
-          balance: buyerBalance
-        });
-      }
       if (existingOrder) {
         existingOrder.buyer = {
           ...existingOrder.buyer,
+          id: buyerId,
+          full_name: buyerName,
+          email: buyerEmail,
+          phone_number: buyerProf?.phone_number || "",
           wallet_balance: buyerBalance
         };
         return res.json({ order: existingOrder });
@@ -6052,40 +6047,21 @@ AI:`;
           sender_email: buyerEmail,
           sender_role: "buyer",
           message_type: "text",
-          content: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. My wallet is funded (\u20A6${buyerBalance.toLocaleString()}). Please send me the verification code to login!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}). Let's finalize the details here.`,
+          body: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
+          content: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
           created_at: nowIso
         }
       ];
-      if (isForeignNumber) {
-        initialMessages.push({
-          id: `msg-${Date.now()}-2`,
-          order_id: orderId,
-          sender_id: "admin",
-          sender_name: "NORODATA Official Admin",
-          sender_email: "ibrahimfaruqolamilekan4@gmail.com",
-          sender_role: "admin",
-          message_type: "text",
-          content: `\u2705 Connected to NORODATA Official Admin Desk!
-
-\u{1F4F1} Clicked Foreign Number: ${phonePreview}
-\u{1F4B0} Price: \u20A6${requiredPrice.toLocaleString()} (Your Wallet: \u20A6${buyerBalance.toLocaleString()} Verified)
-
-1\uFE0F\u20E3 Copy the phone number above (${phonePreview}) and enter it into the app/account you want to login.
-2\uFE0F\u20E3 Click "Request Verification Code" below or message Admin here as soon as the app sends the code.
-3\uFE0F\u20E3 Immediately after Admin gives you the code and the deal is done, \u20A6${requiredPrice.toLocaleString()} will be debited from your wallet automatically!`,
-          created_at: nowIso
-        });
-      }
       const newOrder = {
         id: orderId,
         listing_id: listing.id,
         buyer_id: buyerId,
-        seller_id: isForeignNumber ? "admin" : listing.seller_id || "admin",
+        seller_id: "admin",
         clicked_number: phonePreview,
+        phone_number: phonePreview,
         price: requiredPrice,
-        status: "pending",
+        status: "open",
         is_foreign_number: isForeignNumber,
-        code_requested: false,
         created_at: nowIso,
         updated_at: nowIso,
         marketplace_listings: {
@@ -6102,9 +6078,9 @@ AI:`;
           marketplace_categories: listing.marketplace_categories || { name: "Foreign Number", icon: "\u{1F4F1}", type: "foreign_number" }
         },
         seller: {
-          id: isForeignNumber ? "admin" : listing.seller_id,
-          full_name: isForeignNumber ? "NORODATA Official Admin" : listing.profiles?.full_name || "Verified Seller",
-          name: isForeignNumber ? "NORODATA Official Admin" : listing.profiles?.name || "Verified Seller",
+          id: "admin",
+          full_name: "NORODATA Official Admin",
+          name: "NORODATA Official Admin",
           marketplace_seller_rating: 5
         },
         buyer: {
@@ -6400,6 +6376,144 @@ AI:`;
     await saveMarketplaceStore(listings, orders);
     return { order, newBuyerBalance, reference: paymentRef };
   };
+  app.post("/api/marketplace/orders/:id/send-code-and-complete", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const code = String(req.body?.code || "").trim();
+      if (!code) {
+        return res.status(400).json({ error: "Verification code is required." });
+      }
+      let callerRole = "user";
+      try {
+        const { data: callerProf } = await supabase.from("profiles").select("id, role, email").eq("id", authUser.id).maybeSingle();
+        callerRole = callerProf?.role || "user";
+      } catch (_) {
+      }
+      const callerEmail = String(authUser.email || "").toLowerCase().trim();
+      const isAllowedAdminOrOperator = callerRole === "admin" || callerRole === "operator" || ["ibrahimfaruqolamilekan4@gmail.com", "adewaleogunkeye200@gmail.com", "jeffholland299@gmail.com", "triumphanttosin@gmail.com"].includes(callerEmail);
+      if (!isAllowedAdminOrOperator) {
+        return res.status(403).json({ error: "Forbidden: Admin or operator role required." });
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(id) && uuidRegex.test(authUser.id)) {
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc("complete_marketplace_order", {
+            p_order_id: id,
+            p_caller_id: authUser.id,
+            p_code_value: code
+          });
+          if (!rpcErr && rpcData) {
+            if (rpcData.success) {
+              return res.json({
+                success: true,
+                newBuyerBalance: rpcData.new_balance,
+                reference: rpcData.reference,
+                completed_at: rpcData.completed_at
+              });
+            } else {
+              return res.status(400).json({ error: rpcData.error || "Failed to complete order." });
+            }
+          }
+        } catch (_) {
+        }
+      }
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found." });
+      }
+      if (order.status === "completed" || order.completed_at) {
+        return res.status(400).json({ error: "Already completed" });
+      }
+      const price = Number(order.price || 0);
+      const { data: buyerProf, error: bErr } = await supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", order.buyer_id).maybeSingle();
+      if (bErr || !buyerProf) {
+        return res.status(404).json({ error: "Buyer wallet profile not found." });
+      }
+      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
+      if (currentBalance < price) {
+        return res.status(400).json({
+          error: "Buyer balance too low",
+          balance: currentBalance,
+          price,
+          short_by: Number((price - currentBalance).toFixed(2))
+        });
+      }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const newBuyerBalance = Number((currentBalance - price).toFixed(2));
+      const { error: deductErr } = await supabase.from("profiles").update({
+        wallet_balance: newBuyerBalance,
+        balance: newBuyerBalance,
+        available_balance: newBuyerBalance,
+        updated_at: nowIso
+      }).eq("id", order.buyer_id);
+      if (deductErr) {
+        return res.status(500).json({ error: `Failed to debit wallet: ${deductErr.message}` });
+      }
+      try {
+        await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
+      } catch (_) {
+      }
+      const codeMsg = {
+        id: `msg-${Date.now()}-code`,
+        order_id: id,
+        sender_id: authUser.id,
+        sender_role: "admin",
+        sender_name: `Admin Desk (${authUser.email || "Official"})`,
+        sender_email: authUser.email || "",
+        message_type: "verification_code",
+        body: "Here is your login verification code:",
+        content: `Here is your login verification code for ${order.phone_number || order.clicked_number || "your foreign number"}:`,
+        code_value: code,
+        created_at: nowIso
+      };
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(codeMsg);
+      order.status = "completed";
+      order.completed_at = nowIso;
+      order.paid_at = nowIso;
+      order.verified_at = nowIso;
+      order.verification_code = code;
+      const paymentRef = `NUM-DEBIT-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      order.payment_reference = paymentRef;
+      if (order.buyer) {
+        order.buyer.wallet_balance = newBuyerBalance;
+      }
+      order.last_message = `Login Verification Code Sent: ${code}`;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+      const phoneNum = order.phone_number || order.clicked_number || "";
+      try {
+        await supabase.from("transactions").insert({
+          user_id: String(order.buyer_id),
+          user_email: buyerProf.email || null,
+          type: "debit",
+          amount: price,
+          status: "completed",
+          reference: paymentRef,
+          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
+          phone: phoneNum || null,
+          gateway: "wallet_auto_debit",
+          created_at: nowIso
+        });
+      } catch (txErr) {
+        console.warn("[Transactions insert warning]:", txErr?.message || txErr);
+      }
+      await saveMarketplaceStore(listings, orders);
+      return res.json({
+        success: true,
+        order,
+        message: codeMsg,
+        newBuyerBalance,
+        reference: paymentRef
+      });
+    } catch (err) {
+      console.error("[send-code-and-complete Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to complete deal." });
+    }
+  });
   app.post("/api/marketplace/orders/:id/send-code", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
@@ -6431,7 +6545,7 @@ AI:`;
       if (!Array.isArray(order.messages)) order.messages = [];
       order.messages.push(msg);
       order.verification_code = code;
-      order.status = order.status === "pending" || order.status === "code_requested" ? "code_sent" : order.status;
+      order.status = order.status === "open" || order.status === "pending" || order.status === "code_requested" ? "code_sent" : order.status;
       order.last_message = `Login Verification Code Sent: ${code}`;
       order.last_message_at = nowIso;
       order.updated_at = nowIso;
