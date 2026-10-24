@@ -177,7 +177,8 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
     const buyerId = currentUser?.id || currentUser?.uid;
     if (!buyerId) {
-      toast.error('Please log in to buy a foreign number');
+      toast.error('Please log in first to purchase a foreign number');
+      window.dispatchEvent(new CustomEvent('open-login-modal'));
       return;
     }
 
@@ -185,64 +186,17 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
       listing.product_details?.phone_number ||
       listing.product_details?.item_identifier ||
       listing.title;
-    const requiredPrice = Number(listing.price || 0);
-
-    // Check if buyer already has an existing order/chat for this number
-    const existingOrder = myOrders.find(
-      (o) =>
-        o.listing_id === listing.id &&
-        ['pending', 'code_requested', 'code_sent', 'paid'].includes(o.status)
-    );
-
-    // Refresh live wallet balance before checking
-    let currentBal = liveWalletBalance;
-    try {
-      const snap = await fetchWalletSnapshot();
-      if (snap && typeof snap.balance === 'number') {
-        currentBal = snap.balance;
-        setLiveWalletBalance(currentBal);
-      }
-    } catch (_) {}
-
-    // STRICT CHECK: If account is not funded with the required amount, write Insufficient Balance!
-    if (!isAdmin && !existingOrder && requiredPrice > 0 && currentBal < requiredPrice) {
-      toast.error(
-        `Insufficient Balance! Required: ₦${requiredPrice.toLocaleString()}, Available: ₦${currentBal.toLocaleString()}. Please fund your wallet first.`
-      );
-      setInsufficientModal({
-        isOpen: true,
-        itemTitle: listing.title,
-        phoneNumber: phoneNum,
-        requiredAmount: requiredPrice,
-        currentBalance: currentBal,
-      });
-      return;
-    }
 
     try {
       setOpeningListingId(listing.id);
+      // Create or open the single chat (order) between buyer and admin desk for this listing
+      // Does NOT debit the wallet on open
       const order = await marketplaceService.initiatePurchase(buyerId, listing.id, listing);
       setActiveOrder(order);
       setChatModalOpen(true);
-      toast.success(`Chat opened with Admin for ${phoneNum}!`);
+      toast.success(`Chat opened with Admin Desk for ${phoneNum}!`);
     } catch (error: any) {
-      if (
-        error?.code === 'INSUFFICIENT_BALANCE' ||
-        String(error?.message || '').toLowerCase().includes('insufficient')
-      ) {
-        const reqAmt = Number(error?.required || requiredPrice);
-        const balAmt = Number(error?.balance ?? currentBal);
-        toast.error('Insufficient Balance! Please fund your wallet before requesting to buy any number.');
-        setInsufficientModal({
-          isOpen: true,
-          itemTitle: listing.title,
-          phoneNumber: phoneNum,
-          requiredAmount: reqAmt,
-          currentBalance: balAmt,
-        });
-      } else {
-        toast.error(error.message || 'Failed to open chat with Admin');
-      }
+      toast.error(error.message || 'Failed to open chat with Admin');
     } finally {
       setOpeningListingId(null);
     }

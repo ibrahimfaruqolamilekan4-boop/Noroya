@@ -197,14 +197,16 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
 
-  const isForeignNumberOrEsimOnlyAdmin = [
-    'jeffholland299@gmail.com',
-    'triumphanttosin@gmail.com',
-  ].includes((user.email || '').toLowerCase().trim());
+  const isOperator =
+    user.role === 'operator' ||
+    [
+      'jeffholland299@gmail.com',
+      'triumphanttosin@gmail.com',
+    ].includes((user.email || '').toLowerCase().trim());
 
   const isUserAdmin =
     user.role === 'admin' ||
-    isForeignNumberOrEsimOnlyAdmin ||
+    isOperator ||
     ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com'].includes(
       (user.email || '').toLowerCase().trim()
     );
@@ -212,7 +214,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
   if (isUserAdmin) {
     sidebarItems.push({
       id: 'admin',
-      label: isForeignNumberOrEsimOnlyAdmin ? 'Numbers & eSIM Desk' : 'Admin Control',
+      label: isOperator ? 'Numbers & eSIM Desk' : 'Admin Control',
       icon: <ShieldCheck size={18} />,
     });
   }

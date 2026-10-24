@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   MessageSquare, Send, CheckCircle2, Clock, AlertCircle, 
   Smartphone, Globe, Phone, Mail, RefreshCw, Search, 
-  Check, Copy, QrCode, User, ExternalLink, ShieldAlert, Sparkles, Filter
+  Check, Copy, QrCode, User, ExternalLink, ShieldAlert, Sparkles, Filter,
+  Key, Wallet, Plus, ShieldCheck
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { MarketplaceHome } from './Marketplace/MarketplaceHome';
+import { marketplaceService, MarketplaceOrder, MarketplaceMessage, MarketplaceCategory } from '../lib/marketplaceService';
+import { CreateListingModal } from './Marketplace/CreateListingModal';
 
 export interface EsimInquiry {
   id: string;
@@ -102,9 +104,606 @@ const DEFAULT_INQUIRIES: EsimInquiry[] = [
   }
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Foreign Numbers & Buyer Chats Admin Desk
+// ─────────────────────────────────────────────────────────────────────────────
+function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: string }) {
+  const [orders, setOrders] = useState<MarketplaceOrder[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [activeOrder, setActiveOrder] = useState<MarketplaceOrder | null>(null);
+  const [messages, setMessages] = useState<MarketplaceMessage[]>([]);
+  const [buyerBalance, setBuyerBalance] = useState<number>(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'completed'>('all');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [adminMessage, setAdminMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [fulfilling, setFulfilling] = useState(false);
+  const [sendingMsg, setSendingMsg] = useState(false);
+  const [createListingOpen, setCreateListingOpen] = useState(false);
+  const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
+  const [copiedPhone, setCopiedPhone] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const loadOrders = useCallback(async () => {
+    try {
+      const data = await marketplaceService.getAdminOrders();
+      setOrders(data);
+      if (!selectedOrderId && data.length > 0) {
+        setSelectedOrderId(data[0].id);
+      }
+    } catch (err: any) {
+      console.warn('[ForeignNumbersAdminDesk] Error loading orders:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    loadOrders();
+    marketplaceService.getCategories().then(setCategories).catch(() => {});
+    const interval = setInterval(loadOrders, 5000);
+    return () => clearInterval(interval);
+  }, [loadOrders]);
+
+  // Load selected order details live from database
+  useEffect(() => {
+    if (!selectedOrderId) {
+      setActiveOrder(null);
+      setMessages([]);
+      return;
+    }
+    let active = true;
+
+    const fetchDetails = async () => {
+      try {
+        const details = await marketplaceService.getOrderDetails(selectedOrderId);
+        if (!active) return;
+        if (details.order) setActiveOrder(details.order);
+        if (details.messages) setMessages(details.messages);
+        if (typeof details.buyerBalance === 'number') {
+          setBuyerBalance(details.buyerBalance);
+        } else if (details.order?.buyer?.wallet_balance !== undefined) {
+          setBuyerBalance(Number(details.order.buyer.wallet_balance));
+        }
+      } catch (err: any) {
+        console.warn('[ForeignNumbersAdminDesk] Error fetching details:', err);
+      }
+    };
+
+    fetchDetails();
+    const interval = setInterval(fetchDetails, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  const handleAdminSendCodeAndComplete = async () => {
+    if (!activeOrder) return;
+    if (!verificationCode.trim()) {
+      toast.error('Please enter the verification code');
+      return;
+    }
+    const price = Number(activeOrder.price || 0);
+    if (buyerBalance < price) {
+      toast.error('Buyer balance too low');
+      return;
+    }
+
+    try {
+      setFulfilling(true);
+      await marketplaceService.sendCodeAndComplete(activeOrder.id, verificationCode.trim());
+      setVerificationCode('');
+      toast.success(`Success! Verification code delivered & ₦${price.toLocaleString()} debited.`);
+      const details = await marketplaceService.getOrderDetails(activeOrder.id);
+      if (details.order) setActiveOrder(details.order);
+      if (details.messages) setMessages(details.messages);
+      if (typeof details.buyerBalance === 'number') setBuyerBalance(details.buyerBalance);
+      loadOrders();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to complete order');
+    } finally {
+      setFulfilling(false);
+    }
+  };
+
+  const handleSendTextMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeOrder || !adminMessage.trim()) return;
+
+    try {
+      setSendingMsg(true);
+      const userId = user?.id || user?.uid || 'admin';
+      await marketplaceService.sendMessage(activeOrder.id, userId, adminMessage.trim());
+      setAdminMessage('');
+      const details = await marketplaceService.getOrderDetails(activeOrder.id);
+      if (details.order) setActiveOrder(details.order);
+      if (details.messages) setMessages(details.messages);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send message');
+    } finally {
+      setSendingMsg(false);
+    }
+  };
+
+  const copyPhoneNumber = (phone: string) => {
+    navigator.clipboard.writeText(phone);
+    setCopiedPhone(true);
+    toast.success('Number copied!');
+    setTimeout(() => setCopiedPhone(false), 2000);
+  };
+
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(true);
+    toast.success('Code copied!');
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  // Search & Filter
+  const filteredOrders = orders.filter((o) => {
+    const isCompleted = o.status === 'completed';
+    if (statusFilter === 'open' && isCompleted) return false;
+    if (statusFilter === 'completed' && !isCompleted) return false;
+
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+
+    const buyerEmail = (o.buyer?.email || '').toLowerCase();
+    const buyerName = (o.buyer?.full_name || o.buyer?.name || '').toLowerCase();
+    const phone = (o.phone_number || o.clicked_number || o.marketplace_listings?.product_details?.phone_number || '').toLowerCase();
+    const orderId = (o.id || '').toLowerCase();
+    return buyerEmail.includes(q) || buyerName.includes(q) || phone.includes(q) || orderId.includes(q);
+  });
+
+  const openCount = orders.filter((o) => o.status !== 'completed').length;
+  const completedCount = orders.filter((o) => o.status === 'completed').length;
+
+  const currentNumber =
+    activeOrder?.phone_number ||
+    activeOrder?.clicked_number ||
+    activeOrder?.marketplace_listings?.product_details?.phone_number ||
+    '';
+  const currentPrice = Number(activeOrder?.price || 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Overview Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 rounded-3xl p-5 text-white border border-emerald-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="p-2 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              <Phone size={18} />
+            </span>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+              Foreign Numbers & Buyer Chats Desk
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-400 text-slate-950">
+              Live Hub
+            </span>
+          </div>
+          <p className="text-xs text-emerald-100/70 font-medium max-w-2xl">
+            Handle buyer orders, check live wallet funding, answer customer inquiries, and deliver verification codes with auto-debit protection.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setCreateListingOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-md transition cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>+ Post Foreign Number</span>
+          </button>
+          <button
+            type="button"
+            onClick={loadOrders}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-slate-700 transition cursor-pointer"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl p-3.5 border border-slate-100 shadow-sm space-y-0.5">
+          <p className="text-[10px] uppercase font-bold text-slate-400">Total Buyer Chats</p>
+          <p className="text-xl font-black text-slate-900">{orders.length}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-3.5 border border-amber-100 shadow-sm space-y-0.5">
+          <p className="text-[10px] uppercase font-bold text-amber-600">🟡 Open Chats</p>
+          <p className="text-xl font-black text-amber-600">{openCount}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-3.5 border border-emerald-100 shadow-sm space-y-0.5">
+          <p className="text-[10px] uppercase font-bold text-emerald-600">🟢 Completed Deals</p>
+          <p className="text-xl font-black text-emerald-600">{completedCount}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-sm space-y-0.5">
+          <p className="text-[10px] uppercase font-bold text-blue-600">🛡️ Auto-Debit Guard</p>
+          <p className="text-xs font-bold text-blue-700 mt-1">Atomic Locking</p>
+        </div>
+      </div>
+
+      {/* Main Chat Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 bg-slate-900/60 rounded-3xl p-2 sm:p-3 border border-slate-800">
+        {/* LEFT COLUMN: Buyer Chats List (5 cols) */}
+        <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-100 shadow-sm p-4 flex flex-col h-[680px]">
+          {/* Search bar */}
+          <div className="space-y-2.5 pb-3 border-b border-slate-100">
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+              <input
+                type="text"
+                placeholder="Search buyer email, phone number, order ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500 font-medium text-slate-800"
+              />
+            </div>
+
+            {/* Status Tabs */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
+                  statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                All ({orders.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('open')}
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
+                  statusFilter === 'open' ? 'bg-amber-500 text-white shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Open ({openCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('completed')}
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
+                  statusFilter === 'completed' ? 'bg-emerald-600 text-white shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Completed ({completedCount})
+              </button>
+            </div>
+          </div>
+
+          {/* List Items */}
+          <div className="flex-1 overflow-y-auto space-y-2 pt-3 pr-1">
+            {filteredOrders.length === 0 ? (
+              <div className="py-20 text-center text-slate-400 space-y-2">
+                <MessageSquare className="mx-auto text-slate-300" size={32} />
+                <p className="text-xs font-semibold">No buyer chats found</p>
+              </div>
+            ) : (
+              filteredOrders.map((ord) => {
+                const isSelected = ord.id === activeOrder?.id;
+                const buyerLabel = ord.buyer?.full_name || ord.buyer?.name || ord.buyer?.email || 'Buyer';
+                const phone = ord.phone_number || ord.clicked_number || ord.marketplace_listings?.product_details?.phone_number || '';
+                const isDone = ord.status === 'completed';
+
+                return (
+                  <div
+                    key={ord.id}
+                    onClick={() => setSelectedOrderId(ord.id)}
+                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${
+                      isSelected
+                        ? 'bg-emerald-50/80 border-emerald-400 shadow-sm'
+                        : 'bg-white hover:bg-slate-50 border-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="min-w-0">
+                        <span className="font-black text-xs text-slate-900 block truncate">
+                          {buyerLabel}
+                        </span>
+                        {ord.buyer?.email && (
+                          <span className="text-[10px] text-slate-400 font-mono block truncate">
+                            {ord.buyer.email}
+                          </span>
+                        )}
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
+                          isDone
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-amber-100 text-amber-800 border border-amber-300'
+                        }`}
+                      >
+                        {isDone ? 'Completed' : 'Open'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs font-bold text-emerald-800 my-1">
+                      <span className="font-mono">{phone || 'Foreign Number'}</span>
+                      <span className="text-slate-900">₦{Number(ord.price || 0).toLocaleString()}</span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 line-clamp-1 mb-1.5">
+                      {ord.last_message || ord.messages?.[ord.messages.length - 1]?.content || 'Chat initiated'}
+                    </p>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="font-mono">ID: {ord.id.substring(0, 10)}...</span>
+                      <span>
+                        {new Date(ord.updated_at || ord.created_at).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: Active Chat & Fulfillment Workspace (7 cols) */}
+        <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-100 shadow-sm p-4 sm:p-5 flex flex-col h-[680px]">
+          {activeOrder ? (
+            <>
+              {/* TOP HEADER: Buyer name/email, Number, Price, Live Balance, Status line */}
+              <div className="pb-3 border-b border-slate-100 space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-black text-slate-900 truncate">
+                        {activeOrder.buyer?.full_name || activeOrder.buyer?.name || 'Buyer'}
+                      </h3>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                          activeOrder.status === 'completed'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-amber-100 text-amber-800 border border-amber-300'
+                        }`}
+                      >
+                        {activeOrder.status === 'completed' ? 'Completed' : 'Open Chat'}
+                      </span>
+                    </div>
+                    {activeOrder.buyer?.email && (
+                      <p className="text-xs text-slate-500 font-mono">{activeOrder.buyer.email}</p>
+                    )}
+                  </div>
+
+                  {currentNumber && (
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shrink-0">
+                      <span className="font-mono font-bold text-xs text-slate-800">{currentNumber}</span>
+                      <button
+                        type="button"
+                        onClick={() => copyPhoneNumber(currentNumber)}
+                        className="text-emerald-600 hover:text-emerald-700 p-1 cursor-pointer"
+                        title="Copy number"
+                      >
+                        {copiedPhone ? <Check size={13} /> : <Copy size={13} />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Financial bar & clear indicator line */}
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
+                  <div className="flex items-center gap-3 text-xs">
+                    <span>
+                      Price: <strong className="font-black text-slate-900">₦{currentPrice.toLocaleString()}</strong>
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span>
+                      Buyer Wallet:{' '}
+                      <strong className="font-black text-slate-900">
+                        ₦{buyerBalance.toLocaleString()}
+                      </strong>
+                    </span>
+                  </div>
+
+                  {/* Clear line: "Enough balance" (green) or "Short by ₦X" (red) */}
+                  <div>
+                    {buyerBalance >= currentPrice ? (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        <CheckCircle2 size={13} className="text-emerald-600" />
+                        Enough balance
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-300">
+                        <AlertCircle size={13} className="text-red-600" />
+                        Short by ₦{(currentPrice - buyerBalance).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat Messages Feed */}
+              <div className="flex-1 overflow-y-auto space-y-3 py-3 pr-1">
+                {messages.length === 0 ? (
+                  <div className="text-center py-16 text-slate-400">
+                    <Sparkles className="mx-auto mb-2 opacity-50" size={24} />
+                    <p className="text-xs">No messages yet. Send a message to buyer below.</p>
+                  </div>
+                ) : (
+                  messages.map((m) => {
+                    const isVerificationCode = m.message_type === 'verification_code';
+                    const isFromAdmin =
+                      m.sender_role === 'admin' ||
+                      m.sender_role === 'operator' ||
+                      m.sender_id === 'admin' ||
+                      m.sender_id === user?.id;
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex ${isFromAdmin ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[85%] rounded-2xl p-3 text-xs ${
+                            isVerificationCode
+                              ? 'bg-emerald-950 border-2 border-emerald-500 text-emerald-100 shadow-lg w-full max-w-sm'
+                              : isFromAdmin
+                              ? 'bg-emerald-600 text-white rounded-br-none'
+                              : 'bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-1">
+                            <span className="font-black uppercase tracking-wider text-[9px] opacity-80">
+                              {isFromAdmin ? '👑 Official Admin Desk' : activeOrder.buyer?.full_name || 'Buyer'}
+                            </span>
+                            <span className="text-[9px] opacity-60">
+                              {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+
+                          {isVerificationCode ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-1.5 font-black text-emerald-300 uppercase tracking-wider text-[11px]">
+                                <Key size={14} />
+                                <span>Verification Code Delivered</span>
+                              </div>
+                              <p className="text-slate-300">{m.content || m.body}</p>
+                              <div className="flex items-center justify-between bg-slate-900 p-2.5 rounded-xl border border-emerald-500/40">
+                                <span className="font-mono text-base font-black text-emerald-400 tracking-widest">
+                                  {m.code_value}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyCode(m.code_value || '')}
+                                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                                >
+                                  {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+                                  <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="whitespace-pre-wrap leading-relaxed">{m.content || m.body}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Admin Fulfillment Box & Regular Message Input */}
+              <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                {/* Admin Fulfillment Box */}
+                {activeOrder.status !== 'completed' ? (
+                  <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-emerald-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                        <Key size={13} />
+                        Admin Fulfillment (Atomic Auto-Debit)
+                      </span>
+                      <span className={buyerBalance >= currentPrice ? 'text-emerald-400' : 'text-red-400'}>
+                        Buyer: ₦{buyerBalance.toLocaleString()} {buyerBalance >= currentPrice ? '(Ready)' : '(Short)'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value)}
+                        placeholder="Enter verification code (e.g. 849-201)..."
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAdminSendCodeAndComplete}
+                        disabled={fulfilling || !verificationCode.trim()}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-md cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                      >
+                        {fulfilling ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                        <span>Send Code & Complete (debit ₦{currentPrice.toLocaleString()})</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-2.5 text-emerald-800 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold">
+                      <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                      <span>Deal Completed! ₦{currentPrice.toLocaleString()} was debited from buyer wallet.</span>
+                    </div>
+                    {activeOrder.payment_reference && (
+                      <span className="font-mono text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-300">
+                        {activeOrder.payment_reference}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Plain Text Message Input */}
+                <form onSubmit={handleSendTextMessage} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={adminMessage}
+                    onChange={(e) => setAdminMessage(e.target.value)}
+                    placeholder="Type a plain message to buyer (e.g. 'Fund your wallet and come back')..."
+                    disabled={sendingMsg}
+                    className="flex-1 bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-2 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 text-xs font-medium"
+                  />
+                  <button
+                    type="submit"
+                    disabled={sendingMsg || !adminMessage.trim()}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    {sendingMsg ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />}
+                    <span>Send Message</span>
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-400">
+              <div className="text-center space-y-2">
+                <MessageSquare className="mx-auto text-slate-300" size={36} />
+                <p className="text-xs font-semibold">Select a buyer chat from the left to start fulfilling</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Post Foreign Number Modal */}
+      {createListingOpen && (
+        <CreateListingModal
+          isOpen={createListingOpen}
+          onClose={() => setCreateListingOpen(false)}
+          categories={categories}
+          sellerId={user?.id || 'admin'}
+          isAdmin={true}
+          defaultType="foreign_number"
+          onSuccess={() => {
+            setCreateListingOpen(false);
+            loadOrders();
+            toast.success('Foreign Number posted successfully!');
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Admin Component with Top Mode Switcher
+// ─────────────────────────────────────────────────────────────────────────────
 export function AdminEsimMessages() {
   const { user } = useAuth();
-  const [deskMode, setDeskMode] = useState<'esim' | 'foreign-numbers'>('foreign-numbers');
+  const [deskMode, setDeskMode] = useState<'foreign-numbers' | 'esim'>('foreign-numbers');
   const [inquiries, setInquiries] = useState<EsimInquiry[]>([]);
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -157,7 +756,7 @@ export function AdminEsimMessages() {
         } catch (_) {}
       }
 
-      // Fallback to sample data for fresh administration preview
+      // Fallback sample data
       setInquiries(DEFAULT_INQUIRIES);
       localStorage.setItem('noroya_esim_inquiries', JSON.stringify(DEFAULT_INQUIRIES));
       if (!selectedInquiryId && DEFAULT_INQUIRIES[0]) {
@@ -338,348 +937,334 @@ export function AdminEsimMessages() {
       </div>
 
       {deskMode === 'foreign-numbers' ? (
-        <MarketplaceHome currentUser={user} user={user} />
+        <ForeignNumbersAdminDesk user={user} adminEmail={adminEmail} />
       ) : (
         <>
-      {/* ── Top Overview Banner ── */}
-      <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="p-2 rounded-2xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
-              <MessageSquare size={20} />
-            </span>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight">
-              eSIM Customer Messages & Fulfillment Desk
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-teal-400 text-slate-950">
-              Live Hub
-            </span>
-          </div>
-          <p className="text-xs text-teal-100/70 font-medium max-w-2xl leading-relaxed">
-            Manage incoming purchase inquiries, reply to users wanting to activate global eSIM profiles, send QR activation strings, and provide real-time fulfillment.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="text-right hidden sm:block">
-            <p className="text-[10px] uppercase font-bold text-teal-300/80">Active Operator</p>
-            <p className="text-xs font-mono font-bold text-white truncate max-w-[200px]">{adminEmail}</p>
-          </div>
-          <button
-            type="button"
-            onClick={loadInquiries}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
-          >
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            <span>Refresh</span>
-          </button>
-        </div>
-      </div>
-
-      {/* ── Metric Cards ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-1">
-          <p className="text-[10px] uppercase font-bold text-slate-400">Total Inquiries</p>
-          <p className="text-2xl font-black text-slate-900">{inquiries.length}</p>
-        </div>
-        <div className="bg-white rounded-2xl p-4 border border-amber-100 shadow-sm space-y-1">
-          <p className="text-[10px] uppercase font-bold text-amber-600">🟡 Pending Response</p>
-          <p className="text-2xl font-black text-amber-600">{pendingCount}</p>
-        </div>
-        <div className="bg-white rounded-2xl p-4 border border-blue-100 shadow-sm space-y-1">
-          <p className="text-[10px] uppercase font-bold text-blue-600">🔵 In Progress</p>
-          <p className="text-2xl font-black text-blue-600">{inProgressCount}</p>
-        </div>
-        <div className="bg-white rounded-2xl p-4 border border-emerald-100 shadow-sm space-y-1">
-          <p className="text-[10px] uppercase font-bold text-emerald-600">🟢 Completed</p>
-          <p className="text-2xl font-black text-emerald-600">{completedCount}</p>
-        </div>
-      </div>
-
-      {/* ── Main Chat & List Workspace ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-900/40 rounded-3xl p-1 md:p-3">
-        {/* LEFT COLUMN: Customer Inquiry List (5 cols) */}
-        <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-100 shadow-sm p-4 flex flex-col h-[650px]">
-          {/* Search & Filters */}
-          <div className="space-y-3 pb-3 border-b border-slate-100">
-            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input
-                type="text"
-                placeholder="Search name, phone, device..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 font-medium text-slate-800"
-              />
-            </div>
-
-            {/* Status Tabs */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
-              <button
-                type="button"
-                onClick={() => setFilterStatus('all')}
-                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                  filterStatus === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                All ({inquiries.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterStatus('pending')}
-                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                  filterStatus === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Pending ({pendingCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterStatus('in_progress')}
-                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                  filterStatus === 'in_progress' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Active ({inProgressCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterStatus('completed')}
-                className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                  filterStatus === 'completed' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Done ({completedCount})
-              </button>
-            </div>
-          </div>
-
-          {/* List items */}
-          <div className="flex-1 overflow-y-auto space-y-2 pt-3 pr-1">
-            {filteredInquiries.length === 0 ? (
-              <div className="py-16 text-center text-slate-400 space-y-2">
-                <MessageSquare className="mx-auto text-slate-300" size={32} />
-                <p className="text-xs font-semibold">No eSIM customer inquiries found</p>
+          {/* Top Overview Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-2xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
+                  <MessageSquare size={20} />
+                </span>
+                <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+                  eSIM Customer Messages & Fulfillment Desk
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-teal-400 text-slate-950">
+                  Live Hub
+                </span>
               </div>
-            ) : (
-              filteredInquiries.map(inq => {
-                const isSelected = inq.id === activeInquiry?.id;
-                return (
-                  <div
-                    key={inq.id}
-                    onClick={() => setSelectedInquiryId(inq.id)}
-                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${
-                      isSelected
-                        ? 'bg-teal-50/70 border-teal-400 shadow-sm'
-                        : 'bg-white hover:bg-slate-50 border-slate-100'
+              <p className="text-xs text-teal-100/70 font-medium max-w-2xl leading-relaxed">
+                Manage incoming purchase inquiries, reply to users wanting to activate global eSIM profiles, send QR activation strings, and provide real-time fulfillment.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <p className="text-[10px] uppercase font-bold text-teal-300/80">Active Operator</p>
+                <p className="text-xs font-mono font-bold text-white truncate max-w-[200px]">{adminEmail}</p>
+              </div>
+              <button
+                type="button"
+                onClick={loadInquiries}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
+              >
+                <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Metric Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-1">
+              <p className="text-[10px] uppercase font-bold text-slate-400">Total Inquiries</p>
+              <p className="text-2xl font-black text-slate-900">{inquiries.length}</p>
+            </div>
+            <div className="bg-white rounded-2xl p-4 border border-amber-100 shadow-sm space-y-1">
+              <p className="text-[10px] uppercase font-bold text-amber-600">🟡 Pending Response</p>
+              <p className="text-2xl font-black text-amber-600">{pendingCount}</p>
+            </div>
+            <div className="bg-white rounded-2xl p-4 border border-blue-100 shadow-sm space-y-1">
+              <p className="text-[10px] uppercase font-bold text-blue-600">🔵 In Progress</p>
+              <p className="text-2xl font-black text-blue-600">{inProgressCount}</p>
+            </div>
+            <div className="bg-white rounded-2xl p-4 border border-emerald-100 shadow-sm space-y-1">
+              <p className="text-[10px] uppercase font-bold text-emerald-600">🟢 Completed</p>
+              <p className="text-2xl font-black text-emerald-600">{completedCount}</p>
+            </div>
+          </div>
+
+          {/* Main Chat Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-900/40 rounded-3xl p-1 md:p-3">
+            {/* LEFT COLUMN: Customer Inquiry List (5 cols) */}
+            <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-100 shadow-sm p-4 flex flex-col h-[650px]">
+              <div className="space-y-3 pb-3 border-b border-slate-100">
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Search name, phone, device..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 font-medium text-slate-800"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('all')}
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
+                      filterStatus === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <span className="font-bold text-xs text-slate-900 truncate">
-                        {inq.user_name}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
-                        inq.status === 'pending'
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : inq.status === 'in_progress'
-                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                          : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      }`}>
-                        {inq.status.replace('_', ' ')}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] font-bold text-teal-700 truncate mb-1">
-                      {inq.package_label} ({inq.package_price})
-                    </p>
-
-                    <p className="text-[11px] text-slate-500 line-clamp-1 mb-2">
-                      {inq.last_message || inq.messages[inq.messages.length - 1]?.text || 'Inquiry initiated'}
-                    </p>
-
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                      <span>📱 {inq.device_model || 'Device unspecified'}</span>
-                      <span>{new Date(inq.updated_at || inq.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: Active Inquiry Details & Conversation Thread (7 cols) */}
-        <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-100 shadow-sm p-5 flex flex-col h-[650px]">
-          {activeInquiry ? (
-            <>
-              {/* Header Info */}
-              <div className="pb-4 border-b border-slate-100 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                      <span>{activeInquiry.user_name}</span>
-                      <span className="text-xs font-normal text-slate-500">({activeInquiry.user_email})</span>
-                    </h3>
-                    <p className="text-xs font-semibold text-teal-700 mt-0.5">
-                      Requested: {activeInquiry.package_label} · {activeInquiry.package_price}
-                    </p>
-                  </div>
-
-                  {/* Status Picker */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">Status:</span>
-                    <select
-                      value={activeInquiry.status}
-                      disabled={updatingStatus}
-                      onChange={e => handleUpdateStatus(e.target.value as any)}
-                      className="text-xs font-bold px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none cursor-pointer"
-                    >
-                      <option value="pending">🟡 Pending</option>
-                      <option value="in_progress">🔵 In Progress</option>
-                      <option value="completed">🟢 Completed</option>
-                      <option value="cancelled">🔴 Cancelled</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Device & Contact Quick Links */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 font-semibold flex items-center gap-1">
-                    <Smartphone size={12} /> {activeInquiry.device_model || 'Device not provided'}
-                  </span>
-                  <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 font-semibold flex items-center gap-1">
-                    <Globe size={12} /> {activeInquiry.destination_country || 'Global'}
-                  </span>
-                  {activeInquiry.user_phone && (
-                    <a
-                      href={`https://wa.me/${activeInquiry.user_phone.replace(/[^0-9]/g, '')}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold flex items-center gap-1 transition"
-                    >
-                      <Phone size={12} /> WhatsApp: {activeInquiry.user_phone}
-                    </a>
-                  )}
-                  {activeInquiry.user_email && (
-                    <a
-                      href={`mailto:${activeInquiry.user_email}?subject=Your NORODATA eSIM Profile Setup`}
-                      className="px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold flex items-center gap-1 transition"
-                    >
-                      <Mail size={12} /> Email Customer
-                    </a>
-                  )}
+                    All ({inquiries.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('pending')}
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
+                      filterStatus === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Pending ({pendingCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('in_progress')}
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
+                      filterStatus === 'in_progress' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Active ({inProgressCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('completed')}
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
+                      filterStatus === 'completed' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Done ({completedCount})
+                  </button>
                 </div>
               </div>
 
-              {/* Chat Thread Messages */}
-              <div className="flex-1 overflow-y-auto py-4 space-y-3 pr-2">
-                {activeInquiry.messages.map(msg => {
-                  const isAdmin = msg.sender === 'admin';
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`flex flex-col ${isAdmin ? 'items-end' : 'items-start'}`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1 text-[10px] font-bold text-slate-400">
-                        <span>{isAdmin ? (msg.sender_name || 'Admin Desk') : activeInquiry.user_name}</span>
-                        <span>·</span>
-                        <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <div className="flex-1 overflow-y-auto space-y-2 pt-3 pr-1">
+                {filteredInquiries.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400 space-y-2">
+                    <MessageSquare className="mx-auto text-slate-300" size={32} />
+                    <p className="text-xs font-semibold">No eSIM customer inquiries found</p>
+                  </div>
+                ) : (
+                  filteredInquiries.map(inq => {
+                    const isSelected = inq.id === activeInquiry?.id;
+                    return (
+                      <div
+                        key={inq.id}
+                        onClick={() => setSelectedInquiryId(inq.id)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${
+                          isSelected
+                            ? 'bg-teal-50/70 border-teal-400 shadow-sm'
+                            : 'bg-white hover:bg-slate-50 border-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {inq.user_name}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
+                            inq.status === 'pending'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : inq.status === 'in_progress'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                              : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          }`}>
+                            {inq.status.replace('_', ' ')}
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] font-bold text-teal-700 truncate mb-1">
+                          {inq.package_label} ({inq.package_price})
+                        </p>
+
+                        <p className="text-[11px] text-slate-500 line-clamp-1 mb-2">
+                          {inq.last_message || inq.messages[inq.messages.length - 1]?.text || 'Inquiry initiated'}
+                        </p>
+
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                          <span>📱 {inq.device_model || 'Device unspecified'}</span>
+                          <span>{new Date(inq.updated_at || inq.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: Active Inquiry Thread (7 cols) */}
+            <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-100 shadow-sm p-5 flex flex-col h-[650px]">
+              {activeInquiry ? (
+                <>
+                  <div className="pb-4 border-b border-slate-100 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                          <span>{activeInquiry.user_name}</span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            activeInquiry.status === 'pending'
+                              ? 'bg-amber-100 text-amber-800'
+                              : activeInquiry.status === 'in_progress'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {activeInquiry.status.replace('_', ' ')}
+                          </span>
+                        </h3>
+                        <p className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                          <Mail size={12} />
+                          <span>{activeInquiry.user_email}</span>
+                          {activeInquiry.user_phone && (
+                            <>
+                              <span>•</span>
+                              <Phone size={12} />
+                              <span>{activeInquiry.user_phone}</span>
+                            </>
+                          )}
+                        </p>
                       </div>
 
-                      <div className={`p-3.5 rounded-2xl max-w-[85%] text-xs leading-relaxed ${
-                        isAdmin
-                          ? 'bg-teal-700 text-white rounded-tr-none shadow-sm'
-                          : 'bg-slate-100 text-slate-900 rounded-tl-none border border-slate-200/60'
-                      }`}>
-                        <p className="whitespace-pre-line">{msg.text}</p>
-
-                        {msg.activation_code && (
-                          <div className="mt-2.5 p-2 rounded-xl bg-black/20 border border-white/20 font-mono text-[11px] flex items-center justify-between gap-2">
-                            <span className="truncate">{msg.activation_code}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(msg.activation_code || '');
-                                toast.success('Activation code copied');
-                              }}
-                              className="p-1 hover:bg-white/20 rounded cursor-pointer"
-                            >
-                              <Copy size={12} />
-                            </button>
-                          </div>
+                      <div className="flex items-center gap-2">
+                        {activeInquiry.status !== 'completed' && (
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateStatus('completed')}
+                            disabled={updatingStatus}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <CheckCircle2 size={13} />
+                            <span>Mark Completed</span>
+                          </button>
+                        )}
+                        {activeInquiry.status === 'pending' && (
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateStatus('in_progress')}
+                            disabled={updatingStatus}
+                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Clock size={13} />
+                            <span>In Progress</span>
+                          </button>
                         )}
                       </div>
                     </div>
-                  );
-                })}
-                <div ref={messagesEndRef} />
-              </div>
 
-              {/* Quick Actions & Templates */}
-              <div className="pt-2 border-t border-slate-100 space-y-2">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 shrink-0">Quick Reply:</span>
-                  <button
-                    type="button"
-                    onClick={() => setReplyText(`Hello ${activeInquiry.user_name}! Your ${activeInquiry.device_model || 'device'} is compatible. Once wallet deduction is confirmed, we will issue your activation QR code.`)}
-                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 shrink-0 font-medium cursor-pointer"
-                  >
-                    Confirm Device Ready
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setReplyText(`Payment verified! We are dispatching your official digital eSIM QR code. Scan under Settings > Cellular > Add eSIM.`)}
-                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 shrink-0 font-medium cursor-pointer"
-                  >
-                    Payment Verified
-                  </button>
-                </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-1.5 text-slate-700 font-semibold">
+                        <Globe size={14} className="text-teal-600" />
+                        <span>Package: <strong className="text-slate-900">{activeInquiry.package_label}</strong></span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-slate-700 font-semibold">
+                        <Smartphone size={14} className="text-teal-600" />
+                        <span>Device: <strong className="text-slate-900">{activeInquiry.device_model}</strong></span>
+                      </div>
+                    </div>
+                  </div>
 
-                {/* Optional Activation Code Input */}
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <QrCode className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <input
-                      type="text"
-                      placeholder="Attach eSIM Activation Code (e.g., LPA:1$smdp.io$SAMPLE-CODE)"
-                      value={activationCodeInput}
-                      onChange={e => setActivationCodeInput(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 font-mono text-slate-800"
-                    />
+                  <div className="flex-1 overflow-y-auto space-y-3 py-4 pr-1">
+                    {activeInquiry.messages.map(msg => {
+                      const isAdmin = msg.sender === 'admin';
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-2xl p-3.5 text-xs ${
+                              isAdmin
+                                ? 'bg-teal-600 text-white rounded-br-none'
+                                : 'bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3 mb-1">
+                              <span className="font-bold text-[10px] uppercase opacity-75">
+                                {isAdmin ? 'eSIM Admin Desk' : activeInquiry.user_name}
+                              </span>
+                              <span className="text-[10px] opacity-60">
+                                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                            {msg.activation_code && (
+                              <div className="mt-2.5 p-2.5 rounded-xl bg-slate-950/80 border border-teal-400/40 text-teal-300 font-mono text-[11px] flex items-center justify-between">
+                                <span>{msg.activation_code}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(msg.activation_code || '');
+                                    toast.success('Activation code copied');
+                                  }}
+                                  className="text-white hover:text-teal-200 p-1"
+                                >
+                                  <Copy size={13} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  <form onSubmit={handleSendReply} className="pt-3 border-t border-slate-100 space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Type reply to customer..."
+                        value={replyText}
+                        onChange={e => setReplyText(e.target.value)}
+                        className="flex-1 px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 font-medium text-slate-800"
+                      />
+                      <button
+                        type="submit"
+                        disabled={sending || (!replyText.trim() && !activationCodeInput.trim())}
+                        className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer shadow-md"
+                      >
+                        <Send size={14} />
+                        <span>Send</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <QrCode size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Attach eSIM Activation string or LPA code (optional)..."
+                          value={activationCodeInput}
+                          onChange={e => setActivationCodeInput(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 font-mono text-slate-700"
+                        />
+                      </div>
+                    </div>
+                  </form>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-slate-400">
+                  <div className="text-center space-y-2">
+                    <MessageSquare className="mx-auto text-slate-300" size={40} />
+                    <p className="text-xs font-semibold">Select an inquiry from the list to view and reply</p>
                   </div>
                 </div>
-
-                {/* Reply Form */}
-                <form onSubmit={handleSendReply} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder={`Reply to ${activeInquiry.user_name}...`}
-                    value={replyText}
-                    onChange={e => setReplyText(e.target.value)}
-                    className="flex-1 px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-teal-500 text-xs text-slate-900 font-medium"
-                  />
-                  <button
-                    type="submit"
-                    disabled={sending || (!replyText.trim() && !activationCodeInput.trim())}
-                    className="px-5 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition disabled:opacity-50 cursor-pointer shrink-0"
-                  >
-                    <Send size={13} />
-                    <span>Send</span>
-                  </button>
-                </form>
-              </div>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 space-y-2">
-              <MessageSquare size={36} className="text-slate-300" />
-              <p className="text-sm font-bold text-slate-600">Select an eSIM customer message to view conversation</p>
+              )}
             </div>
-          )}
-        </div>
-      </div>
-      </>
+          </div>
+        </>
       )}
     </div>
   );
 }
-export default AdminEsimMessages;

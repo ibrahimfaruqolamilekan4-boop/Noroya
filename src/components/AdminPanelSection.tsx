@@ -89,12 +89,26 @@ export const ensureUUID = (strId: string): string => {
 
 export default function AdminPanelSection() {
   const { user } = useAuth();
-  const isSuperAdmin = user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
+  const userRole = String(user?.role || '').toLowerCase().trim();
+  const isSuperAdmin = userRole === 'admin' || user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
   const isAccountantAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
-  const isEsimAdmin = ['jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
+  const isEsimAdmin = userRole === 'operator' || ['jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
     (user?.email || '').toLowerCase().trim()
   );
   const isRestrictedAdmin = isAccountantAdmin || isEsimAdmin;
+
+  if (!isSuperAdmin && !isEsimAdmin && !isAccountantAdmin && userRole !== 'admin' && userRole !== 'operator') {
+    return (
+      <div className="p-8 text-center bg-white rounded-3xl border border-red-200 shadow-sm max-w-md mx-auto my-12">
+        <div className="w-12 h-12 bg-red-100 rounded-2xl flex items-center justify-center text-red-600 mx-auto mb-3">
+          <AlertTriangle size={24} />
+        </div>
+        <h3 className="text-lg font-black text-slate-900">403 Forbidden</h3>
+        <p className="text-xs text-slate-500 mt-1">Admin or Operator access required from the database to open this area.</p>
+      </div>
+    );
+  }
+
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);

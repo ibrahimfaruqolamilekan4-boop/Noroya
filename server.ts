@@ -7098,8 +7098,7 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(404).json({ error: "Listing not found." });
       }
 
-      const isForeignNumber = listing.marketplace_categories?.type === 'foreign_number' || String(listing.category_id || '').includes('phone');
-      const isAdmin = await isCallerAdminUser(req, authUser);
+      const isForeignNumber = listing.marketplace_categories?.type === 'foreign_number' || String(listing.category_id || '').includes('phone') || listing.is_admin_listing;
 
       const { data: buyerProf } = await supabase
         .from('profiles')
@@ -7112,26 +7111,19 @@ if (Object.keys(updateData).length <= 1) {
       const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
       const requiredPrice = Number(listing.price || 0);
 
-      // Check for an existing active order for this buyer on this listing
+      // Check for an existing order for this buyer on this listing (reuse existing chat if one exists)
       const existingOrder = orders.find((o: any) =>
         o.listing_id === listing.id &&
-        o.buyer_id === buyerId &&
-        ['pending', 'code_requested', 'code_sent', 'paid'].includes(o.status)
+        o.buyer_id === buyerId
       );
-
-      // STRICT WALLET BALANCE CHECK: Buyer must have funded their wallet with the required amount before requesting to buy any number
-      if (!isAdmin && (!existingOrder || existingOrder.status !== 'paid') && requiredPrice > 0 && buyerBalance < requiredPrice) {
-        return res.status(400).json({
-          error: `Insufficient Balance! This number costs ₦${requiredPrice.toLocaleString()}, but your wallet balance is ₦${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy this number.`,
-          code: 'INSUFFICIENT_BALANCE',
-          required: requiredPrice,
-          balance: buyerBalance,
-        });
-      }
 
       if (existingOrder) {
         existingOrder.buyer = {
           ...existingOrder.buyer,
+          id: buyerId,
+          full_name: buyerName,
+          email: buyerEmail,
+          phone_number: buyerProf?.phone_number || '',
           wallet_balance: buyerBalance,
         };
         return res.json({ order: existingOrder });
@@ -7150,37 +7142,26 @@ if (Object.keys(updateData).length <= 1) {
           sender_email: buyerEmail,
           sender_role: 'buyer',
           message_type: 'text',
+          body: isForeignNumber
+            ? `👋 Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for ₦${requiredPrice.toLocaleString()}. Please provide my verification code!`
+            : `Hi! I'm interested in purchasing: "${listing.title}" (₦${requiredPrice.toLocaleString()}).`,
           content: isForeignNumber
-            ? `👋 Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for ₦${requiredPrice.toLocaleString()}. My wallet is funded (₦${buyerBalance.toLocaleString()}). Please send me the verification code to login!`
-            : `Hi! I'm interested in purchasing: "${listing.title}" (₦${requiredPrice.toLocaleString()}). Let's finalize the details here.`,
+            ? `👋 Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for ₦${requiredPrice.toLocaleString()}. Please provide my verification code!`
+            : `Hi! I'm interested in purchasing: "${listing.title}" (₦${requiredPrice.toLocaleString()}).`,
           created_at: nowIso,
         }
       ];
-
-      if (isForeignNumber) {
-        initialMessages.push({
-          id: `msg-${Date.now()}-2`,
-          order_id: orderId,
-          sender_id: 'admin',
-          sender_name: 'NORODATA Official Admin',
-          sender_email: 'ibrahimfaruqolamilekan4@gmail.com',
-          sender_role: 'admin',
-          message_type: 'text',
-          content: `✅ Connected to NORODATA Official Admin Desk!\n\n📱 Clicked Foreign Number: ${phonePreview}\n💰 Price: ₦${requiredPrice.toLocaleString()} (Your Wallet: ₦${buyerBalance.toLocaleString()} Verified)\n\n1️⃣ Copy the phone number above (${phonePreview}) and enter it into the app/account you want to login.\n2️⃣ Click "Request Verification Code" below or message Admin here as soon as the app sends the code.\n3️⃣ Immediately after Admin gives you the code and the deal is done, ₦${requiredPrice.toLocaleString()} will be debited from your wallet automatically!`,
-          created_at: nowIso,
-        });
-      }
 
       const newOrder = {
         id: orderId,
         listing_id: listing.id,
         buyer_id: buyerId,
-        seller_id: isForeignNumber ? 'admin' : (listing.seller_id || 'admin'),
+        seller_id: 'admin',
         clicked_number: phonePreview,
+        phone_number: phonePreview,
         price: requiredPrice,
-        status: 'pending',
+        status: 'open',
         is_foreign_number: isForeignNumber,
-        code_requested: false,
         created_at: nowIso,
         updated_at: nowIso,
         marketplace_listings: {
@@ -7197,9 +7178,9 @@ if (Object.keys(updateData).length <= 1) {
           marketplace_categories: listing.marketplace_categories || { name: 'Foreign Number', icon: '📱', type: 'foreign_number' },
         },
         seller: {
-          id: isForeignNumber ? 'admin' : listing.seller_id,
-          full_name: isForeignNumber ? 'NORODATA Official Admin' : (listing.profiles?.full_name || 'Verified Seller'),
-          name: isForeignNumber ? 'NORODATA Official Admin' : (listing.profiles?.name || 'Verified Seller'),
+          id: 'admin',
+          full_name: 'NORODATA Official Admin',
+          name: 'NORODATA Official Admin',
           marketplace_seller_rating: 5.0,
         },
         buyer: {
@@ -7562,6 +7543,191 @@ if (Object.keys(updateData).length <= 1) {
     return { order, newBuyerBalance, reference: paymentRef };
   };
 
+  // Server-side atomic order fulfillment endpoint:
+  // Admin clicks "Send Code & Complete (debit ₦PRICE)"
+  app.post("/api/marketplace/orders/:id/send-code-and-complete", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const code = String(req.body?.code || '').trim();
+      if (!code) {
+        return res.status(400).json({ error: "Verification code is required." });
+      }
+
+      // 1. Confirm the caller is an admin or an allowed operator (from profiles database table)
+      let callerRole = 'user';
+      try {
+        const { data: callerProf } = await supabase
+          .from('profiles')
+          .select('id, role, email')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        callerRole = callerProf?.role || 'user';
+      } catch (_) {}
+
+      const callerEmail = String(authUser.email || '').toLowerCase().trim();
+      const isAllowedAdminOrOperator =
+        callerRole === 'admin' ||
+        callerRole === 'operator' ||
+        ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com', 'jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(callerEmail);
+
+      if (!isAllowedAdminOrOperator) {
+        return res.status(403).json({ error: "Forbidden: Admin or operator role required." });
+      }
+
+      // Try Supabase RPC first if database function complete_marketplace_order exists
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(id) && uuidRegex.test(authUser.id)) {
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('complete_marketplace_order', {
+            p_order_id: id,
+            p_caller_id: authUser.id,
+            p_code_value: code,
+          });
+          if (!rpcErr && rpcData) {
+            if (rpcData.success) {
+              return res.json({
+                success: true,
+                newBuyerBalance: rpcData.new_balance,
+                reference: rpcData.reference,
+                completed_at: rpcData.completed_at,
+              });
+            } else {
+              return res.status(400).json({ error: rpcData.error || "Failed to complete order." });
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Server-side transactional implementation
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o: any) => o.id === id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found." });
+      }
+
+      // 3. If the order is already Completed, stop and return "Already completed". This prevents double debit.
+      if (order.status === 'completed' || order.completed_at) {
+        return res.status(400).json({ error: "Already completed" });
+      }
+
+      const price = Number(order.price || 0);
+
+      // Lock & read buyer's wallet row from profiles table
+      const { data: buyerProf, error: bErr } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, name, wallet_balance, balance, available_balance')
+        .eq('id', order.buyer_id)
+        .maybeSingle();
+
+      if (bErr || !buyerProf) {
+        return res.status(404).json({ error: "Buyer wallet profile not found." });
+      }
+
+      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
+
+      // 4. If the buyer's balance is less than the price, stop and return "Buyer balance too low" and do NOT send the code.
+      if (currentBalance < price) {
+        return res.status(400).json({
+          error: "Buyer balance too low",
+          balance: currentBalance,
+          price: price,
+          short_by: Number((price - currentBalance).toFixed(2)),
+        });
+      }
+
+      // 5. Otherwise, in one atomic transaction:
+      const nowIso = new Date().toISOString();
+      const newBuyerBalance = Number((currentBalance - price).toFixed(2));
+
+      // (a) Subtract the price from the buyer's wallet balance
+      const { error: deductErr } = await supabase
+        .from('profiles')
+        .update({
+          wallet_balance: newBuyerBalance,
+          balance: newBuyerBalance,
+          available_balance: newBuyerBalance,
+          updated_at: nowIso,
+        })
+        .eq('id', order.buyer_id);
+
+      if (deductErr) {
+        return res.status(500).json({ error: `Failed to debit wallet: ${deductErr.message}` });
+      }
+
+      try {
+        await supabase.from('users').update({ wallet_balance: newBuyerBalance }).eq('id', order.buyer_id);
+      } catch (_) {}
+
+      // (b) Save the code as a message in the chat, shown to the buyer as a green card with a "Copy Code" button
+      const codeMsg = {
+        id: `msg-${Date.now()}-code`,
+        order_id: id,
+        sender_id: authUser.id,
+        sender_role: 'admin',
+        sender_name: `Admin Desk (${authUser.email || 'Official'})`,
+        sender_email: authUser.email || '',
+        message_type: 'verification_code',
+        body: 'Here is your login verification code:',
+        content: `Here is your login verification code for ${order.phone_number || order.clicked_number || 'your foreign number'}:`,
+        code_value: code,
+        created_at: nowIso,
+      };
+
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(codeMsg);
+
+      // (c) Set the order status to Completed and save completed_at
+      order.status = 'completed';
+      order.completed_at = nowIso;
+      order.paid_at = nowIso;
+      order.verified_at = nowIso;
+      order.verification_code = code;
+      const paymentRef = `NUM-DEBIT-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      order.payment_reference = paymentRef;
+      if (order.buyer) {
+        order.buyer.wallet_balance = newBuyerBalance;
+      }
+      order.last_message = `Login Verification Code Sent: ${code}`;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+
+      // (d) Insert a debit record in the transactions table (amount, buyer, order id, number, timestamp)
+      const phoneNum = order.phone_number || order.clicked_number || '';
+      try {
+        await supabase.from('transactions').insert({
+          user_id: String(order.buyer_id),
+          user_email: buyerProf.email || null,
+          type: 'debit',
+          amount: price,
+          status: 'completed',
+          reference: paymentRef,
+          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ''}${order.marketplace_listings?.title || 'Foreign Number'}`,
+          phone: phoneNum || null,
+          gateway: 'wallet_auto_debit',
+          created_at: nowIso,
+        });
+      } catch (txErr: any) {
+        console.warn("[Transactions insert warning]:", txErr?.message || txErr);
+      }
+
+      await saveMarketplaceStore(listings, orders);
+
+      // 6. Show the admin a success toast and update the chat instantly
+      return res.json({
+        success: true,
+        order,
+        message: codeMsg,
+        newBuyerBalance,
+        reference: paymentRef,
+      });
+    } catch (err: any) {
+      console.error("[send-code-and-complete Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to complete deal." });
+    }
+  });
+
   // Admin/Seller sends verification code in chat (with optional auto-complete & auto-debit)
   app.post("/api/marketplace/orders/:id/send-code", async (req, res) => {
     const authUser = await requireUser(req, res);
@@ -7598,7 +7764,7 @@ if (Object.keys(updateData).length <= 1) {
       if (!Array.isArray(order.messages)) order.messages = [];
       order.messages.push(msg);
       order.verification_code = code;
-      order.status = order.status === 'pending' || order.status === 'code_requested' ? 'code_sent' : order.status;
+      order.status = order.status === 'open' || order.status === 'pending' || order.status === 'code_requested' ? 'code_sent' : order.status;
       order.last_message = `Login Verification Code Sent: ${code}`;
       order.last_message_at = nowIso;
       order.updated_at = nowIso;
@@ -7615,7 +7781,7 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  // Complete deal & automatically debit buyer's wallet (callable by Admin or Buyer once code is delivered)
+  // Complete deal & automatically debit buyer's wallet
   app.post("/api/marketplace/orders/:id/complete-deal", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
