@@ -755,9 +755,29 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
                   </div>
                 ) : listings.length === 0 ? (
-                  <div className="text-center py-12 bg-slate-900/40 rounded-2xl border border-slate-800">
-                    <Package className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                    <p className="text-slate-400">No numbers or listings found matching your criteria</p>
+                  <div className="text-center py-16 px-6 bg-slate-900/50 rounded-2xl border border-slate-800 space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-2xl font-black">
+                      📱
+                    </div>
+                    <div className="max-w-md mx-auto space-y-1">
+                      <h4 className="text-base font-black text-white">No active numbers or accounts currently posted</h4>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Our admins will post verified foreign numbers and assets with real prices here. Check back soon or message our desk!
+                      </p>
+                    </div>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreateDefaultType('foreign_number');
+                          setCreateModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-950 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        + Post Real Foreign Number
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

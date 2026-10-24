@@ -41,68 +41,7 @@ export interface EsimInquiry {
   }>;
 }
 
-const DEFAULT_INQUIRIES: EsimInquiry[] = [
-  {
-    id: 'inq-sample-1',
-    user_name: 'David Adebayo',
-    user_email: 'davidadebayo22@gmail.com',
-    user_phone: '+2348039281734',
-    package_id: 'us-5gb',
-    package_label: '🇺🇸 USA 5GB (30 Days)',
-    package_price: '₦8,500',
-    destination_country: 'United States',
-    device_model: 'iPhone 14 Pro Max',
-    status: 'pending',
-    created_at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-    last_message: 'Hello Admin, I want to buy the USA 5GB eSIM. Can you send me the QR code setup?',
-    messages: [
-      {
-        id: 'msg-1',
-        sender: 'user',
-        text: 'Hello Admin, I want to buy the USA 5GB eSIM for my trip next week. My device is iPhone 14 Pro Max. Can you guide me on payment and QR code setup?',
-        created_at: new Date(Date.now() - 1000 * 60 * 25).toISOString()
-      }
-    ]
-  },
-  {
-    id: 'inq-sample-2',
-    user_name: 'Grace Nwosu',
-    user_email: 'gracenwosu.travel@gmail.com',
-    user_phone: '+2348149823120',
-    package_id: 'uk-10gb',
-    package_label: '🇬🇧 UK 10GB + UK Number',
-    package_price: '₦12,500',
-    destination_country: 'United Kingdom',
-    device_model: 'Samsung Galaxy S23 Ultra',
-    status: 'in_progress',
-    created_at: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    last_message: 'Payment sent via wallet deduction. Waiting for activation string.',
-    messages: [
-      {
-        id: 'msg-2-1',
-        sender: 'user',
-        text: 'I need the UK 10GB eSIM for London. Is it available right away?',
-        created_at: new Date(Date.now() - 1000 * 60 * 120).toISOString()
-      },
-      {
-        id: 'msg-2-2',
-        sender: 'admin',
-        sender_name: 'eSIM Desk Admin',
-        sender_email: 'jeffholland299@gmail.com',
-        text: 'Hello Grace! Yes, it is fully in stock and ready. You can fund your wallet ₦12,500 or let us know once funded so we can issue your QR code immediately.',
-        created_at: new Date(Date.now() - 1000 * 60 * 90).toISOString()
-      },
-      {
-        id: 'msg-2-3',
-        sender: 'user',
-        text: 'Payment sent via wallet deduction. Waiting for activation string.',
-        created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString()
-      }
-    ]
-  }
-];
+const DEFAULT_INQUIRIES: EsimInquiry[] = [];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Foreign Numbers & Buyer Chats Admin Desk
@@ -747,29 +686,20 @@ export function AdminEsimMessages() {
         try {
           const parsed = JSON.parse(local);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setInquiries(parsed);
-            if (!selectedInquiryId && parsed[0]) {
-              setSelectedInquiryId(parsed[0].id);
+            const real = parsed.filter((i: any) => !['inq-sample-1', 'inq-sample-2'].includes(i?.id));
+            setInquiries(real);
+            if (!selectedInquiryId && real[0]) {
+              setSelectedInquiryId(real[0].id);
             }
             return;
           }
         } catch (_) {}
       }
 
-      // Fallback sample data
-      setInquiries(DEFAULT_INQUIRIES);
-      localStorage.setItem('noroya_esim_inquiries', JSON.stringify(DEFAULT_INQUIRIES));
-      if (!selectedInquiryId && DEFAULT_INQUIRIES[0]) {
-        setSelectedInquiryId(DEFAULT_INQUIRIES[0].id);
-      }
+      setInquiries([]);
     } catch (err: any) {
       console.warn('[AdminEsimMessages] Error loading inquiries:', err);
-      const local = localStorage.getItem('noroya_esim_inquiries');
-      if (local) {
-        try { setInquiries(JSON.parse(local)); } catch (_) {}
-      } else {
-        setInquiries(DEFAULT_INQUIRIES);
-      }
+      setInquiries([]);
     } finally {
       setLoading(false);
     }
