@@ -119,53 +119,7 @@ export const DEFAULT_CATEGORIES: MarketplaceCategory[] = [
   { id: 'cat-fb-acc', name: 'Facebook Accounts', description: 'Facebook pages, groups, and aged accounts', icon: '👍', type: 'social_account' },
 ];
 
-export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [
-  {
-    id: 'num-us-clean',
-    seller_id: 'admin',
-    category_id: 'cat-us-phone',
-    title: '🇺🇸 Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)',
-    description: 'Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, receive your login code, and your wallet will be debited automatically once the deal is done.',
-    price: 4500,
-    product_details: { item_identifier: '+1 (555) 234-8901', phone_number: '+1 (555) 234-8901', country: 'United States', carrier: 'AT&T / T-Mobile Non-VoIP' },
-    status: 'available',
-    views: 94,
-    is_admin_listing: true,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'US Phone Numbers', icon: '🇺🇸', type: 'foreign_number' },
-    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
-  },
-  {
-    id: 'num-uk-clean',
-    seller_id: 'admin',
-    category_id: 'cat-uk-phone',
-    title: '🇬🇧 Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)',
-    description: 'Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and receive your login code — automatic wallet debit once completed.',
-    price: 5000,
-    product_details: { item_identifier: '+44 7700 900412', phone_number: '+44 7700 900412', country: 'United Kingdom', carrier: 'Vodafone UK Physical SIM' },
-    status: 'available',
-    views: 67,
-    is_admin_listing: true,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'UK Phone Numbers', icon: '🇬🇧', type: 'foreign_number' },
-    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
-  },
-  {
-    id: 'num-ca-clean',
-    seller_id: 'admin',
-    category_id: 'cat-ca-phone',
-    title: '🇨🇦 Clean Canada +1 Phone Number (WhatsApp / Global Apps)',
-    description: 'Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, receive your login code, and complete your deal.',
-    price: 4800,
-    product_details: { item_identifier: '+1 (416) 555-0184', phone_number: '+1 (416) 555-0184', country: 'Canada', carrier: 'Rogers Canada SIM' },
-    status: 'available',
-    views: 51,
-    is_admin_listing: true,
-    created_at: new Date().toISOString(),
-    marketplace_categories: { name: 'Canada Phone Numbers', icon: '🇨🇦', type: 'foreign_number' },
-    profiles: { full_name: 'NORODATA Official Admin', name: 'NORODATA Official Admin', marketplace_seller_rating: 5.0, marketplace_seller_reviews: 128 }
-  }
-];
+export const DEFAULT_FALLBACK_LISTINGS: MarketplaceListing[] = [];
 
 async function marketplaceFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const { data: { session } } = await supabase.auth.getSession();

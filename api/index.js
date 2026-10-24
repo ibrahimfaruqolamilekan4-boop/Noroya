@@ -5628,67 +5628,7 @@ AI:`;
     { id: "cat-snap-acc", name: "Snapchat Accounts", description: "Snapchat accounts with high score and active contacts", icon: "\u{1F47B}", type: "social_account" },
     { id: "cat-fb-acc", name: "Facebook Accounts", description: "Facebook pages, groups, and aged accounts", icon: "\u{1F44D}", type: "social_account" }
   ];
-  const SEEDED_FOREIGN_NUMBER_LISTINGS = [
-    {
-      id: "num-us-clean",
-      seller_id: "admin",
-      category_id: "cat-us-phone",
-      title: "\u{1F1FA}\u{1F1F8} Clean USA +1 Phone Number (WhatsApp / Telegram / PayPal)",
-      description: "Official Admin-verified non-VoIP USA number ready for instant SMS OTP code verification on WhatsApp, Telegram, PayPal, and Google. Click to open chat with Admin, receive your login code, and your wallet will be debited automatically once the deal is done.",
-      price: 4500,
-      product_details: { item_identifier: "+1 (555) 234-8901", phone_number: "+1 (555) 234-8901", country: "United States", carrier: "AT&T / T-Mobile Non-VoIP" },
-      status: "available",
-      views: 94,
-      is_admin_listing: true,
-      created_at: new Date(Date.now() - 3600 * 1e3 * 12).toISOString(),
-      marketplace_categories: { name: "US Phone Numbers", icon: "\u{1F1FA}\u{1F1F8}", type: "foreign_number" },
-      profiles: { full_name: "NORODATA Official Admin", name: "NORODATA Official Admin", marketplace_seller_rating: 5, marketplace_seller_reviews: 128 }
-    },
-    {
-      id: "num-uk-clean",
-      seller_id: "admin",
-      category_id: "cat-uk-phone",
-      title: "\u{1F1EC}\u{1F1E7} Clean UK +44 Phone Number (WhatsApp / TikTok / Banking)",
-      description: "Official Admin-verified British +44 mobile number for instant OTP verification. Click to open live chat with Admin and receive your login code \u2014 automatic wallet debit once completed.",
-      price: 5e3,
-      product_details: { item_identifier: "+44 7700 900412", phone_number: "+44 7700 900412", country: "United Kingdom", carrier: "Vodafone UK Physical SIM" },
-      status: "available",
-      views: 67,
-      is_admin_listing: true,
-      created_at: new Date(Date.now() - 3600 * 1e3 * 8).toISOString(),
-      marketplace_categories: { name: "UK Phone Numbers", icon: "\u{1F1EC}\u{1F1E7}", type: "foreign_number" },
-      profiles: { full_name: "NORODATA Official Admin", name: "NORODATA Official Admin", marketplace_seller_rating: 5, marketplace_seller_reviews: 128 }
-    },
-    {
-      id: "num-ca-clean",
-      seller_id: "admin",
-      category_id: "cat-ca-phone",
-      title: "\u{1F1E8}\u{1F1E6} Clean Canada +1 Phone Number (WhatsApp / Global Apps)",
-      description: "Official Admin-verified Canadian +1 phone number for SMS verification. Click to chat directly with Admin, receive your login code, and complete your deal.",
-      price: 4800,
-      product_details: { item_identifier: "+1 (416) 555-0184", phone_number: "+1 (416) 555-0184", country: "Canada", carrier: "Rogers Canada SIM" },
-      status: "available",
-      views: 51,
-      is_admin_listing: true,
-      created_at: new Date(Date.now() - 3600 * 1e3 * 5).toISOString(),
-      marketplace_categories: { name: "Canada Phone Numbers", icon: "\u{1F1E8}\u{1F1E6}", type: "foreign_number" },
-      profiles: { full_name: "NORODATA Official Admin", name: "NORODATA Official Admin", marketplace_seller_rating: 5, marketplace_seller_reviews: 128 }
-    },
-    {
-      id: "acc-ig-aged",
-      seller_id: "seller-2",
-      category_id: "cat-ig-acc",
-      title: "\u{1F4F7} Aged Instagram Account (2020) \u2022 12.5k Real Followers",
-      description: "Established 2020 lifestyle & fashion page. 12.5k organic followers, high engagement rate, full email access included.",
-      price: 25e3,
-      product_details: { item_identifier: "@fashionvibes_ng", username: "@fashionvibes_ng", followers: "12.5k", platform: "Instagram" },
-      status: "available",
-      views: 110,
-      created_at: new Date(Date.now() - 3600 * 1e3 * 24).toISOString(),
-      marketplace_categories: { name: "Instagram Accounts", icon: "\u{1F4F7}", type: "social_account" },
-      profiles: { full_name: "DigitalAssets Hub", name: "DigitalAssets Hub", marketplace_seller_rating: 4.9, marketplace_seller_reviews: 65 }
-    }
-  ];
+  const SEEDED_FOREIGN_NUMBER_LISTINGS = [];
   const CORE_MARKETPLACE_ADMIN_EMAILS = [
     ADMIN_EMAIL.toLowerCase().trim(),
     "ibrahimfaruqolamilekan4@gmail.com",
@@ -5856,8 +5796,14 @@ AI:`;
           }
         }
       }
-      if (!Array.isArray(listings) || listings.length === 0) {
-        listings = memoryMarketplaceListings || [...SEEDED_FOREIGN_NUMBER_LISTINGS];
+      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
+      if (Array.isArray(listings)) {
+        listings = listings.filter((l) => !legacyIds.has(String(l?.id)));
+      } else {
+        listings = [];
+      }
+      if (Array.isArray(memoryMarketplaceListings)) {
+        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
       }
       if (!Array.isArray(orders)) {
         orders = memoryMarketplaceOrders || [];
@@ -5866,7 +5812,12 @@ AI:`;
       memoryMarketplaceOrders = orders;
       return { listings, orders };
     } catch (_) {
-      if (!memoryMarketplaceListings) memoryMarketplaceListings = [...SEEDED_FOREIGN_NUMBER_LISTINGS];
+      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
+      if (Array.isArray(memoryMarketplaceListings)) {
+        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
+      } else {
+        memoryMarketplaceListings = [];
+      }
       if (!memoryMarketplaceOrders) memoryMarketplaceOrders = [];
       return { listings: memoryMarketplaceListings, orders: memoryMarketplaceOrders };
     }
@@ -6355,7 +6306,7 @@ AI:`;
       order.buyer.wallet_balance = newBuyerBalance;
     }
     const listingObj = listings.find((l) => l.id === order.listing_id);
-    if (listingObj && !["num-us-clean", "num-uk-clean", "num-ca-clean"].includes(listingObj.id)) {
+    if (listingObj) {
       listingObj.status = "sold";
     }
     const doneContent = `\u{1F389} DEAL COMPLETED! \u20A6${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Login code delivered and permanently recorded in chat history.`;
