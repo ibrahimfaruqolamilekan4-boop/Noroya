@@ -6418,6 +6418,126 @@ if (Object.keys(updateData).length <= 1) {
     }
   };
 
+  // ─── eSIM Plans Store (Zero Hardcoded — Real Admin Inventory Only) ───
+  let serverEsimPlans: any[] = [];
+  try {
+    const dataDir = path.join(process.cwd(), '.data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const plansFile = path.join(dataDir, 'esim_plans.json');
+    if (fs.existsSync(plansFile)) {
+      serverEsimPlans = JSON.parse(fs.readFileSync(plansFile, 'utf-8'));
+    }
+  } catch (_) {}
+
+  const loadEsimPlansStore = async (): Promise<any[]> => {
+    try {
+      const { data } = await supabase
+        .from('provider_secrets')
+        .select('secret')
+        .eq('identifier', 'esim_plans_store_v1')
+        .maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          // Filter out any legacy dummy plan ids
+          serverEsimPlans = parsed.filter((p: any) => !['us-5gb', 'us-10gb', 'uk-10gb', 'global-5gb'].includes(p?.id));
+          return serverEsimPlans;
+        }
+      }
+    } catch (_) {}
+    serverEsimPlans = (serverEsimPlans || []).filter((p: any) => !['us-5gb', 'us-10gb', 'uk-10gb', 'global-5gb'].includes(p?.id));
+    return serverEsimPlans;
+  };
+
+  const saveEsimPlans = async (plansToSave: any[]) => {
+    serverEsimPlans = plansToSave;
+    try {
+      const dataDir = path.join(process.cwd(), '.data');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, 'esim_plans.json'), JSON.stringify(serverEsimPlans, null, 2));
+    } catch (_) {}
+    try {
+      await supabase.from('provider_secrets').upsert({
+        identifier: 'esim_plans_store_v1',
+        secret: JSON.stringify(serverEsimPlans),
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.warn('[saveEsimPlans warning]:', err?.message || err);
+    }
+  };
+
+  // GET /api/esim/plans — Public active admin-posted eSIM packages
+  app.get("/api/esim/plans", async (_req, res) => {
+    try {
+      const plans = await loadEsimPlansStore();
+      return res.json({ plans });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/esim/plans — Admin/Operator posts a real eSIM package
+  app.post("/api/esim/plans", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const {
+        title,
+        country = 'International',
+        flag = '🌐',
+        data_amount = '5GB',
+        duration = '30 Days',
+        numericPrice,
+        price,
+        carrier = 'Standard Network',
+        desc = 'Instant QR Activation',
+      } = req.body || {};
+
+      if (!title || !numericPrice || Number(numericPrice) <= 0) {
+        return res.status(400).json({ error: "Title and a positive numeric price are required." });
+      }
+
+      const numPrice = Number(numericPrice);
+      const formattedPrice = price || `₦${numPrice.toLocaleString()}`;
+
+      const plans = await loadEsimPlansStore();
+      const newPlan = {
+        id: `esim-plan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        title: String(title).trim(),
+        country: String(country).trim(),
+        flag: String(flag || '🌐').trim(),
+        data_amount: String(data_amount).trim(),
+        duration: String(duration).trim(),
+        numericPrice: numPrice,
+        price: formattedPrice,
+        carrier: String(carrier).trim(),
+        desc: String(desc).trim(),
+        status: 'available',
+        created_at: new Date().toISOString(),
+      };
+
+      plans.unshift(newPlan);
+      await saveEsimPlans(plans);
+      return res.json({ success: true, plan: newPlan });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE /api/esim/plans/:id — Admin/Operator deletes an eSIM plan
+  app.delete("/api/esim/plans/:id", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const { id } = req.params;
+      const plans = await loadEsimPlansStore();
+      const filtered = plans.filter((p: any) => p.id !== id);
+      await saveEsimPlans(filtered);
+      return res.json({ success: true, plans: filtered });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /api/esim/inquiries (Allowed on all admin accounts)
   app.get("/api/esim/inquiries", async (req, res) => {
     if (!await requireEsimAdmin(req, res)) return;
@@ -6449,10 +6569,10 @@ if (Object.keys(updateData).length <= 1) {
         user_name = 'Customer',
         user_email = '',
         user_phone = '',
-        package_id = 'us-5gb',
-        package_label = 'USA 5GB eSIM',
-        package_price = '₦8,500',
-        destination_country = 'United States',
+        package_id = 'custom',
+        package_label = 'International eSIM Request',
+        package_price = '₦0',
+        destination_country = 'International',
         device_model = 'Smartphone',
         message = '',
         check_balance = false,

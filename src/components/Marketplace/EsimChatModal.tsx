@@ -5,30 +5,15 @@ import {
   CheckCircle2, Clock, MessageSquare, PhoneCall, Copy, Check, Sparkles, AlertCircle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { supabase } from '../../lib/supabase';
+import { marketplaceService, EsimPlan } from '../../lib/marketplaceService';
 
-interface EsimChatModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  currentUser: any;
-  initialPackage?: string;
-}
-
-interface ChatMsg {
-  id: string;
-  sender: 'admin' | 'user';
-  text: string;
-  time: string;
-  hasQr?: boolean;
-}
-
-const PRESET_PACKAGES = [
-  { id: 'us-5gb', label: '🇺🇸 USA 5GB (30 Days)', price: '₦8,500', data: '5GB', country: 'United States' },
-  { id: 'us-10gb', label: '🇺🇸 USA 10GB (30 Days)', price: '₦14,000', data: '10GB', country: 'United States' },
-  { id: 'uk-10gb', label: '🇬🇧 UK 10GB + UK Number', price: '₦12,500', data: '10GB', country: 'United Kingdom' },
-  { id: 'global-5gb', label: '🌍 Global 150+ Countries (5GB)', price: '₦16,000', data: '5GB', country: 'Global' },
-  { id: 'custom', label: '⚡ Custom Country / Plan', price: 'Ask Admin', data: 'Custom', country: 'Custom' },
-];
+const DEFAULT_CUSTOM_PACKAGE = {
+  id: 'custom',
+  label: '⚡ Custom Country / Plan',
+  price: 'Ask Admin',
+  data: 'Custom',
+  country: 'Custom'
+};
 
 const safeFormatTime = (isoString?: string): string => {
   if (!isoString) return 'Just now';
@@ -93,13 +78,29 @@ class EsimErrorBoundary extends React.Component<{ children: React.ReactNode; onC
   }
 }
 
+interface EsimChatModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  currentUser: any;
+  initialPackage?: string;
+}
+
+interface ChatMsg {
+  id: string;
+  sender: 'admin' | 'user';
+  text: string;
+  time: string;
+  hasQr?: boolean;
+}
+
 function EsimChatModalInner({
   isOpen,
   onClose,
   currentUser,
   initialPackage
 }: EsimChatModalProps) {
-  const [selectedPkg, setSelectedPkg] = useState(initialPackage || PRESET_PACKAGES[0].id);
+  const [plans, setPlans] = useState<EsimPlan[]>([]);
+  const [selectedPkg, setSelectedPkg] = useState(initialPackage || 'custom');
   const [deviceModel, setDeviceModel] = useState('');
   const [inputText, setInputText] = useState('');
   const [copied, setCopied] = useState(false);
@@ -108,7 +109,7 @@ function EsimChatModalInner({
     {
       id: 'msg-welcome-1',
       sender: 'admin',
-      text: `Hello ${currentUser?.fullName || currentUser?.name || 'there'}! Welcome to the NORODATA Official eSIM Desk 📶\n\nI am online to help you provision and activate high-speed eSIM data profiles for USA, UK, Canada, Europe, and 150+ countries. Let me know your destination country and device model (iPhone/Samsung/Pixel).`,
+      text: `Hello ${currentUser?.fullName || currentUser?.name || 'there'}! Welcome to the NORODATA Official eSIM Desk 📶\n\nI am online to help you provision and activate high-speed eSIM data profiles. Pick any plan or let me know your destination country and device model.`,
       time: 'Just now'
     }
   ]);
@@ -116,9 +117,16 @@ function EsimChatModalInner({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (initialPackage) {
-      setSelectedPkg(initialPackage);
-    }
+    marketplaceService.getEsimPlans().then((serverPlans) => {
+      setPlans(serverPlans);
+      if (initialPackage) {
+        setSelectedPkg(initialPackage);
+      } else if (serverPlans.length > 0) {
+        setSelectedPkg(serverPlans[0].id);
+      } else {
+        setSelectedPkg('custom');
+      }
+    }).catch(() => {});
   }, [initialPackage]);
 
   useEffect(() => {
@@ -127,9 +135,21 @@ function EsimChatModalInner({
 
   if (!isOpen) return null;
 
-  const currentPkgObj = PRESET_PACKAGES.find(p => p.id === selectedPkg) || PRESET_PACKAGES[0];
+  const activePackages = [
+    ...plans.map((p) => ({
+      id: p.id,
+      label: `${p.flag} ${p.title}`,
+      price: p.price,
+      data: p.data_amount,
+      country: p.country,
+      numericPrice: p.numericPrice,
+    })),
+    DEFAULT_CUSTOM_PACKAGE
+  ];
 
-  const syncInquiryWithBackend = async (text: string, currentPackage: typeof PRESET_PACKAGES[0]) => {
+  const currentPkgObj = activePackages.find(p => p.id === selectedPkg) || activePackages[0] || DEFAULT_CUSTOM_PACKAGE;
+
+  const syncInquiryWithBackend = async (text: string, currentPackage: any) => {
     const payload = {
       user_id: currentUser?.uid || currentUser?.id || 'visitor',
       user_name: currentUser?.fullName || currentUser?.name || 'Customer',
@@ -280,7 +300,7 @@ function EsimChatModalInner({
     syncInquiryWithBackend(trimmed, currentPkgObj);
   };
 
-  const handleSendPresetInquiry = (pkg: typeof PRESET_PACKAGES[0]) => {
+  const handleSendPresetInquiry = (pkg: any) => {
     setSelectedPkg(pkg.id);
     const numericPrice = Number(String(pkg.price || '').replace(/[^\d.]/g, '')) || 0;
     const isAdminUser =
@@ -398,7 +418,7 @@ function EsimChatModalInner({
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-            {PRESET_PACKAGES.map(pkg => (
+            {activePackages.map(pkg => (
               <button
                 key={pkg.id}
                 type="button"

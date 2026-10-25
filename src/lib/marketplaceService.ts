@@ -342,5 +342,44 @@ export const marketplaceService = {
     } catch (_) {
       return [];
     }
+  },
+
+  async getEsimPlans(): Promise<EsimPlan[]> {
+    try {
+      const data = await marketplaceFetch<{ plans: EsimPlan[] }>('/api/esim/plans');
+      return Array.isArray(data.plans) ? data.plans : [];
+    } catch (err: any) {
+      console.warn('[marketplaceService.getEsimPlans] Error:', err.message);
+      return [];
+    }
+  },
+
+  async createEsimPlan(planData: Partial<EsimPlan>): Promise<{ success: boolean; plan: EsimPlan }> {
+    return marketplaceFetch('/api/esim/plans', {
+      method: 'POST',
+      body: JSON.stringify(planData),
+    });
+  },
+
+  async deleteEsimPlan(id: string): Promise<{ success: boolean; plans: EsimPlan[] }> {
+    return marketplaceFetch(`/api/esim/plans/${id}`, {
+      method: 'DELETE',
+    });
   }
 };
+
+export interface EsimPlan {
+  id: string;
+  title: string;
+  country: string;
+  flag: string;
+  data_amount: string;
+  duration: string;
+  numericPrice: number;
+  price: string;
+  carrier: string;
+  desc: string;
+  status?: string;
+  created_at?: string;
+}
+
