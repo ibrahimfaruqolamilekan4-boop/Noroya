@@ -10,7 +10,8 @@ import {
   marketplaceService, 
   MarketplaceCategory, 
   MarketplaceListing, 
-  MarketplaceOrder 
+  MarketplaceOrder,
+  EsimPlan
 } from '../../lib/marketplaceService';
 import { fetchWalletSnapshot } from '../../lib/walletApi';
 import { CreateListingModal } from './CreateListingModal';
@@ -32,6 +33,17 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
   const currentUser = currentUserProp || userProp;
   const [categories, setCategories] = useState<MarketplaceCategory[]>([]);
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [esimPlans, setEsimPlans] = useState<EsimPlan[]>([]);
+  const [createEsimModalOpen, setCreateEsimModalOpen] = useState(false);
+  const [newEsimTitle, setNewEsimTitle] = useState('');
+  const [newEsimCountry, setNewEsimCountry] = useState('United States');
+  const [newEsimFlag, setNewEsimFlag] = useState('🇺🇸');
+  const [newEsimData, setNewEsimData] = useState('5GB');
+  const [newEsimDuration, setNewEsimDuration] = useState('30 Days');
+  const [newEsimPrice, setNewEsimPrice] = useState('');
+  const [newEsimCarrier, setNewEsimCarrier] = useState('AT&T / T-Mobile 5G');
+  const [newEsimDesc, setNewEsimDesc] = useState('');
+  const [submittingEsim, setSubmittingEsim] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<'all' | 'foreign_number' | 'social_account' | 'esim'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,7 +55,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
   const [activeOrder, setActiveOrder] = useState<MarketplaceOrder | null>(null);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [esimChatOpen, setEsimChatOpen] = useState(false);
-  const [selectedEsimPackage, setSelectedEsimPackage] = useState<string>('us-5gb');
+  const [selectedEsimPackage, setSelectedEsimPackage] = useState<string>('custom');
   const [activeTab, setActiveTab] = useState<'browse' | 'my-listings' | 'my-orders' | 'admin-orders' | 'manage-admins'>('browse');
   const [myListings, setMyListings] = useState<MarketplaceListing[]>([]);
   const [myOrders, setMyOrders] = useState<MarketplaceOrder[]>([]);
@@ -123,8 +135,12 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
   const loadData = async () => {
     try {
       setLoading(true);
-      const cats = await marketplaceService.getCategories();
+      const [cats, serverEsims] = await Promise.all([
+        marketplaceService.getCategories(),
+        marketplaceService.getEsimPlans().catch(() => []),
+      ]);
       setCategories(cats);
+      setEsimPlans(serverEsims);
 
       const userId = currentUser?.id || currentUser?.uid || '';
 
@@ -160,6 +176,52 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
       console.error('Error loading marketplace:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateEsimPlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const numPrice = Number(newEsimPrice);
+    if (!newEsimTitle.trim() || isNaN(numPrice) || numPrice <= 0) {
+      toast.error('Please enter a valid plan title and positive price');
+      return;
+    }
+    try {
+      setSubmittingEsim(true);
+      const res = await marketplaceService.createEsimPlan({
+        title: newEsimTitle.trim(),
+        country: newEsimCountry.trim(),
+        flag: newEsimFlag.trim(),
+        data_amount: newEsimData.trim(),
+        duration: newEsimDuration.trim(),
+        numericPrice: numPrice,
+        price: `₦${numPrice.toLocaleString()}`,
+        carrier: newEsimCarrier.trim(),
+        desc: newEsimDesc.trim() || `${newEsimData} • ${newEsimDuration} • ${newEsimCarrier}`,
+      });
+      if (res.plan) {
+        setEsimPlans(prev => [res.plan, ...prev]);
+        toast.success(`🎉 eSIM Plan "${res.plan.title}" posted successfully!`);
+        setCreateEsimModalOpen(false);
+        setNewEsimTitle('');
+        setNewEsimPrice('');
+        setNewEsimDesc('');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to post eSIM plan');
+    } finally {
+      setSubmittingEsim(false);
+    }
+  };
+
+  const handleDeleteEsimPlan = async (e: React.MouseEvent, planId: string) => {
+    e.stopPropagation();
+    try {
+      await marketplaceService.deleteEsimPlan(planId);
+      setEsimPlans(prev => prev.filter(p => p.id !== planId));
+      toast.success('eSIM Plan removed');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to remove plan');
     }
   };
 
@@ -707,43 +769,90 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                       Need a travel or business eSIM? Click any package below to open a direct live chat with our eSIM Admin Desk. Make sure your wallet is funded with the package price first.
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleEsimClick('us-5gb', '🇺🇸 USA 5GB eSIM (30 Days)', 8500)}
-                    className="bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold px-6 py-3.5 rounded-xl shadow-lg transition flex items-center gap-2 whitespace-nowrap self-start md:self-center cursor-pointer"
-                  >
-                    <MessageSquare className="w-5 h-5" />
-                    Message Admin for eSIM
-                  </button>
+                  <div className="flex items-center gap-2 self-start md:self-center flex-wrap">
+                    {isAdmin && (
+                      <button
+                        onClick={() => setCreateEsimModalOpen(true)}
+                        className="bg-slate-800 hover:bg-slate-700 text-teal-300 border border-teal-500/40 font-bold px-4 py-3 rounded-xl transition flex items-center gap-2 text-xs cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        + Post eSIM Plan
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (esimPlans.length > 0) {
+                          handleEsimClick(esimPlans[0].id, `${esimPlans[0].flag} ${esimPlans[0].title}`, esimPlans[0].numericPrice);
+                        } else {
+                          setSelectedEsimPackage('custom');
+                          setEsimChatOpen(true);
+                        }
+                      }}
+                      className="bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold px-5 py-3 rounded-xl shadow-lg transition flex items-center gap-2 whitespace-nowrap cursor-pointer text-xs sm:text-sm"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      Message Admin for eSIM
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-800/80">
-                  {[
-                    { id: 'us-5gb', flag: '🇺🇸', title: 'USA 5GB (30 Days)', price: '₦8,500', numericPrice: 8500, desc: 'AT&T / T-Mobile 5G • Instant QR Activation' },
-                    { id: 'uk-10gb', flag: '🇬🇧', title: 'UK 10GB + +44 Number', price: '₦12,500', numericPrice: 12500, desc: 'Vodafone / O2 UK • Calls, SMS & 5G Data' },
-                    { id: 'global-5gb', flag: '🌍', title: 'Global 150+ Countries (5GB)', price: '₦16,000', numericPrice: 16000, desc: 'Worldwide roaming coverage • Zero physical SIM' },
-                  ].map((pkg) => (
-                    <div
-                      key={pkg.id}
-                      onClick={() => handleEsimClick(pkg.id, `${pkg.flag} ${pkg.title}`, pkg.numericPrice)}
-                      className="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/60 hover:border-teal-500/50 rounded-xl p-4 cursor-pointer transition group flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-2xl">{pkg.flag}</span>
-                          <span className="text-base font-black text-teal-400">{pkg.price}</span>
+                {esimPlans.length === 0 ? (
+                  <div className="mt-6 pt-6 border-t border-slate-800/80 text-center py-8 px-4 bg-slate-900/60 rounded-2xl border border-slate-800/80 space-y-3">
+                    <p className="text-sm text-slate-200 font-bold">
+                      No active eSIM packages currently posted
+                    </p>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                      Admins will post real international eSIM data plans and pricing here shortly. You can also chat directly with our desk for custom countries!
+                    </p>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setCreateEsimModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition cursor-pointer shadow-lg"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        + Post Real eSIM Plan
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-800/80">
+                    {esimPlans.map((pkg) => (
+                      <div
+                        key={pkg.id}
+                        onClick={() => handleEsimClick(pkg.id, `${pkg.flag} ${pkg.title}`, pkg.numericPrice)}
+                        className="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/60 hover:border-teal-500/50 rounded-xl p-4 cursor-pointer transition group flex flex-col justify-between relative"
+                      >
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteEsimPlan(e, pkg.id)}
+                            title="Delete eSIM Plan"
+                            className="absolute top-3 right-3 p-1.5 rounded-full bg-red-950/80 hover:bg-red-600 text-red-300 hover:text-white transition"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                        <div>
+                          <div className="flex items-center justify-between mb-2 pr-6">
+                            <span className="text-2xl">{pkg.flag || '📶'}</span>
+                            <span className="text-base font-black text-teal-400">{pkg.price}</span>
+                          </div>
+                          <h4 className="font-bold text-white group-hover:text-teal-300 transition text-sm">
+                            {pkg.title}
+                          </h4>
+                          <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                            {pkg.desc || `${pkg.data_amount} • ${pkg.duration} • ${pkg.carrier}`}
+                          </p>
                         </div>
-                        <h4 className="font-bold text-white group-hover:text-teal-300 transition text-sm">
-                          {pkg.title}
-                        </h4>
-                        <p className="text-xs text-slate-400 mt-1">{pkg.desc}</p>
+                        <div className="mt-4 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-teal-400 font-bold">
+                          <span>Click to Open Chat & Get eSIM</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </div>
                       </div>
-                      <div className="mt-4 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-teal-400 font-bold">
-                        <span>Click to Open Chat & Get eSIM</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1281,6 +1390,152 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
         currentUser={{ ...currentUser, wallet_balance: liveWalletBalance }}
         initialPackage={selectedEsimPackage}
       />
+
+      {/* Admin Post Real eSIM Plan Modal */}
+      {createEsimModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-slate-900 border-2 border-teal-500/50 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-4">
+            <button
+              type="button"
+              onClick={() => setCreateEsimModalOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-400 text-2xl shrink-0">
+                📶
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-teal-400 bg-teal-500/10 px-2.5 py-0.5 rounded-full border border-teal-500/30">
+                  Admin Inventory
+                </span>
+                <h3 className="text-lg font-black text-white mt-1">Post Real eSIM Package</h3>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateEsimPlan} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Country / Region</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEsimCountry}
+                    onChange={(e) => setNewEsimCountry(e.target.value)}
+                    placeholder="e.g. United States, UK, Europe"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Country Flag Emoji</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEsimFlag}
+                    onChange={(e) => setNewEsimFlag(e.target.value)}
+                    placeholder="e.g. 🇺🇸, 🇬🇧, 🌍, 🇨🇦"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-bold mb-1">Package Title</label>
+                <input
+                  type="text"
+                  required
+                  value={newEsimTitle}
+                  onChange={(e) => setNewEsimTitle(e.target.value)}
+                  placeholder="e.g. USA 5GB (30 Days) 5G Data"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Data Amount</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEsimData}
+                    onChange={(e) => setNewEsimData(e.target.value)}
+                    placeholder="e.g. 5GB, 10GB, 20GB"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Validity Duration</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEsimDuration}
+                    onChange={(e) => setNewEsimDuration(e.target.value)}
+                    placeholder="e.g. 30 Days, 15 Days"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Selling Price (₦)</label>
+                  <input
+                    type="number"
+                    required
+                    min="100"
+                    step="50"
+                    value={newEsimPrice}
+                    onChange={(e) => setNewEsimPrice(e.target.value)}
+                    placeholder="e.g. 8500"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-bold mb-1">Network / Carrier</label>
+                  <input
+                    type="text"
+                    value={newEsimCarrier}
+                    onChange={(e) => setNewEsimCarrier(e.target.value)}
+                    placeholder="e.g. AT&T / T-Mobile 5G"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-bold mb-1">Description / Notes (Optional)</label>
+                <input
+                  type="text"
+                  value={newEsimDesc}
+                  onChange={(e) => setNewEsimDesc(e.target.value)}
+                  placeholder="e.g. Instant QR Activation • Unlocked iPhone & Android"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCreateEsimModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingEsim}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold transition shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {submittingEsim ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  <span>{submittingEsim ? 'Publishing...' : 'Publish eSIM Plan'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

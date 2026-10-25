@@ -5424,6 +5424,110 @@ AI:`;
       console.warn("[saveEsimInquiries Supabase warning]:", err?.message || err);
     }
   };
+  let serverEsimPlans = [];
+  try {
+    const dataDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const plansFile = path.join(dataDir, "esim_plans.json");
+    if (fs.existsSync(plansFile)) {
+      serverEsimPlans = JSON.parse(fs.readFileSync(plansFile, "utf-8"));
+    }
+  } catch (_) {
+  }
+  const loadEsimPlansStore = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_plans_store_v1").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          serverEsimPlans = parsed.filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
+          return serverEsimPlans;
+        }
+      }
+    } catch (_) {
+    }
+    serverEsimPlans = (serverEsimPlans || []).filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
+    return serverEsimPlans;
+  };
+  const saveEsimPlans = async (plansToSave) => {
+    serverEsimPlans = plansToSave;
+    try {
+      const dataDir = path.join(process.cwd(), ".data");
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "esim_plans.json"), JSON.stringify(serverEsimPlans, null, 2));
+    } catch (_) {
+    }
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "esim_plans_store_v1",
+        secret: JSON.stringify(serverEsimPlans),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.warn("[saveEsimPlans warning]:", err?.message || err);
+    }
+  };
+  app.get("/api/esim/plans", async (_req, res) => {
+    try {
+      const plans = await loadEsimPlansStore();
+      return res.json({ plans });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/esim/plans", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const {
+        title,
+        country = "International",
+        flag = "\u{1F310}",
+        data_amount = "5GB",
+        duration = "30 Days",
+        numericPrice,
+        price,
+        carrier = "Standard Network",
+        desc = "Instant QR Activation"
+      } = req.body || {};
+      if (!title || !numericPrice || Number(numericPrice) <= 0) {
+        return res.status(400).json({ error: "Title and a positive numeric price are required." });
+      }
+      const numPrice = Number(numericPrice);
+      const formattedPrice = price || `\u20A6${numPrice.toLocaleString()}`;
+      const plans = await loadEsimPlansStore();
+      const newPlan = {
+        id: `esim-plan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        title: String(title).trim(),
+        country: String(country).trim(),
+        flag: String(flag || "\u{1F310}").trim(),
+        data_amount: String(data_amount).trim(),
+        duration: String(duration).trim(),
+        numericPrice: numPrice,
+        price: formattedPrice,
+        carrier: String(carrier).trim(),
+        desc: String(desc).trim(),
+        status: "available",
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      plans.unshift(newPlan);
+      await saveEsimPlans(plans);
+      return res.json({ success: true, plan: newPlan });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.delete("/api/esim/plans/:id", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const { id } = req.params;
+      const plans = await loadEsimPlansStore();
+      const filtered = plans.filter((p) => p.id !== id);
+      await saveEsimPlans(filtered);
+      return res.json({ success: true, plans: filtered });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
   app.get("/api/esim/inquiries", async (req, res) => {
     if (!await requireEsimAdmin(req, res)) return;
     const inquiries = await loadEsimInquiriesStore();
@@ -5449,10 +5553,10 @@ AI:`;
         user_name = "Customer",
         user_email = "",
         user_phone = "",
-        package_id = "us-5gb",
-        package_label = "USA 5GB eSIM",
-        package_price = "\u20A68,500",
-        destination_country = "United States",
+        package_id = "custom",
+        package_label = "International eSIM Request",
+        package_price = "\u20A60",
+        destination_country = "International",
         device_model = "Smartphone",
         message = "",
         check_balance = false

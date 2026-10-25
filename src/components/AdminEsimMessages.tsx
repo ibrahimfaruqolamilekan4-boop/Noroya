@@ -3,12 +3,12 @@ import {
   MessageSquare, Send, CheckCircle2, Clock, AlertCircle, 
   Smartphone, Globe, Phone, Mail, RefreshCw, Search, 
   Check, Copy, QrCode, User, ExternalLink, ShieldAlert, Sparkles, Filter,
-  Key, Wallet, Plus, ShieldCheck
+  Key, Wallet, Plus, ShieldCheck, Trash2, X
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { marketplaceService, MarketplaceOrder, MarketplaceMessage, MarketplaceCategory } from '../lib/marketplaceService';
+import { marketplaceService, MarketplaceOrder, MarketplaceMessage, MarketplaceCategory, EsimPlan } from '../lib/marketplaceService';
 import { CreateListingModal } from './Marketplace/CreateListingModal';
 
 export interface EsimInquiry {
@@ -638,11 +638,318 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Admin eSIM Plans Management Section (Zero Hardcoded — Admins Post Real Plans)
+// ─────────────────────────────────────────────────────────────────────────────
+function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string }) {
+  const [plans, setPlans] = useState<EsimPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [title, setTitle] = useState('');
+  const [country, setCountry] = useState('United States');
+  const [flag, setFlag] = useState('🇺🇸');
+  const [dataAmount, setDataAmount] = useState('5GB');
+  const [duration, setDuration] = useState('30 Days');
+  const [price, setPrice] = useState('');
+  const [carrier, setCarrier] = useState('AT&T / T-Mobile 5G');
+  const [desc, setDesc] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const fetchPlans = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await marketplaceService.getEsimPlans();
+      setPlans(res);
+    } catch (_) {
+      setPlans([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPlans();
+  }, [fetchPlans]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const numPrice = Number(price);
+    if (!title.trim() || isNaN(numPrice) || numPrice <= 0) {
+      toast.error('Please enter a valid title and positive numeric price');
+      return;
+    }
+    try {
+      setSaving(true);
+      const res = await marketplaceService.createEsimPlan({
+        title: title.trim(),
+        country: country.trim(),
+        flag: flag.trim() || '🌐',
+        data_amount: dataAmount.trim(),
+        duration: duration.trim(),
+        numericPrice: numPrice,
+        price: `₦${numPrice.toLocaleString()}`,
+        carrier: carrier.trim(),
+        desc: desc.trim() || `${dataAmount} • ${duration} • ${carrier}`,
+      });
+      if (res.plan) {
+        setPlans(prev => [res.plan, ...prev]);
+        toast.success(`eSIM Plan "${res.plan.title}" posted successfully!`);
+        setShowAddModal(false);
+        setTitle('');
+        setPrice('');
+        setDesc('');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create plan');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await marketplaceService.deleteEsimPlan(id);
+      setPlans(prev => prev.filter(p => p.id !== id));
+      toast.success('eSIM Plan deleted successfully');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete plan');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="p-2 rounded-2xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
+              <Globe size={20} />
+            </span>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight">Real eSIM Packages Manager</h2>
+          </div>
+          <p className="text-xs text-teal-100/70 mt-1 max-w-xl">
+            Post and manage real international eSIM packages. Users see these plans live on the Marketplace and can request instant activation.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-black text-xs shadow-lg transition cursor-pointer shrink-0"
+        >
+          <Plus size={16} />
+          <span>+ Post New eSIM Plan</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-16 bg-white rounded-3xl border border-slate-200">
+          <RefreshCw className="w-8 h-8 text-teal-600 animate-spin mx-auto mb-2" />
+          <p className="text-xs text-slate-500 font-bold">Loading active eSIM packages...</p>
+        </div>
+      ) : plans.length === 0 ? (
+        <div className="text-center py-16 px-6 bg-white rounded-3xl border border-slate-200 space-y-3 shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-600 text-2xl mx-auto font-black">
+            📶
+          </div>
+          <h3 className="text-base font-black text-slate-900">No eSIM packages currently posted</h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            You have not posted any real eSIM packages yet. Click the button below to add your first package with live pricing.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow transition cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>+ Add First eSIM Package</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {plans.map((p) => (
+            <div
+              key={p.id}
+              className="bg-white rounded-2xl p-5 border border-slate-200 hover:border-teal-400 shadow-sm transition space-y-3 relative group"
+            >
+              <button
+                type="button"
+                onClick={() => handleDelete(p.id)}
+                title="Delete Plan"
+                className="absolute top-4 right-4 p-2 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white transition cursor-pointer"
+              >
+                <Trash2 size={14} />
+              </button>
+
+              <div className="flex items-center gap-3 pr-10">
+                <span className="text-3xl">{p.flag || '📶'}</span>
+                <div>
+                  <h4 className="font-black text-slate-900 text-sm line-clamp-1">{p.title}</h4>
+                  <p className="text-[11px] text-slate-400 font-semibold">{p.country}</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-between text-xs border border-slate-100">
+                <span className="text-slate-500 font-bold">{p.data_amount} • {p.duration}</span>
+                <span className="font-black text-teal-700 text-sm">{p.price}</span>
+              </div>
+
+              <p className="text-xs text-slate-500 line-clamp-2">{p.desc || p.carrier}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add Plan Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-4 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setShowAddModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-xl bg-slate-100 text-slate-400 hover:text-slate-700 transition cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center text-2xl font-black shrink-0">
+                📶
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Post Real eSIM Package</h3>
+                <p className="text-xs text-slate-500">Live inventory for customers on NORODATA</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreate} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Country / Region</label>
+                  <input
+                    type="text"
+                    required
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    placeholder="e.g. United States, UK"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Flag Emoji</label>
+                  <input
+                    type="text"
+                    required
+                    value={flag}
+                    onChange={(e) => setFlag(e.target.value)}
+                    placeholder="e.g. 🇺🇸, 🇬🇧, 🌍"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Package Title</label>
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. USA 5GB (30 Days) 5G Data"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Data Amount</label>
+                  <input
+                    type="text"
+                    required
+                    value={dataAmount}
+                    onChange={(e) => setDataAmount(e.target.value)}
+                    placeholder="e.g. 5GB, 10GB"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Duration</label>
+                  <input
+                    type="text"
+                    required
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    placeholder="e.g. 30 Days"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Price (₦)</label>
+                  <input
+                    type="number"
+                    required
+                    min="100"
+                    step="50"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="e.g. 8500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Carrier / Network</label>
+                  <input
+                    type="text"
+                    value={carrier}
+                    onChange={(e) => setCarrier(e.target.value)}
+                    placeholder="e.g. AT&T / T-Mobile 5G"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Description (Optional)</label>
+                <input
+                  type="text"
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                  placeholder="e.g. Instant QR Code • Non-VoIP Data"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold transition shadow flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {saving ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                  <span>{saving ? 'Publishing...' : 'Publish Package'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Admin Component with Top Mode Switcher
 // ─────────────────────────────────────────────────────────────────────────────
 export function AdminEsimMessages() {
   const { user } = useAuth();
-  const [deskMode, setDeskMode] = useState<'foreign-numbers' | 'esim'>('foreign-numbers');
+  const [deskMode, setDeskMode] = useState<'foreign-numbers' | 'esim' | 'esim-plans'>('foreign-numbers');
   const [inquiries, setInquiries] = useState<EsimInquiry[]>([]);
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -858,7 +1165,19 @@ export function AdminEsimMessages() {
             }`}
           >
             <MessageSquare size={15} />
-            <span>📶 eSIM Customer Inquiries ({inquiries.length})</span>
+            <span>📶 eSIM Inquiries ({inquiries.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeskMode('esim-plans')}
+            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
+              deskMode === 'esim-plans'
+                ? 'bg-teal-600 text-white shadow-lg'
+                : 'bg-slate-800 text-slate-300 hover:text-white'
+            }`}
+          >
+            <Globe size={15} />
+            <span>🌐 Manage eSIM Plans</span>
           </button>
         </div>
         <span className="text-xs font-mono text-emerald-400 font-bold px-2">
@@ -868,6 +1187,8 @@ export function AdminEsimMessages() {
 
       {deskMode === 'foreign-numbers' ? (
         <ForeignNumbersAdminDesk user={user} adminEmail={adminEmail} />
+      ) : deskMode === 'esim-plans' ? (
+        <EsimPlansAdminSection adminEmail={adminEmail} />
       ) : (
         <>
           {/* Top Overview Banner */}

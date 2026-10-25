@@ -64,15 +64,17 @@ import { supabase } from '../lib/supabase';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 import { fetchWalletSnapshot, lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
 
-import ServicePurchase from './ServicePurchase';
-import PayBillsSection from './PayBillsSection';
-import AdminPanelSection from './AdminPanelSection';
-import ElectricitySection from './ElectricitySection';
-import BettingSection from './BettingSection';
-import CableTvSection from './CableTvSection';
-import ResellerPortal from './ResellerPortal';
-import TransactionHistory from './TransactionHistory';
-import { MarketplaceHome } from './Marketplace/MarketplaceHome';
+const ServicePurchase = React.lazy(() => import('./ServicePurchase'));
+const PayBillsSection = React.lazy(() => import('./PayBillsSection'));
+const AdminPanelSection = React.lazy(() => import('./AdminPanelSection'));
+const ElectricitySection = React.lazy(() => import('./ElectricitySection'));
+const BettingSection = React.lazy(() => import('./BettingSection'));
+const CableTvSection = React.lazy(() => import('./CableTvSection'));
+const ResellerPortal = React.lazy(() => import('./ResellerPortal'));
+const TransactionHistory = React.lazy(() => import('./TransactionHistory'));
+const MarketplaceHome = React.lazy(() =>
+  import('./Marketplace/MarketplaceHome').then((m) => ({ default: m.MarketplaceHome }))
+);
 
 // Admin WhatsApp contacts — edit labels/numbers here any time.
 const ADMIN_CONTACTS = [
@@ -474,26 +476,33 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               onSelectTx={setSelectedReceiptTx}
             />
           )}
-          {activeTab === 'marketplace' && (
-            <MarketplaceHome
-              currentUser={user}
-              user={user}
-              onBalanceUpdate={(newBal) => {
-                window.dispatchEvent(new CustomEvent('wallet-balance-updated', { detail: { balance: newBal } }));
-              }}
-            />
-          )}
-          {activeTab === 'buy-data' && <ServicePurchase type="data" />}
-          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
-          {activeTab === 'electricity' && <ElectricitySection />}
-          {activeTab === 'cable' && <CableTvSection />}
-          {activeTab === 'betting' && <BettingSection />}
-          {activeTab === 'reseller' && <ResellerPortal />}
-          {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
-          {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
-          {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
-          {activeTab === 'settings' && <SettingsSection user={user} />}
-          {activeTab === 'admin' && <AdminPanelSection />}
+          <React.Suspense fallback={
+            <div className="flex flex-col items-center justify-center py-24 space-y-3">
+              <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs text-slate-500 font-semibold">Loading section...</p>
+            </div>
+          }>
+            {activeTab === 'marketplace' && (
+              <MarketplaceHome
+                currentUser={user}
+                user={user}
+                onBalanceUpdate={(newBal) => {
+                  window.dispatchEvent(new CustomEvent('wallet-balance-updated', { detail: { balance: newBal } }));
+                }}
+              />
+            )}
+            {activeTab === 'buy-data' && <ServicePurchase type="data" />}
+            {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
+            {activeTab === 'electricity' && <ElectricitySection />}
+            {activeTab === 'cable' && <CableTvSection />}
+            {activeTab === 'betting' && <BettingSection />}
+            {activeTab === 'reseller' && <ResellerPortal />}
+            {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
+            {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
+            {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
+            {activeTab === 'settings' && <SettingsSection user={user} />}
+            {activeTab === 'admin' && <AdminPanelSection />}
+          </React.Suspense>
         </main>
       </div>
 
