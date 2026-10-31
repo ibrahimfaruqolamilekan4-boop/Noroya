@@ -1,9 +1,59 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  
+  <!-- Homepage -->
   <url>
     <loc>https://noroya.vercel.app/</loc>
-    <lastmod>2026-08-05</lastmod>
+    <lastmod>2026-10-30</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://noroya.vercel.app/icons/icon-512.png</image:loc>
+      <image:title>NORODATA - Automated VTU Portal &amp; Digital Marketplace in Nigeria</image:title>
+      <image:caption>Instant MTN, Airtel, Glo data, foreign virtual numbers for OTP, and travel eSIMs.</image:caption>
+    </image:image>
   </url>
+
+  <!-- Digital Marketplace (Foreign Numbers & Accounts) -->
+  <url>
+    <loc>https://noroya.vercel.app/#marketplace</loc>
+    <lastmod>2026-10-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Telecommunication & Utility Services -->
+  <url>
+    <loc>https://noroya.vercel.app/#services</loc>
+    <lastmod>2026-10-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Live Pricing & Network Plans -->
+  <url>
+    <loc>https://noroya.vercel.app/#prices</loc>
+    <lastmod>2026-10-30</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Platform Features & Automated Failsafe Refund -->
+  <url>
+    <loc>https://noroya.vercel.app/#features</loc>
+    <lastmod>2026-10-30</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Frequently Asked Questions -->
+  <url>
+    <loc>https://noroya.vercel.app/#faq</loc>
+    <lastmod>2026-10-30</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.75</priority>
+  </url>
+
 </urlset>
