@@ -1153,6 +1153,57 @@ async function startServer() {
 
       const currentBalance = Number(profile.wallet_balance || 0);
 
+      // STEP 3.2: Verify chosen plan exists in vtu_plans with is_active = true BEFORE charging
+      let vtuPlan: any = null;
+      if (finalType === "data" && finalPlan) {
+        try {
+          const { data: vp } = await supabase
+            .from('vtu_plans')
+            .select('*')
+            .eq('provider_plan_id', String(finalPlan))
+            .maybeSingle();
+
+          if (vp) {
+            vtuPlan = vp;
+          } else {
+            const { data: vpAlt } = await supabase
+              .from('vtu_plans')
+              .select('*')
+              .or(id.eq. + pgSafeFilter(finalPlan) + ,provider_plan_id.eq. + pgSafeFilter(finalPlan))
+              .maybeSingle();
+            if (vpAlt) vtuPlan = vpAlt;
+          }
+        } catch (vtuErr: any) {
+          console.warn("[vtu_plans query warning]:", vtuErr.message);
+        }
+
+        if (vtuPlan) {
+          if (!vtuPlan.is_active) {
+            return res.status(400).json({
+              error: "This plan is no longer available. Please refresh and choose another."
+            });
+          }
+          // STEP 3.1: The purchase must send provider_plan_id exactly as stored in vtu_plans
+          finalPlan = vtuPlan.provider_plan_id;
+          if (vtuPlan.price_to_user && Number(vtuPlan.price_to_user) > 0) {
+            finalAmount = Number(vtuPlan.price_to_user);
+          }
+        } else {
+          // Check if it was explicitly marked inactive
+          const { data: deactPlan } = await supabase
+            .from('vtu_plans')
+            .select('provider_plan_id, is_active')
+            .eq('is_active', false)
+            .eq('provider_plan_id', String(finalPlan))
+            .maybeSingle();
+          if (deactPlan) {
+            return res.status(400).json({
+              error: "This plan is no longer available. Please refresh and choose another."
+            });
+          }
+        }
+      }
+
       // 2. Resolve original Bigisub plan code and network code mappings dynamically
       let resolvedPlanCode = finalPlan;
       let dbPlan: any = null;
@@ -1317,6 +1368,8 @@ async function startServer() {
         });
 
         apiResponseData = result.raw;
+        // STEP 4: Server audit log line for every purchase
+        console.log([VTU PURCHASE AUDIT] user:  + pgUuid + , network:  + finalNetwork + , provider_plan_id:  + resolvedPlanCode + , provider:  + chosenProvider + , response:, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
@@ -1859,6 +1912,166 @@ async function startServer() {
   // ============================================================================
 
   // 1. Automated Plan Generator: Processes and maps/upserts plans directly from Bigisub API payload
+  // Step 2.4: Admin VTU Plans API (No-Cache, Active Plans Only)
+  app.get("/api/admin/fetch-vtu-plans", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    try {
+      const { data, error } = await supabase
+        .from("vtu_plans")
+        .select("*")
+        .eq("is_active", true)
+        .order("network", { ascending: true })
+        .order("price_to_user", { ascending: true });
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ plans: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Step 2.3: Admin Sync Plans From Provider API
+  app.post("/api/admin/sync-vtu-plans", async (req, res) => {
+    try {
+      let mozoKey = process.env.MOZOSUBZ_API_KEY || "";
+      let nifexKey = process.env.NIFEX_API_KEY || "";
+      try {
+        const { data: secrets } = await supabase.from("provider_secrets").select("identifier, secret");
+        if (secrets && Array.isArray(secrets)) {
+          for (const s of secrets) {
+            if (s.identifier === "mozosubz_api_key" && s.secret) mozoKey = s.secret.trim();
+            if (s.identifier === "nifex_api_key" && s.secret) nifexKey = s.secret.trim();
+          }
+        }
+      } catch (_) {}
+
+      const livePlans: any[] = [];
+      const nowIso = new Date().toISOString();
+
+      if (mozoKey && mozoKey.length > 5) {
+        const MOZO_SERVICES = [
+          { id: "mtn_sme", network: "MTN" }, { id: "mtn_gifting", network: "MTN" },
+          { id: "mtn_datashare", network: "MTN" }, { id: "mtn_awoof", network: "MTN" },
+          { id: "mtn_awoof2", network: "MTN" }, { id: "glo_sme", network: "GLO" },
+          { id: "glo_data", network: "GLO" }, { id: "airtel_sme", network: "AIRTEL" },
+          { id: "airtel_gifting", network: "AIRTEL" }, { id: "etisalat_data", network: "9MOBILE" }
+        ];
+        for (const svc of MOZO_SERVICES) {
+          try {
+            const resp = await fetch(https://mozosubz.xyz/api/v1/data/plans?service= + svc.id, {
+              headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" }
+            });
+            const d: any = await resp.json().catch(() => ({}));
+            if (d && d.success && Array.isArray(d.plans)) {
+              for (const p of d.plans) {
+                const cost = Number(p.price || 0);
+                livePlans.push({
+                  network: svc.network,
+                  plan_name: p.name || (svc.network + " Plan"),
+                  provider_plan_id: String(p.id),
+                  provider_price: cost,
+                  price_to_user: Math.ceil(cost * 1.10),
+                  is_active: true,
+                  last_synced_at: nowIso,
+                  provider: "mozosubz",
+                  service: svc.id,
+                  validity: "30 Days"
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (nifexKey && nifexKey.length > 5) {
+        try {
+          const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
+          const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
+            headers: { "Authorization": Token  + cleanKey, "Content-Type": "application/json" }
+          });
+          const d: any = await resp.json().catch(() => ({}));
+          const list = Array.isArray(d.plans) ? d.plans : (Array.isArray(d) ? d : []);
+          for (const p of list) {
+            const rawNet = String(p.network || "MTN").toUpperCase();
+            const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
+            const cost = Number(p.price || 0);
+            livePlans.push({
+              network: net,
+              plan_name: p.plan_name || (net + " Data"),
+              provider_plan_id: String(p.plan_id ?? p.pId ?? p.id),
+              provider_price: cost,
+              price_to_user: Math.ceil(cost * 1.10),
+              is_active: true,
+              last_synced_at: nowIso,
+              provider: "nifex",
+              service: p.type || "DATA",
+              validity: p.validity || "30 Days"
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (livePlans.length === 0) {
+        return res.status(400).json({ success: false, error: "No plans retrieved from providers. Please verify credentials." });
+      }
+
+      const { data: existingRows } = await supabase.from("vtu_plans").select("provider_plan_id, price_to_user, is_active");
+      const existingMap = new Map();
+      if (existingRows) {
+        for (const row of existingRows) existingMap.set(row.provider_plan_id, row);
+      }
+
+      let added = 0;
+      let updated = 0;
+      const upsertRows = livePlans.map((p) => {
+        const ext = existingMap.get(p.provider_plan_id);
+        if (ext) {
+          updated++;
+          return { ...p, price_to_user: ext.price_to_user > 0 ? ext.price_to_user : p.price_to_user };
+        } else {
+          added++;
+          return p;
+        }
+      });
+
+      const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
+      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
+
+      const liveSet = new Set(livePlans.map(p => p.provider_plan_id));
+      let deactivated = 0;
+      if (existingRows) {
+        const missing = existingRows.filter(r => r.is_active && !liveSet.has(r.provider_plan_id)).map(r => r.provider_plan_id);
+        if (missing.length > 0) {
+          const { error: deactErr } = await supabase.from("vtu_plans").update({ is_active: false, last_synced_at: nowIso }).in("provider_plan_id", missing);
+          if (!deactErr) deactivated = missing.length;
+        }
+      }
+
+      return res.json({ success: true, added, updated, deactivated, total: livePlans.length });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Step 4: Admin Failure Log Feed API
+  app.get("/api/admin/failure-log", async (req, res) => {
+    try {
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("vtu_failure_log")
+        .select("*")
+        .gte("created_at", yesterday)
+        .order("created_at", { ascending: false });
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ failures: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/admin/generate-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -3400,6 +3613,8 @@ if (Object.keys(updateData).length <= 1) {
           apiKey:           providerApiKey,
         });
         apiResponseData = result.raw;
+        // STEP 4: Server audit log line for every purchase
+        console.log([VTU PURCHASE AUDIT] user:  + pgUuid + , network:  + finalNetwork + , provider_plan_id:  + resolvedPlanCode + , provider:  + chosenProvider + , response:, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";

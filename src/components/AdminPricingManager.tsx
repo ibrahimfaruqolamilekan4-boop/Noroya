@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import AdminFailureLog from './AdminFailureLog';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,8 @@ export default function AdminPricingManager() {
     type: 'all'
   });
   const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
+  const [isSyncingFromProvider, setIsSyncingFromProvider] = useState(false);
+  const [showFailureLogs, setShowFailureLogs] = useState(false);
 
   // ── Provider API Key Management ───────────────────────────────────────────
   const [apiKeyInput,     setApiKeyInput]     = useState('');
@@ -315,6 +318,23 @@ export default function AdminPricingManager() {
   }, []);
 
   // ── Fetch live plans from selected provider ────────────────────────────────
+  // Step 2.3: Sync Plans from Provider handler
+  const handleSyncFromProvider = useCallback(async () => {
+    setIsSyncingFromProvider(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/sync-vtu-plans', { method: 'POST', headers });
+      const result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.error || 'Failed to sync');
+      toast.success('Sync Complete! Added: ' + result.added + ', Updated: ' + result.updated + ', Deactivated: ' + result.deactivated, { duration: 6000 });
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error('Sync error: ' + (err.message || err));
+    } finally {
+      setIsSyncingFromProvider(false);
+    }
+  }, []);
+
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     try {
@@ -1262,6 +1282,15 @@ export default function AdminPricingManager() {
           </div>
         </div>
       )}
+
+        {/* Step 4: Admin Failure Log Monitor */}
+        <div className="mt-8 pt-6 border-t border-slate-800">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Diagnostic & Failure Monitoring</h3>
+            <button onClick={() => setShowFailureLogs(prev => !prev)} className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition">{showFailureLogs ? 'Hide Failure Log' : 'Show 24h Failure Log'}</button>
+          </div>
+          {showFailureLogs && <AdminFailureLog />}
+        </div>
     </div>
   );
 }
