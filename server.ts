@@ -1169,7 +1169,7 @@ async function startServer() {
             const { data: vpAlt } = await supabase
               .from('vtu_plans')
               .select('*')
-              .or(id.eq. + pgSafeFilter(finalPlan) + ,provider_plan_id.eq. + pgSafeFilter(finalPlan))
+              .or(`id.eq.${pgSafeFilter(finalPlan)},provider_plan_id.eq.${pgSafeFilter(finalPlan)}`)
               .maybeSingle();
             if (vpAlt) vtuPlan = vpAlt;
           }
@@ -1369,7 +1369,7 @@ async function startServer() {
 
         apiResponseData = result.raw;
         // STEP 4: Server audit log line for every purchase
-        console.log([VTU PURCHASE AUDIT] user:  + pgUuid + , network:  + finalNetwork + , provider_plan_id:  + resolvedPlanCode + , provider:  + chosenProvider + , response:, JSON.stringify(result.raw || result.error || ""));
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
@@ -1960,7 +1960,7 @@ async function startServer() {
         ];
         for (const svc of MOZO_SERVICES) {
           try {
-            const resp = await fetch(https://mozosubz.xyz/api/v1/data/plans?service= + svc.id, {
+            const resp = await fetch(`https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}`, {
               headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" }
             });
             const d: any = await resp.json().catch(() => ({}));
@@ -1989,7 +1989,7 @@ async function startServer() {
         try {
           const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
           const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
-            headers: { "Authorization": Token  + cleanKey, "Content-Type": "application/json" }
+            headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" }
           });
           const d: any = await resp.json().catch(() => ({}));
           const list = Array.isArray(d.plans) ? d.plans : (Array.isArray(d) ? d : []);
@@ -3614,7 +3614,7 @@ if (Object.keys(updateData).length <= 1) {
         });
         apiResponseData = result.raw;
         // STEP 4: Server audit log line for every purchase
-        console.log([VTU PURCHASE AUDIT] user:  + pgUuid + , network:  + finalNetwork + , provider_plan_id:  + resolvedPlanCode + , provider:  + chosenProvider + , response:, JSON.stringify(result.raw || result.error || ""));
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
