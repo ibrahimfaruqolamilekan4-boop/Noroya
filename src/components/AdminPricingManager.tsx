@@ -831,6 +831,12 @@ export default function AdminPricingManager() {
               {showKeyConfig ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
 
+            <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+              {isSyncingFromProvider ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
+            </button>
+
             <button onClick={fetchPlans} disabled={loading}
               className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
@@ -1104,7 +1110,13 @@ export default function AdminPricingManager() {
           <p className="text-sm text-slate-400 text-center max-w-xs mb-6">
             Click "Fetch Plans" to pull live wholesale prices directly from {selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} and set your markup.
           </p>
-          <button onClick={fetchPlans} disabled={loading}
+          <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+              {isSyncingFromProvider ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
+            </button>
+
+            <button onClick={fetchPlans} disabled={loading}
             className="flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50">
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
             {loading ? 'Fetching…' : `Fetch Plans from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`}

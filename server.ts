@@ -1111,7 +1111,7 @@ async function startServer() {
     }
 
     // Dynamic extraction of Plan ID
-    const finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
+    let finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
 
     // Determine the type: airtime or data
     let finalType = requestType || type;
@@ -1244,6 +1244,7 @@ async function startServer() {
 
       // 3. Look up plan config + chosen provider from services_config
       let planConfig: any = null;
+      let vtuPlan: any = null;
       try {
         const { data: pc } = await supabase
           .from('services_config')
@@ -1363,13 +1364,13 @@ async function startServer() {
           amount:           finalAmount,
           planId:           resolvedPlanCode,
           providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
           apiKey:           providerApiKey,
         });
 
         apiResponseData = result.raw;
         // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
@@ -3468,7 +3469,7 @@ if (Object.keys(updateData).length <= 1) {
     
     const finalType = requestType || type || "data";
     const finalNetwork = networkId || network;
-    const finalPlan = planId || plan;
+    let finalPlan = planId || plan;
     const finalPhone = phone || phoneNumber;
     let finalAmount = Number(amount !== undefined ? amount : req.body.amount);
     if (isNaN(finalAmount) || finalAmount <= 0) return res.status(400).json({ error: "Invalid amount. Must be greater than zero." });
@@ -3513,6 +3514,7 @@ if (Object.keys(updateData).length <= 1) {
       // Resolve the plan against services_config -- frontend may send either a composite
       // mozosubz_plan_id, a raw bigisub_identifier_id, or (legacy) a plan display name.
       let planConfig: any = null;
+      let vtuPlan: any = null;
       if (finalType === 'data' && finalPlan) {
         try {
           const safePlan = pgSafeFilter(finalPlan);
@@ -3609,12 +3611,12 @@ if (Object.keys(updateData).length <= 1) {
           amount:           finalAmount,
           planId:           resolvedPlanCode,
           providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
           apiKey:           providerApiKey,
         });
         apiResponseData = result.raw;
         // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
