@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import AdminFailureLog from './AdminFailureLog';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,8 @@ export default function AdminPricingManager() {
     type: 'all'
   });
   const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
+  const [isSyncingFromProvider, setIsSyncingFromProvider] = useState(false);
+  const [showFailureLogs, setShowFailureLogs] = useState(false);
 
   // ── Provider API Key Management ───────────────────────────────────────────
   const [apiKeyInput,     setApiKeyInput]     = useState('');
@@ -315,6 +318,23 @@ export default function AdminPricingManager() {
   }, []);
 
   // ── Fetch live plans from selected provider ────────────────────────────────
+  // Step 2.3: Sync Plans from Provider handler
+  const handleSyncFromProvider = useCallback(async () => {
+    setIsSyncingFromProvider(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/sync-vtu-plans', { method: 'POST', headers });
+      const result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.error || 'Failed to sync');
+      toast.success('Sync Complete! Added: ' + result.added + ', Updated: ' + result.updated + ', Deactivated: ' + result.deactivated, { duration: 6000 });
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error('Sync error: ' + (err.message || err));
+    } finally {
+      setIsSyncingFromProvider(false);
+    }
+  }, []);
+
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     try {
@@ -811,6 +831,12 @@ export default function AdminPricingManager() {
               {showKeyConfig ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
 
+            <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+              {isSyncingFromProvider ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
+            </button>
+
             <button onClick={fetchPlans} disabled={loading}
               className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
@@ -1084,7 +1110,13 @@ export default function AdminPricingManager() {
           <p className="text-sm text-slate-400 text-center max-w-xs mb-6">
             Click "Fetch Plans" to pull live wholesale prices directly from {selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} and set your markup.
           </p>
-          <button onClick={fetchPlans} disabled={loading}
+          <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
+              className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
+              {isSyncingFromProvider ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
+            </button>
+
+            <button onClick={fetchPlans} disabled={loading}
             className="flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50">
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
             {loading ? 'Fetching…' : `Fetch Plans from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`}
@@ -1262,6 +1294,15 @@ export default function AdminPricingManager() {
           </div>
         </div>
       )}
+
+        {/* Step 4: Admin Failure Log Monitor */}
+        <div className="mt-8 pt-6 border-t border-slate-800">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Diagnostic & Failure Monitoring</h3>
+            <button onClick={() => setShowFailureLogs(prev => !prev)} className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition">{showFailureLogs ? 'Hide Failure Log' : 'Show 24h Failure Log'}</button>
+          </div>
+          {showFailureLogs && <AdminFailureLog />}
+        </div>
     </div>
   );
 }
