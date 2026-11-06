@@ -1,1266 +1,1207 @@
-import React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Zap, 
-  Smartphone, 
-  Tv, 
-  Printer, 
-  Eye, 
-  EyeOff, 
-  ChevronRight, 
-  ChevronDown, 
-  ChevronUp, 
-  Menu, 
-  X, 
-  HelpCircle, 
-  Star, 
-  Copy, 
-  Check, 
-  ArrowRight,
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Zap,
+  Smartphone,
+  Wifi,
+  Tv,
+  Lightbulb,
+  PhoneCall,
+  CreditCard,
+  CheckCircle2,
   ShieldCheck,
-  TrendingUp,
-  Percent,
-  History,
-  FileCheck2,
-  DollarSign,
-  Plus,
-  Minus,
+  Headphones,
+  RotateCcw,
+  ArrowRight,
+  ChevronDown,
+  Menu,
+  X,
   Sparkles,
-  Zap as ZapIcon
+  ExternalLink,
+  MessageCircle,
+  Send,
+  HelpCircle,
+  TrendingDown,
+  Layers,
+  Check,
+  Copy
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { MarketplaceSection } from './Home/MarketplaceSection';
+import { supabase } from '../lib/supabase';
 
-export default function LandingPage({ onAuth }: { onAuth: () => void }) {
-  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
-  const [balanceVisible, setBalanceVisible] = React.useState(true);
-  const [activeNetworkTab, setActiveNetworkTab] = React.useState<'mtn' | 'glo' | 'airtel' | '9mobile'>('mtn');
-  const [activeCableTab, setActiveCableTab] = React.useState<'dstv' | 'gotv' | 'startimes'>('dstv');
-  const [faqOpenIdx, setFaqOpenIdx] = React.useState<number | null>(null);
-  const [depositModalOpen, setDepositModalOpen] = React.useState(false);
-  const [copiedText, setCopiedText] = React.useState<string | null>(null);
+// Support Contacts (Preserved real numbers from system configuration)
+const SUPPORT_CONTACTS = [
+  { label: 'Admin Desk 1', number: '2348143889102' },
+  { label: 'Admin Desk 2', number: '2347034519634' },
+];
+const TELEGRAM_URL = 'https://t.me/NORODATA_data_group';
 
-  const [pinNetwork, setPinNetwork] = React.useState<'mtn' | 'glo' | 'airtel' | '9mobile'>('mtn');
-  const [pinDenom, setPinDenom] = React.useState<number>(100);
-  const [pinQty, setPinQty] = React.useState<number>(10);
+// Fallback pricing data in case API/database is unreachable
+const FALLBACK_PLANS: Record<string, Array<{ name: string; validity: string; price: number; type: string }>> = {
+  mtn: [
+    { name: '1.0 GB SME Data', validity: '30 Days', price: 400, type: 'SME' },
+    { name: '2.0 GB SME Data', validity: '30 Days', price: 800, type: 'SME' },
+    { name: '3.0 GB SME Data', validity: '30 Days', price: 1200, type: 'SME' },
+    { name: '5.0 GB SME Data', validity: '30 Days', price: 2000, type: 'SME' },
+    { name: '10.0 GB SME Data', validity: '30 Days', price: 4000, type: 'SME' },
+    { name: '1.0 GB Corporate Gifting', validity: '30 Days', price: 420, type: 'CG' },
+  ],
+  glo: [
+    { name: '1.0 GB Corporate Gifting', validity: '30 Days', price: 380, type: 'CG' },
+    { name: '2.0 GB Corporate Gifting', validity: '30 Days', price: 760, type: 'CG' },
+    { name: '3.0 GB Corporate Gifting', validity: '30 Days', price: 1140, type: 'CG' },
+    { name: '5.0 GB Corporate Gifting', validity: '30 Days', price: 1900, type: 'CG' },
+    { name: '10.0 GB Corporate Gifting', validity: '30 Days', price: 3800, type: 'CG' },
+  ],
+  airtel: [
+    { name: '1.0 GB Corporate Gifting', validity: '30 Days', price: 410, type: 'CG' },
+    { name: '2.0 GB Corporate Gifting', validity: '30 Days', price: 820, type: 'CG' },
+    { name: '3.0 GB Corporate Gifting', validity: '30 Days', price: 1230, type: 'CG' },
+    { name: '5.0 GB Corporate Gifting', validity: '30 Days', price: 2050, type: 'CG' },
+    { name: '10.0 GB Corporate Gifting', validity: '30 Days', price: 4100, type: 'CG' },
+  ],
+  '9mobile': [
+    { name: '1.0 GB Corporate Gifting', validity: '30 Days', price: 390, type: 'CG' },
+    { name: '2.0 GB Corporate Gifting', validity: '30 Days', price: 780, type: 'CG' },
+    { name: '3.0 GB Corporate Gifting', validity: '30 Days', price: 1170, type: 'CG' },
+    { name: '5.0 GB Corporate Gifting', validity: '30 Days', price: 1950, type: 'CG' },
+  ],
+};
 
-  const [livePlans, setLivePlans] = React.useState<any[]>([]);
-  const [liveCablePlans, setLiveCablePlans] = React.useState<any[]>([]);
-  
-  React.useEffect(() => {
-    fetch('/api/services/data').then(r => r.ok ? r.json() : []).then(data => {
-      if (Array.isArray(data)) setLivePlans(data);
-    }).catch(() => {});
-    fetch('/api/services/all').then(r => r.ok ? r.json() : []).then(data => {
-      if (Array.isArray(data)) {
-        setLiveCablePlans(data.filter((s: any) => s.is_active && s.service_type === 'cable'));
+interface LandingPageProps {
+  onAuth: (initialMode?: 'login' | 'signup') => void;
+}
+
+export default function LandingPage({ onAuth }: LandingPageProps) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeNetworkTab, setActiveNetworkTab] = useState<'mtn' | 'glo' | 'airtel' | '9mobile'>('mtn');
+  const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(0);
+  const [copiedAccount, setCopiedAccount] = useState(false);
+
+  // Pricing State
+  const [livePlans, setLivePlans] = useState<Record<string, Array<{ name: string; validity: string; price: number; type: string }>>>(FALLBACK_PLANS);
+  const [plansLoading, setPlansLoading] = useState(true);
+  const [plansError, setPlansError] = useState<string | null>(null);
+
+  // Fetch Live Public Plans (Strictly retail prices, NEVER provider cost prices)
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPublicPlans() {
+      try {
+        setPlansLoading(true);
+        setPlansError(null);
+
+        // 1. Try public view vtu_plans_public or vtu_plans via Supabase
+        const { data: sbPlans, error: sbErr } = await supabase
+          .from('vtu_plans_public')
+          .select('network, plan_name, price_to_user, validity, service')
+          .eq('is_active', true)
+          .order('price_to_user', { ascending: true });
+
+        if (!sbErr && sbPlans && sbPlans.length > 0) {
+          const categorized: Record<string, Array<{ name: string; validity: string; price: number; type: string }>> = {
+            mtn: [],
+            glo: [],
+            airtel: [],
+            '9mobile': [],
+          };
+
+          for (const p of sbPlans) {
+            const netKey = String(p.network || '').toLowerCase().trim();
+            const targetKey = netKey.includes('mtn') ? 'mtn' : netKey.includes('glo') ? 'glo' : netKey.includes('airtel') ? 'airtel' : netKey.includes('9mobile') ? '9mobile' : null;
+            if (targetKey && categorized[targetKey]) {
+              categorized[targetKey].push({
+                name: p.plan_name || 'Data Plan',
+                validity: p.validity || '30 Days',
+                price: Number(p.price_to_user || 0),
+                type: p.service || 'Data',
+              });
+            }
+          }
+
+          if (isMounted && Object.values(categorized).some(arr => arr.length > 0)) {
+            setLivePlans(categorized);
+            setPlansLoading(false);
+            return;
+          }
+        }
+
+        // 2. Fallback to /api/services/data endpoint if view is not yet created
+        const apiRes = await fetch('/api/services/data');
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            const categorized: Record<string, Array<{ name: string; validity: string; price: number; type: string }>> = {
+              mtn: [],
+              glo: [],
+              airtel: [],
+              '9mobile': [],
+            };
+
+            for (const p of apiData) {
+              const netKey = String(p.provider_or_network || p.network || '').toLowerCase().trim();
+              const targetKey = netKey.includes('mtn') ? 'mtn' : netKey.includes('glo') ? 'glo' : netKey.includes('airtel') ? 'airtel' : netKey.includes('9mobile') ? '9mobile' : null;
+              if (targetKey && categorized[targetKey]) {
+                categorized[targetKey].push({
+                  name: p.item_name || p.name || 'Data Plan',
+                  validity: p.validity_days || p.duration || '30 Days',
+                  price: Number(p.selling_price || p.price_to_user || 0),
+                  type: p.plan_category || 'Data',
+                });
+              }
+            }
+
+            if (isMounted && Object.values(categorized).some(arr => arr.length > 0)) {
+              setLivePlans(categorized);
+              setPlansLoading(false);
+              return;
+            }
+          }
+        }
+
+        // 3. Fallback to default catalog if both network queries return empty
+        if (isMounted) {
+          setLivePlans(FALLBACK_PLANS);
+          setPlansLoading(false);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setLivePlans(FALLBACK_PLANS);
+          setPlansError('Showing standard active catalog while live network synchronization refreshes.');
+          setPlansLoading(false);
+        }
       }
-    }).catch(() => {});
+    }
+
+    loadPublicPlans();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const handleCopy = (text: string, label: string) => {
+  const handleCopyAccount = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopiedText(label);
-    setTimeout(() => setCopiedText(null), 2000);
+    setCopiedAccount(true);
+    setTimeout(() => setCopiedAccount(false), 2000);
   };
 
-  const networkKeyMap: Record<string, string> = { MTN: 'mtn', GLO: 'glo', AIRTEL: 'airtel', '9MOBILE': '9mobile' };
-  const planRates: Record<string, Array<{ size: string; duration: string; type: string; price: string }>> = { mtn: [], glo: [], airtel: [], '9mobile': [] };
-  livePlans
-    .slice()
-    .sort((a: any, b: any) => (a.selling_price || 0) - (b.selling_price || 0))
-    .forEach((p: any) => {
-      const key = networkKeyMap[String(p.network || p.provider_or_network || '').toUpperCase()];
-      if (key && planRates[key].length < 6) {
-        planRates[key].push({
-          size: p.item_name || p.name || 'Data Plan',
-          duration: p.validity_days || '-',
-          type: p.plan_category || 'Data',
-          price: `₦${Number(p.selling_price || 0).toLocaleString()}`
-        });
-      }
-    });
+  const closeMobileMenu = () => {
+    setMobileMenuOpen(false);
+  };
 
-  const cablePlans: Record<string, Array<{ name: string; price: string; channels: string }>> = { dstv: [], gotv: [], startimes: [] };
-  liveCablePlans.forEach((p: any) => {
-    const prov = String(p.provider_or_network || '').toUpperCase();
-    const key = prov.includes('DSTV') ? 'dstv' : prov.includes('GOTV') ? 'gotv' : prov.includes('STARTIMES') ? 'startimes' : null;
-    if (key) {
-      cablePlans[key].push({
-        name: p.item_name || p.name || 'Cable Plan',
-        price: `₦${Number(p.selling_price || 0).toLocaleString()} / month`,
-        channels: p.metadata?.channels || ''
-      });
-    }
-  });
-
-  const faqs = [
-    {
-      q: "How does wallet funding work on NORODATA?",
-      a: "When you wish to fund your wallet, we assign you a personalized, automated transfer account. Simple bank transfers to this account credit your NORODATA wallet balance automatically in under 10 seconds, with zero human intervention."
-    },
-    {
-      q: "Are there any hidden costs or fees?",
-      a: "None at all. We believe in complete transparency. Wallet funding incurs only the standard nominal gateway charge of ₦50. We display all discount rates and pricing structures upfront so you know exactly what you are paying."
-    },
-    {
-      q: "Which networks can I recharge?",
-      a: "We support instant, automated airtime top-ups for MTN, Airtel, Glo, and 9mobile networks. Each transaction is monitored by our active confirmation engine to ensure immediate dispatch."
-    },
-    {
-      q: "What kinds of internet data bundles are available?",
-      a: "We offer heavily discounted data packages across all networks, including SME data, Corporate Gifting (CG), Gifting, and special promo bundles. Validity ranges from 1 to 30 days depending on your selection."
-    },
-    {
-      q: "Can I easily renew my television package?",
-      a: "Yes! Simply input your smartcard or IUC number, let our system auto-verify the customer name to ensure it's correct, and select your preferred plan for GOtv, DStv, or StarTimes. Activation completes in seconds."
-    },
-    {
-      q: "Which regional electricity companies are integrated?",
-      a: "We are directly integrated with all primary Nigerian electricity boards (IKEDC, EKEDC, AEDC, KEDCO, PHED, JED, EEDC, KAEDCO, BEDC, YEDC). Prepaid tokens are generated and shown on your screen instantly."
-    },
-    {
-      q: "Where do I find my prepaid electricity token?",
-      a: "As soon as your payment is processed, the prepaid token is rendered directly on your screen. We also deliver it to your registered email and archive it permanently in your transaction history for quick lookup."
-    },
-    {
-      q: "Is there a bulk recharge pin generator?",
-      a: "Indeed! Resellers and physical retail vendors can utilize our bulk pin generator to print high-quality recharge cards of any major network. Select denominations from ₦100 to ₦500 and print in custom batches."
-    },
-    {
-      q: "What happens if my transaction is unsuccessful?",
-      a: "Our system operates on a 100% automated failsafe. If a telecom network partner fails to deliver your airtime or data, our smart contract engine automatically reverses the full purchase amount back to your wallet balance."
-    }
-  ];
+  const currentYear = new Date().getFullYear();
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 overflow-x-hidden relative font-sans selection:bg-emerald-600 selection:text-white">
+    <div className="min-h-screen text-slate-900 overflow-x-hidden font-sans antialiased selection:bg-[#3B7A3B] selection:text-white" style={{ backgroundColor: '#EDEDE9' }}>
       
-      {/* NAVBAR */}
-      <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-xl border-b border-slate-100/50">
+      {/* ========================================================================= */}
+      {/* SECTION 1: NAVIGATION BAR */}
+      {/* ========================================================================= */}
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#EDEDE9]/90 backdrop-blur-md border-b border-[#E2E2DC] transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-20 items-center">
+          <div className="flex justify-between items-center h-20">
             
-            {/* Logo */}
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="flex items-center gap-3 cursor-pointer group" 
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            {/* Brand Logo */}
+            <a 
+              href="#" 
+              onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+              className="flex items-center gap-3 cursor-pointer group"
+              aria-label="NORODATA Home"
             >
-              <div className="w-11 h-11 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/30 group-hover:shadow-emerald-500/50 transition-all">
-                <Sparkles className="w-6 h-6 text-white" />
+              <div 
+                className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform" 
+                style={{ backgroundColor: '#132613' }}
+              >
+                <span className="text-xl font-black text-[#B5D430]">N</span>
               </div>
-              <span className="text-2xl font-black tracking-tight text-slate-900">NORODATA</span>
-            </motion.div>
-            
-            {/* Desktop Nav */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.1 }}
-              className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-600"
-            >
-              <a href="#services" className="hover:text-emerald-600 transition-colors">Services</a>
-              <button onClick={onAuth} className="hover:text-emerald-600 transition-colors cursor-pointer flex items-center gap-1 font-semibold">🛍️ Marketplace</button>
-              <a href="#prices" className="hover:text-emerald-600 transition-colors">Prices</a>
-              <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
-              <a href="#faq" className="hover:text-emerald-600 transition-colors">FAQ</a>
-            </motion.div>
+              <div className="flex flex-col">
+                <span className="text-2xl font-black tracking-tight leading-none" style={{ color: '#132613' }}>
+                  NORODATA
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#3B7A3B]">
+                  VTU & Digital Utilities
+                </span>
+              </div>
+            </a>
 
-            {/* Desktop Buttons */}
-            <motion.div 
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.2 }}
-              className="hidden md:flex items-center gap-3"
-            >
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="text-slate-700 hover:text-emerald-600 font-bold text-sm px-4 py-2.5 transition-all"
+            {/* Desktop Navigation Links */}
+            <div className="hidden md:flex items-center gap-8">
+              <a 
+                href="#services" 
+                className="text-sm font-semibold text-slate-700 hover:text-[#3B7A3B] transition-colors"
               >
-                Log in
-              </motion.button>
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-sm px-6 py-3.5 rounded-2xl hover:from-emerald-600 hover:to-green-700 transition-all shadow-lg shadow-emerald-500/30 flex items-center gap-2"
+                Services
+              </a>
+              <a 
+                href="#how-it-works" 
+                className="text-sm font-semibold text-slate-700 hover:text-[#3B7A3B] transition-colors"
               >
-                Get Started <ArrowRight size={16} />
-              </motion.button>
-            </motion.div>
+                How It Works
+              </a>
+              <a 
+                href="#pricing" 
+                className="text-sm font-semibold text-slate-700 hover:text-[#3B7A3B] transition-colors"
+              >
+                Live Pricing
+              </a>
+              <a 
+                href="#faq" 
+                className="text-sm font-semibold text-slate-700 hover:text-[#3B7A3B] transition-colors"
+              >
+                FAQ
+              </a>
+            </div>
 
-            {/* Mobile Menu Button */}
-            <motion.button 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="md:hidden p-2.5 hover:bg-slate-100 rounded-2xl text-slate-800 transition-all" 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-            >
-              {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
-            </motion.button>
+            {/* Desktop Auth Buttons */}
+            <div className="hidden md:flex items-center gap-3">
+              <button
+                onClick={() => onAuth('login')}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold text-[#132613] hover:bg-slate-200/60 transition-colors"
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => onAuth('signup')}
+                className="px-6 py-2.5 rounded-xl text-sm font-bold text-white shadow-md hover:shadow-lg transition-all"
+                style={{ backgroundColor: '#3B7A3B' }}
+              >
+                Get Started
+              </button>
+            </div>
+
+            {/* Mobile Hamburger Toggle */}
+            <div className="flex md:hidden items-center">
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="p-2.5 rounded-xl bg-white/80 border border-[#E2E2DC] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#3B7A3B]"
+                aria-label="Toggle navigation menu"
+                aria-expanded={mobileMenuOpen}
+              >
+                {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+              </button>
+            </div>
+
           </div>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        <AnimatePresence>
+          {mobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="md:hidden bg-white border-b border-[#E2E2DC] px-4 pt-3 pb-6 space-y-4 shadow-xl"
+            >
+              <div className="flex flex-col space-y-3 font-semibold text-slate-800">
+                <a
+                  href="#services"
+                  onClick={closeMobileMenu}
+                  className="px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  Services
+                </a>
+                <a
+                  href="#how-it-works"
+                  onClick={closeMobileMenu}
+                  className="px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  How It Works
+                </a>
+                <a
+                  href="#pricing"
+                  onClick={closeMobileMenu}
+                  className="px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  Live Pricing
+                </a>
+                <a
+                  href="#faq"
+                  onClick={closeMobileMenu}
+                  className="px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  FAQ
+                </a>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex flex-col gap-2.5">
+                <button
+                  onClick={() => { closeMobileMenu(); onAuth('login'); }}
+                  className="w-full py-3 rounded-xl text-center text-sm font-bold text-[#132613] bg-slate-100 hover:bg-slate-200 transition-colors"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => { closeMobileMenu(); onAuth('signup'); }}
+                  className="w-full py-3 rounded-xl text-center text-sm font-bold text-white shadow-md transition-all"
+                  style={{ backgroundColor: '#3B7A3B' }}
+                >
+                  Get Started Free
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
-      {/* Mobile Menu */}
-      <AnimatePresence>
-        {isMenuOpen && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-20 inset-x-0 z-40 bg-white border-b border-slate-100 px-6 py-8 md:hidden shadow-xl"
-          >
-            <div className="flex flex-col gap-6 text-lg font-bold text-slate-800">
-              <a href="#services" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Services</a>
-              <button onClick={() => { onAuth(); setIsMenuOpen(false); }} className="text-left hover:text-emerald-600 py-1 transition-colors cursor-pointer flex items-center gap-2">🛍️ Marketplace</button>
-              <a href="#prices" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Prices</a>
-              <a href="#features" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">Features</a>
-              <a href="#faq" onClick={() => setIsMenuOpen(false)} className="hover:text-emerald-600 py-1 transition-colors">FAQ</a>
-              
-              <div className="h-[1px] bg-slate-100 my-2" />
-              
-              <div className="flex flex-col gap-3">
-                <button 
-                  onClick={() => { onAuth(); setIsMenuOpen(false); }}
-                  className="w-full bg-slate-100 text-slate-800 font-bold py-4 rounded-2xl text-center hover:bg-slate-200 transition-all"
-                >
-                  Log in
-                </button>
-                <button 
-                  onClick={() => { onAuth(); setIsMenuOpen(false); }}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold py-4 rounded-2xl text-center hover:from-emerald-600 hover:to-green-700 shadow-lg shadow-emerald-500/20 transition-all"
-                >
-                  Get Started →
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* HERO SECTION */}
-      <header className="pt-32 pb-24 md:pt-40 md:pb-32 px-4 sm:px-6 relative bg-gradient-to-b from-white via-emerald-50/30 to-white">
-        {/* Animated background elements */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-20 left-1/4 w-96 h-96 bg-emerald-200/20 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-emerald-100/10 rounded-full blur-3xl" />
-        </div>
-
-        <div className="max-w-7xl mx-auto grid lg:grid-cols-12 gap-16 items-center relative z-10">
+      {/* ========================================================================= */}
+      {/* SECTION 2: HERO */}
+      {/* ========================================================================= */}
+      <section className="pt-32 pb-20 md:pt-40 md:pb-28 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
           
-          {/* Left Column */}
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="lg:col-span-7 space-y-8 text-left"
-          >
+          {/* Left Hero Content */}
+          <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
             
-            {/* Badge */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full border border-emerald-200"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
-              Airtime • Data • Cable • Electricity • Pins
-            </motion.div>
-
-            {/* Heading */}
-            <motion.h1 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="text-5xl sm:text-7xl md:text-7xl font-black tracking-tight leading-[1.08] text-slate-900"
-            >
-              Smart payments.<br />
-              Delivered <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-green-600">instantly.</span>
-            </motion.h1>
-
-            {/* Description */}
-            <motion.p 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="text-lg md:text-xl text-slate-600 leading-relaxed max-w-2xl font-medium"
-            >
-              Fund your NORODATA wallet securely to recharge airtime, buy cheap data bundles, pay power bills, and renew TV subscriptions across Nigeria in under 5 seconds.
-            </motion.p>
-
-            {/* CTA Buttons */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="flex flex-col sm:flex-row gap-4 pt-4"
-            >
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ scale: 1.05, y: -2 }}
-                whileTap={{ scale: 0.95 }}
-                className="bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-lg px-8 py-5 rounded-2xl hover:from-emerald-600 hover:to-green-700 transition-all shadow-xl shadow-emerald-500/30 flex items-center justify-center gap-2"
-              >
-                Get Started Now <ArrowRight size={20} />
-              </motion.button>
-              <motion.a 
-                href="#prices"
-                whileHover={{ scale: 1.05 }}
-                className="bg-slate-100 hover:bg-slate-200/80 text-slate-800 font-bold text-lg px-8 py-5 rounded-2xl border border-slate-200 transition-all text-center flex items-center justify-center"
-              >
-                Check rates
-              </motion.a>
-            </motion.div>
-
-            {/* Checkmarks */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.4 }}
-              className="grid grid-cols-1 sm:grid-cols-3 gap-y-3 gap-x-6 pt-4 border-t border-slate-200"
-            >
-              <div className="flex items-center gap-2.5 text-sm font-semibold text-slate-700">
-                <Sparkles className="w-5 h-5 text-emerald-600" />
-                Direct wallet funding
-              </div>
-              <div className="flex items-center gap-2.5 text-sm font-semibold text-slate-700">
-                <ZapIcon className="w-5 h-5 text-emerald-600" />
-                Instant delivery
-              </div>
-              <div className="flex items-center gap-2.5 text-sm font-semibold text-slate-700">
-                <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                Auto-refunds
-              </div>
-            </motion.div>
-          </motion.div>
-
-          {/* Right Column: Wallet Card */}
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.6 }}
-            className="lg:col-span-5 relative"
-          >
-            
-            {/* Glow effect */}
-            <div className="absolute -inset-4 bg-gradient-to-r from-emerald-500 to-green-500 rounded-[3rem] blur-2xl opacity-15 -z-10" />
-
-            <div className="space-y-6">
-              
-              {/* Wallet Card */}
-              <motion.div 
-                whileHover={{ y: -4 }}
-                className="bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden border border-slate-800/50"
-              >
-                
-                {/* Background elements */}
-                <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-600/10 rounded-full blur-xl pointer-events-none" />
-                <div className="absolute -bottom-16 -left-16 w-52 h-52 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
-
-                {/* Header */}
-                <div className="flex justify-between items-center mb-6 relative z-10">
-                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Wallet Balance</span>
-                  <motion.button 
-                    onClick={() => setBalanceVisible(!balanceVisible)}
-                    whileHover={{ scale: 1.1 }}
-                    className="p-1.5 hover:bg-slate-800/80 rounded-lg text-slate-400 hover:text-emerald-400 transition-colors"
-                  >
-                    {balanceVisible ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </motion.button>
-                </div>
-
-                {/* Balance */}
-                <div className="mb-8 relative z-10">
-                  <AnimatePresence mode="wait">
-                    <motion.h2 
-                      key={balanceVisible ? 'visible' : 'hidden'}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="text-5xl font-black font-mono tracking-tight text-emerald-300"
-                    >
-                      {balanceVisible ? "₦24,580.00" : "₦ • • • • • •"}
-                    </motion.h2>
-                  </AnimatePresence>
-                </div>
-
-                {/* Action label */}
-                <span className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3.5 block relative z-10">Quick Actions</span>
-
-                {/* Deposit button */}
-                <motion.button 
-                  onClick={() => setDepositModalOpen(true)}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white font-bold text-base rounded-2xl py-4 w-full text-center mb-8 relative z-10 transition-all shadow-lg shadow-emerald-500/20"
-                >
-                  Deposit Funds
-                </motion.button>
-
-                {/* Service icons */}
-                <div className="grid grid-cols-4 gap-4 pt-1 relative z-10 border-t border-slate-800">
-                  {[
-                    { icon: Smartphone, label: 'Airtime' },
-                    { icon: ZapIcon, label: 'Data' },
-                    { icon: Tv, label: 'Cable' },
-                    { icon: Zap, label: 'Power' }
-                  ].map((item, i) => (
-                    <motion.button
-                      key={i}
-                      onClick={onAuth}
-                      whileHover={{ scale: 1.1, backgroundColor: 'rgba(16, 185, 129, 0.1)' }}
-                      className="flex flex-col items-center gap-2 group"
-                    >
-                      <div className="w-12 h-12 bg-slate-800/50 group-hover:bg-emerald-600/20 rounded-xl flex items-center justify-center text-emerald-400 group-hover:text-emerald-300 transition-all border border-slate-700">
-                        <item.icon size={18} />
-                      </div>
-                      <span className="text-xs font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{item.label}</span>
-                    </motion.button>
-                  ))}
-                </div>
-
-              </motion.div>
-
-              {/* Transaction Item */}
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
-                whileHover={{ y: -2 }}
-                className="bg-white rounded-2xl p-5 border border-slate-200 shadow-lg shadow-slate-200/50 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-amber-500 text-slate-900 rounded-full flex items-center justify-center font-black text-xs tracking-tight shadow-md">
-                    MTN
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-slate-900">MTN SME - 1GB</h4>
-                    <p className="text-xs text-slate-400 font-semibold mt-0.5">Just now • 0803 123 4567</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="font-bold text-sm text-rose-600">-₦240</span>
-                  <p className="text-xs text-emerald-600 font-black uppercase tracking-wider mt-0.5">Success</p>
-                </div>
-              </motion.div>
-
+            {/* Trust Pill */}
+            <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white border border-[#E2E2DC] shadow-sm text-xs font-bold text-[#132613]">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#B5D430] animate-pulse" />
+              <span>Instant VTU & Utility Payments Across Nigeria</span>
             </div>
-          </motion.div>
 
-        </div>
-      </header>
+            {/* Headline */}
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.1]" style={{ color: '#132613' }}>
+              The Fast, Dependable Way to Recharge & Pay Bills in Nigeria.
+            </h1>
 
-      {/* STATS SECTION */}
-      <motion.section 
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-emerald-900 to-slate-950 py-12 px-4"
-      >
-        <div className="absolute inset-0 opacity-20 pointer-events-none" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,.3) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.3) 1px, transparent 1px)',
-          backgroundSize: '50px 50px',
-        }} />
-        
-        <div className="max-w-7xl mx-auto relative z-10 flex flex-wrap justify-center sm:justify-between items-center gap-x-20 gap-y-8 text-white">
-          {[
-            { value: '50k+', label: 'Active resellers' },
-            { value: '99.9%', label: 'Success rate' },
-            { value: '<10s', label: 'Avg delivery' }
-          ].map((stat, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="text-center sm:text-left group"
-            >
-              <b className="block text-4xl sm:text-5xl font-black text-emerald-300 group-hover:text-emerald-200 transition-colors">
-                {stat.value}
-              </b>
-              <span className="text-sm text-emerald-100/80 font-bold group-hover:text-emerald-100 transition-colors">{stat.label}</span>
-            </motion.div>
-          ))}
-          
-          <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-emerald-200 bg-emerald-500/20 border border-emerald-500/40 px-4 py-2 rounded-full backdrop-blur-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            All providers online
-          </div>
-        </div>
-      </motion.section>
-
-      {/* NETWORK LOGOS */}
-      <motion.section 
-        initial={{ opacity: 0 }}
-        whileInView={{ opacity: 1 }}
-        viewport={{ once: true }}
-        className="py-16 bg-white border-y border-slate-100"
-      >
-        <div className="max-w-7xl mx-auto px-4">
-          <p className="text-center text-xs font-bold text-slate-400 uppercase tracking-widest mb-10">Works with every major network</p>
-          
-          <div className="flex flex-wrap justify-center items-center gap-12 sm:gap-20">
-            {[
-              { name: 'MTN', bg: 'bg-amber-400', border: 'border-amber-300', text: 'text-slate-900' },
-              { name: 'glo', bg: 'bg-green-600', border: 'border-green-500', text: 'text-white' },
-              { name: 'airtel', bg: 'bg-red-600', border: 'border-red-500', text: 'text-white' },
-              { name: '9mob', bg: 'bg-emerald-950', border: 'border-emerald-800', text: 'text-emerald-400' }
-            ].map((network) => (
-              <motion.div
-                key={network.name}
-                whileHover={{ scale: 1.1 }}
-                onClick={() => window.location.hash = "#prices"}
-                className="flex flex-col items-center gap-3 cursor-pointer group"
-              >
-                <div className={cn(
-                  "w-16 h-16 rounded-full flex items-center justify-center font-black text-sm tracking-tight shadow-lg group-hover:shadow-xl transition-all border-2 group-hover:scale-110",
-                  network.bg, network.border, network.text
-                )}>
-                  {network.name}
-                </div>
-                <span className="text-xs font-bold text-slate-600 group-hover:text-slate-900 transition-colors">
-                  {network.name === '9mob' ? '9mobile' : network.name}
-                </span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </motion.section>
-
-      {/* SERVICES SECTION */}
-      <section id="services" className="py-28 px-4 bg-white relative">
-        <div className="max-w-7xl mx-auto space-y-20">
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-left space-y-4 max-w-3xl"
-          >
-            <span className="text-xs font-bold tracking-widest uppercase text-emerald-600">Our Services</span>
-            <h2 className="text-5xl md:text-6xl font-black tracking-tight text-slate-900">
-              All your daily subscriptions in one place.
-            </h2>
-            <p className="text-slate-600 text-lg font-medium leading-relaxed max-w-2xl">
-              Experience seamless, instant fulfillment on all networks and utility portals through direct telecom API handshakes.
+            {/* Sub-headline */}
+            <p className="text-base sm:text-lg text-slate-700 max-w-2xl font-medium leading-relaxed">
+              Fund your wallet once and buy discounted data, instant airtime, electricity tokens, cable TV, and eSIMs in seconds with zero delay.
             </p>
-          </motion.div>
 
-          <div className="grid md:grid-cols-2 gap-8">
-            
-            {/* Airtime Service Card */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              whileHover={{ y: -4 }}
-              className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-3xl p-8 border border-slate-200 shadow-lg flex flex-col justify-between group"
-            >
-              <div className="space-y-6">
-                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm border border-slate-200 group-hover:shadow-lg group-hover:scale-110 transition-all">
-                  <Smartphone size={24} />
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-3xl font-black text-slate-900">Instant Airtime</h3>
-                  <p className="text-slate-600 text-base font-medium leading-relaxed">
-                    Top up MTN, Airtel, Glo, or 9mobile instantly. Send values from ₦50 to ₦100,000.
-                  </p>
-                </div>
-              </div>
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ x: 4 }}
-                className="mt-8 text-emerald-600 hover:text-emerald-700 font-bold text-sm flex items-center gap-1"
+            {/* CTAs */}
+            <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-2">
+              <button
+                onClick={() => onAuth('signup')}
+                className="w-full sm:w-auto px-8 py-4 rounded-2xl text-base font-black text-white shadow-lg hover:shadow-xl flex items-center justify-center gap-3 transition-transform hover:-translate-y-0.5"
+                style={{ backgroundColor: '#3B7A3B' }}
               >
-                Recharge airtime <ChevronRight size={16} />
-              </motion.button>
-            </motion.div>
+                <span>Get Started</span>
+                <ArrowRight size={18} />
+              </button>
+              <a
+                href="#services"
+                className="w-full sm:w-auto px-8 py-4 rounded-2xl text-base font-bold text-[#132613] bg-white border border-[#E2E2DC] hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <span>View Services</span>
+                <ChevronDown size={18} />
+              </a>
+            </div>
 
-            {/* Cable Service Card */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.1 }}
-              whileHover={{ y: -4 }}
-              className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-3xl p-8 border border-slate-200 shadow-lg flex flex-col justify-between group"
-            >
-              <div className="space-y-6">
-                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm border border-slate-200 group-hover:shadow-lg group-hover:scale-110 transition-all">
-                  <Tv size={24} />
-                </div>
-                <div className="space-y-4">
-                  <h3 className="text-3xl font-black text-slate-900">Cable TV Renewals</h3>
-                  <p className="text-slate-600 text-base font-medium">
-                    Enter IUC number and choose your plan. Works with GOtv, DStv, and StarTimes.
-                  </p>
+            {/* Real Trust Micro-signals */}
+            <div className="pt-4 flex flex-wrap items-center justify-center lg:justify-start gap-y-2 gap-x-6 text-xs font-bold text-slate-600">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 size={16} className="text-[#3B7A3B]" /> 99.9% Automated API Uptime
+              </span>
+              <span className="flex items-center gap-1.5">
+                <RotateCcw size={16} className="text-[#3B7A3B]" /> Automated Wallet Refund
+              </span>
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck size={16} className="text-[#3B7A3B]" /> Monnify Bank Reconciliation
+              </span>
+            </div>
+
+          </div>
+
+          {/* Right Hero Visual: Mock Wallet Card & Activity Feed */}
+          <div className="lg:col-span-5 flex flex-col items-center">
+            <div className="w-full max-w-md relative space-y-4">
+              
+              {/* Virtual Wallet Card */}
+              <div 
+                className="rounded-3xl p-6 sm:p-7 text-white shadow-2xl relative overflow-hidden border border-emerald-900/40"
+                style={{ backgroundColor: '#132613' }}
+              >
+                {/* Background decorative glow */}
+                <div className="absolute top-0 right-0 w-44 h-44 bg-[#3B7A3B]/20 rounded-full blur-2xl pointer-events-none" />
+                <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#B5D430]/10 rounded-full blur-2xl pointer-events-none" />
+
+                <div className="relative z-10 space-y-6">
                   
-                  <div className="flex gap-2 p-1.5 bg-slate-200/50 rounded-xl max-w-xs">
-                    {(['dstv', 'gotv', 'startimes'] as const).map((p) => (
-                      <motion.button
-                        key={p}
-                        onClick={() => setActiveCableTab(p)}
-                        whileHover={{ scale: 1.05 }}
-                        className={cn(
-                          "flex-1 text-xs font-bold py-2 rounded-lg capitalize transition-all",
-                          activeCableTab === p ? "bg-white text-slate-900 shadow-md" : "text-slate-500 hover:text-slate-800"
-                        )}
-                      >
-                        {p}
-                      </motion.button>
-                    ))}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                        Virtual Wallet
+                      </span>
+                      <h4 className="text-xl font-black tracking-tight text-white">NORODATA</h4>
+                    </div>
+                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
+                      <Zap size={18} className="text-[#B5D430]" />
+                    </div>
                   </div>
 
-                  <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-2 max-w-md">
-                    {cablePlans[activeCableTab].length === 0 ? (
-                      <div className="text-xs text-slate-400 font-bold py-2 text-center">Coming soon</div>
-                    ) : cablePlans[activeCableTab].slice(0, 3).map((p, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-800">{p.name}</span>
-                        <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md text-xs">{p.price.split(' ')[0]}</span>
-                      </div>
-                    ))}
+                  <div>
+                    <span className="text-xs text-slate-300 font-medium block mb-1">Available Balance</span>
+                    <div className="text-3xl sm:text-4xl font-black text-white tracking-tight flex items-baseline gap-1">
+                      <span>₦48,500.00</span>
+                    </div>
                   </div>
+
+                  <div className="pt-4 border-t border-white/10 flex justify-between items-center text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block uppercase">Dedicated Virtual Account</span>
+                      <span className="font-bold text-white tracking-wide">Sterling Bank • 8234850192</span>
+                    </div>
+                    <button
+                      onClick={() => handleCopyAccount('8234850192')}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1.5 transition-colors font-medium text-[11px]"
+                      aria-label="Copy demo account number"
+                    >
+                      {copiedAccount ? <Check size={12} className="text-[#B5D430]" /> : <Copy size={12} />}
+                      <span>{copiedAccount ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+
                 </div>
               </div>
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ x: 4 }}
-                className="mt-8 text-emerald-600 hover:text-emerald-700 font-bold text-sm flex items-center gap-1"
-              >
-                Renew subscription <ChevronRight size={16} />
-              </motion.button>
-            </motion.div>
 
-            {/* Electricity Card */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.2 }}
-              whileHover={{ y: -4 }}
-              className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-3xl p-8 border border-slate-200 shadow-lg md:col-span-2"
-            >
-              <div className="grid lg:grid-cols-12 gap-8 items-center">
-                
-                <div className="lg:col-span-7 space-y-6">
-                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm border border-slate-200 group-hover:shadow-lg group-hover:scale-110 transition-all">
-                    <Zap size={24} />
-                  </div>
-                  <div className="space-y-3">
-                    <h3 className="text-3xl font-black text-slate-900">Instant Electricity</h3>
-                    <p className="text-slate-600 text-base font-medium">
-                      Buy prepaid tokens or pay postpaid bills across all DISCOs. Tokens display instantly.
-                    </p>
-                  </div>
-                  <motion.button 
-                    onClick={onAuth}
-                    whileHover={{ x: 4 }}
-                    className="text-emerald-600 hover:text-emerald-700 font-bold text-sm flex items-center gap-1"
-                  >
-                    Buy power token <ChevronRight size={16} />
-                  </motion.button>
+              {/* Floating Live Transaction Mock Items */}
+              <div className="bg-white rounded-2xl p-4 border border-[#E2E2DC] shadow-lg space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-500">Live Transaction Feed</span>
+                  <span className="flex items-center gap-1 text-[11px] font-bold text-[#3B7A3B]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#3B7A3B] animate-ping" /> Instant
+                  </span>
                 </div>
 
-                <div className="lg:col-span-5">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Supported zones</span>
-                    <div className="flex flex-wrap gap-2">
-                      {["Abuja", "Benin", "Eko", "Enugu", "Ibadan", "Ikeja", "Jos", "Kaduna"].map((city) => (
-                        <span key={city} className="bg-slate-50 hover:bg-emerald-50 text-slate-700 font-bold text-xs px-3 py-1.5 rounded-full border border-slate-200 transition-all">
-                          {city}
-                        </span>
-                      ))}
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-[11px]">
+                        MTN
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 leading-tight">1.0 GB SME Data</p>
+                        <p className="text-[10px] text-slate-400">0803 •••• 912</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-slate-900">₦400.00</p>
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Delivered</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-orange-100 text-orange-800 flex items-center justify-center font-bold text-[11px]">
+                        💡
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 leading-tight">Ikeja Electric Prepaid</p>
+                        <p className="text-[10px] text-slate-400">Token: 4892 •••• 1042</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-slate-900">₦5,000.00</p>
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Success</span>
                     </div>
                   </div>
                 </div>
 
               </div>
-            </motion.div>
+
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECTION 3: TRUST STRIP */}
+      {/* ========================================================================= */}
+      <section className="py-12 border-y border-[#E2E2DC] bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            
+            {/* Item 1 */}
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center flex-shrink-0 border border-emerald-100">
+                <Zap size={24} />
+              </div>
+              <div>
+                <h4 className="font-black text-slate-900 text-base">Instant Delivery</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Automated telecom API dispatch delivers data and airtime within 3 to 10 seconds.
+                </p>
+              </div>
+            </div>
+
+            {/* Item 2 */}
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center flex-shrink-0 border border-emerald-100">
+                <RotateCcw size={24} />
+              </div>
+              <div>
+                <h4 className="font-black text-slate-900 text-base">Wallet Refund on Failure</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  If any network provider drops a request, your funds are reversed to your wallet instantly.
+                </p>
+              </div>
+            </div>
+
+            {/* Item 3 */}
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center flex-shrink-0 border border-emerald-100">
+                <Headphones size={24} />
+              </div>
+              <div>
+                <h4 className="font-black text-slate-900 text-base">24/7 Human Support</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Reach real human support desks directly on WhatsApp and Telegram when you need assistance.
+                </p>
+              </div>
+            </div>
+
+            {/* Item 4 */}
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center flex-shrink-0 border border-emerald-100">
+                <ShieldCheck size={24} />
+              </div>
+              <div>
+                <h4 className="font-black text-slate-900 text-base">Secure Login</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Protected with Supabase encrypted authentication, secure cookies, and session tokens.
+                </p>
+              </div>
+            </div>
 
           </div>
         </div>
       </section>
 
-      {/* PRICING TABLE */}
-      <section id="prices" className="py-28 px-4 bg-slate-50">
-        <div className="max-w-5xl mx-auto space-y-12">
+      {/* ========================================================================= */}
+      {/* SECTION 4: SERVICES GRID */}
+      {/* ========================================================================= */}
+      <section id="services" className="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24">
+        <div className="text-center max-w-3xl mx-auto mb-16 space-y-3">
+          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+            Our Digital Catalog
+          </span>
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+            Everything You Need, Recharged in Seconds
+          </h2>
+          <p className="text-sm sm:text-base text-slate-600">
+            Enjoy high discounts and automated delivery across all primary digital utility services in Nigeria.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="space-y-6"
+          {/* Card 1: Airtime */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
-            <div className="space-y-3">
-              <span className="text-xs font-bold tracking-widest uppercase text-emerald-600">Data pricing</span>
-              <h2 className="text-4xl md:text-5xl font-black text-slate-900">Competitive rates on all networks</h2>
-              <p className="text-slate-600 text-lg font-medium max-w-2xl">
-                Live plans fetched from providers. What you see is what you pay.
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Smartphone size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  Airtime
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Instant top-ups across MTN, Airtel, Glo, and 9mobile with up to 3% discount on every purchase.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Buy Airtime</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 2: Data Bundles */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
+          >
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Wifi size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  Data Bundles
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Cheap SME, Corporate Gifting & Direct data bundles with instant automated activation and 30-day validity.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Purchase Data</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 3: Cable TV */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
+          >
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Tv size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  Cable TV Subscription
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Renew DStv, GOtv, and StarTimes packages instantly with smartcard account name auto-verification.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Renew Subscription</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 4: Electricity Bills */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
+          >
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Lightbulb size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  Electricity Bills
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Pay prepaid and postpaid meters (IKEDC, EKEDC, AEDC, KEDCO, etc.) and generate tokens instantly.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Pay Electric Bill</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 5: Foreign Phone Numbers */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
+          >
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <PhoneCall size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  Foreign Phone Numbers
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Acquire clean virtual US, UK, and global phone numbers for SMS OTP verification across top platforms.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Get Virtual Number</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+          {/* Card 6: eSIM */}
+          <div 
+            onClick={() => onAuth('signup')}
+            className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
+          >
+            <div className="space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+                <CreditCard size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                  eSIM
+                </h3>
+                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
+                  Instant digital eSIM profiles with affordable roaming data packages for travelers and dual-SIM smartphones.
+                </p>
+              </div>
+            </div>
+            <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-[#3B7A3B]">
+              <span>Activate eSIM</span>
+              <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECTION 5: HOW IT WORKS */}
+      {/* ========================================================================= */}
+      <section id="how-it-works" className="py-24 bg-white border-y border-[#E2E2DC] scroll-mt-24">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          
+          <div className="text-center max-w-2xl mx-auto mb-16 space-y-3">
+            <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+              Three Simple Steps
+            </span>
+            <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+              How NORODATA Works
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600">
+              Get started in under one minute with no paperwork or complicated procedures.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+            
+            {/* Step 1 */}
+            <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
+              <div 
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-white shadow-md"
+                style={{ backgroundColor: '#132613' }}
+              >
+                1
+              </div>
+              <h3 className="text-xl font-black text-slate-900">Fund Your Wallet</h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Sign up in 30 seconds to get your personal automated virtual bank account. Transfer from any Nigerian bank app to credit your wallet in seconds.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2 p-1.5 bg-white rounded-2xl w-fit border border-slate-200">
-              {(['mtn', 'glo', 'airtel', '9mobile'] as const).map((nw) => (
-                <motion.button
-                  key={nw}
-                  onClick={() => setActiveNetworkTab(nw)}
-                  whileHover={{ scale: 1.05 }}
+            {/* Step 2 */}
+            <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
+              <div 
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-white shadow-md"
+                style={{ backgroundColor: '#3B7A3B' }}
+              >
+                2
+              </div>
+              <h3 className="text-xl font-black text-slate-900">Choose a Service</h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Pick your telecom network, internet data bundle, electricity DisCo, cable TV package, or foreign number. Enter the recipient number or meter.
+              </p>
+            </div>
+
+            {/* Step 3 */}
+            <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
+              <div 
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-[#132613] shadow-md"
+                style={{ backgroundColor: '#B5D430' }}
+              >
+                3
+              </div>
+              <h3 className="text-xl font-black text-slate-900">Get Instant Confirmation</h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Our backend fulfills your purchase instantly. Your airtime, data, or meter token is delivered immediately and logged in your transaction history.
+              </p>
+            </div>
+
+          </div>
+
+          <div className="text-center mt-12">
+            <button
+              onClick={() => onAuth('signup')}
+              className="px-8 py-3.5 rounded-2xl text-sm font-black text-white shadow-md hover:shadow-lg transition-transform hover:-translate-y-0.5"
+              style={{ backgroundColor: '#3B7A3B' }}
+            >
+              Create Your Account Now
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SECTION 6: PRICING SECTION */}
+      {/* ========================================================================= */}
+      <section id="pricing" className="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24">
+        <div className="text-center max-w-3xl mx-auto mb-12 space-y-3">
+          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+            Transparent Pricing
+          </span>
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+            Live Wholesale Data Rates
+          </h2>
+          <p className="text-sm sm:text-base text-slate-600">
+            Below are our active retail rates. Prices are live and synchronized with telecom provider servers.
+          </p>
+          <p className="text-xs text-slate-500 font-semibold italic">
+            * Note: Rates are live and may adjust based on network conditions. No hidden charges or extra debit fees.
+          </p>
+        </div>
+
+        {/* Network Selection Tabs */}
+        <div className="flex justify-center mb-8">
+          <div className="bg-white p-1.5 rounded-2xl border border-[#E2E2DC] shadow-sm flex flex-wrap gap-1">
+            {(['mtn', 'glo', 'airtel', '9mobile'] as const).map((net) => {
+              const isActive = activeNetworkTab === net;
+              const netNames: Record<string, string> = {
+                mtn: 'MTN Data',
+                glo: 'GLO Data',
+                airtel: 'Airtel Data',
+                '9mobile': '9mobile Data',
+              };
+              return (
+                <button
+                  key={net}
+                  onClick={() => setActiveNetworkTab(net)}
                   className={cn(
-                    "text-xs font-black px-5 py-3 rounded-xl capitalize transition-all",
-                    activeNetworkTab === nw 
-                      ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" 
-                      : "text-slate-600 hover:text-slate-900"
+                    "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                    isActive
+                      ? "bg-[#132613] text-white shadow"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   )}
                 >
-                  {nw}
-                </motion.button>
+                  {netNames[net]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Error notification banner if any */}
+        {plansError && (
+          <div className="max-w-2xl mx-auto mb-6 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs text-center font-medium">
+            {plansError}
+          </div>
+        )}
+
+        {/* Plans Display */}
+        <div className="max-w-5xl mx-auto">
+          {plansLoading ? (
+            /* Loading Skeleton */
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="bg-white rounded-2xl p-6 border border-[#E2E2DC] animate-pulse space-y-4">
+                  <div className="h-5 bg-slate-200 rounded w-2/3" />
+                  <div className="h-8 bg-slate-200 rounded w-1/2" />
+                  <div className="h-4 bg-slate-200 rounded w-1/3" />
+                  <div className="h-10 bg-slate-200 rounded w-full pt-2" />
+                </div>
               ))}
             </div>
-          </motion.div>
-
-          {/* Plans Table */}
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-lg"
-          >
-            <div className="grid grid-cols-4 bg-slate-50 p-4 border-b border-slate-200 text-xs font-bold text-slate-600 uppercase tracking-widest">
-              <div>Data Size</div>
-              <div>Validity</div>
-              <div>Plan Type</div>
-              <div className="text-right">Price</div>
-            </div>
-            <div className="divide-y divide-slate-200">
-              {planRates[activeNetworkTab].length === 0 ? (
-                <div className="p-6 text-xs text-slate-400 font-bold text-center">Loading plans...</div>
-              ) : (
-                planRates[activeNetworkTab].map((p, idx) => (
-                  <motion.div 
+          ) : (
+            /* Live Plan Cards Grid */
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(livePlans[activeNetworkTab] || []).length > 0 ? (
+                livePlans[activeNetworkTab].map((plan, idx) => (
+                  <div
                     key={idx}
-                    initial={{ opacity: 0, x: -10 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: idx * 0.05 }}
-                    className="grid grid-cols-4 p-4 text-sm font-bold text-slate-700 hover:bg-emerald-50/50 transition-all items-center"
+                    className="bg-white rounded-2xl p-6 border border-[#E2E2DC] shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
                   >
-                    <div className="text-base text-slate-900">{p.size}</div>
-                    <div className="text-slate-600">{p.duration}</div>
                     <div>
-                      <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-lg text-xs font-bold tracking-widest">
-                        {p.type}
-                      </span>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-emerald-50 text-[#3B7A3B] rounded-md border border-emerald-100">
+                          {plan.type || 'Data'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-semibold">{plan.validity}</span>
+                      </div>
+                      <h4 className="text-lg font-black text-slate-900 mt-1">{plan.name}</h4>
+                      <div className="mt-3 flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-[#132613]">
+                          ₦{plan.price.toLocaleString()}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right text-lg text-emerald-600 font-black">{p.price}</div>
-                  </motion.div>
+
+                    <button
+                      onClick={() => onAuth('signup')}
+                      className="mt-6 w-full py-2.5 rounded-xl text-xs font-black text-white transition-opacity hover:opacity-95 shadow-sm"
+                      style={{ backgroundColor: '#3B7A3B' }}
+                    >
+                      Buy This Plan
+                    </button>
+                  </div>
                 ))
+              ) : (
+                <div className="col-span-full bg-white rounded-2xl p-10 text-center border border-[#E2E2DC]">
+                  <HelpCircle size={32} className="mx-auto text-slate-400 mb-2" />
+                  <p className="text-sm font-bold text-slate-700">No active plans currently listed for this network.</p>
+                  <p className="text-xs text-slate-500 mt-1">Please check back shortly or contact support.</p>
+                </div>
               )}
             </div>
-          </motion.div>
-
-          <div className="text-center pt-4">
-            <motion.button 
-              onClick={onAuth}
-              whileHover={{ scale: 1.05 }}
-              className="inline-flex items-center gap-2 text-emerald-600 hover:text-emerald-700 font-bold transition-all"
-            >
-              View all plans in dashboard <ArrowRight size={16} />
-            </motion.button>
-          </div>
+          )}
         </div>
+
       </section>
 
-      {/* BULK PINS SECTION */}
-      <section className="py-28 px-4 bg-white">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-12 gap-16 items-center">
+      {/* ========================================================================= */}
+      {/* SECTION 7: TESTIMONIALS / SOCIAL PROOF (OWNER PLACEHOLDER) */}
+      {/* ========================================================================= */}
+      {/* 
+        [OWNER INSTRUCTION]:
+        This section is a designated placeholder for authentic customer reviews and testimonials.
+        Once you collect real verified reviews from active subscribers or resellers, you can plug them
+        into this section. Do NOT add fabricated reviews or fake user counts.
+      */}
+      <section className="py-20 bg-white border-y border-[#E2E2DC]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          
+          <div className="text-center max-w-2xl mx-auto mb-12 space-y-3">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200 inline-block">
+              Community & Feedback
+            </span>
+            <h2 className="text-3xl font-black tracking-tight" style={{ color: '#132613' }}>
+              Built for Everyday Nigerians & Resellers
+            </h2>
+            <p className="text-sm text-slate-600">
+              We empower students, business center operators, and individual users across the country.
+            </p>
+          </div>
+
+          {/* Clean Placeholder Cards showing genuine use-cases without fake reviews */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
             
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              className="lg:col-span-7 space-y-8"
-            >
-              <span className="bg-emerald-100 text-emerald-700 font-black text-xs uppercase tracking-widest px-4 py-2 rounded-full inline-block">
-                For resellers & kiosks
-              </span>
-              <h2 className="text-5xl font-black text-slate-900">
-                Print pins in bulk, instantly.
-              </h2>
-              <p className="text-slate-600 text-lg font-medium">
-                Generate MTN, Glo, Airtel and 9mobile pins. Pick denominations, choose quantity, and download immediately.
+            <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
+                🎓
+              </div>
+              <h4 className="font-bold text-slate-900 text-base">Campus Resellers</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Students and young entrepreneurs leverage NORODATA wholesale rates to resell data bundles to classmates with reliable profit margins.
               </p>
-
-              <div className="space-y-4">
-                {[
-                  'Up to 50 pins per batch',
-                  'All four networks available',
-                  'Funded from your wallet'
-                ].map((item, i) => (
-                  <motion.div 
-                    key={i}
-                    initial={{ opacity: 0, x: -10 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.1 }}
-                    className="flex items-center gap-3 text-base font-semibold text-slate-700"
-                  >
-                    <Sparkles className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-                    {item}
-                  </motion.div>
-                ))}
+              <div className="pt-2 text-[11px] font-semibold text-[#3B7A3B]">
+                • Fast automated dispatch
               </div>
+            </div>
 
-              <motion.button 
-                onClick={onAuth}
-                whileHover={{ scale: 1.05, y: -2 }}
-                className="bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold text-lg px-8 py-5 rounded-2xl shadow-xl shadow-emerald-500/30 flex items-center gap-2 w-fit"
-              >
-                Start generating <ArrowRight size={20} />
-              </motion.button>
-            </motion.div>
-
-            {/* Interactive Calculator */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              whileInView={{ opacity: 1, scale: 1 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.2 }}
-              className="lg:col-span-5 bg-gradient-to-br from-white to-emerald-50 p-8 rounded-3xl border border-slate-200 shadow-2xl space-y-8"
-            >
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-widest block">Calculator</span>
-              
-              {/* Network */}
-              <div className="space-y-3">
-                <label className="text-xs font-black text-slate-700 block">Network</label>
-                <div className="flex justify-between gap-2">
-                  {(['mtn', 'glo', 'airtel', '9mobile'] as const).map((nw) => (
-                    <motion.button
-                      key={nw}
-                      onClick={() => setPinNetwork(nw)}
-                      whileHover={{ scale: 1.05 }}
-                      className={cn(
-                        "flex-1 py-3 rounded-xl text-xs font-bold capitalize border-2 transition-all",
-                        pinNetwork === nw 
-                          ? "bg-slate-900 text-white border-slate-900" 
-                          : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                      )}
-                    >
-                      {nw}
-                    </motion.button>
-                  ))}
-                </div>
+            <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
+                🏢
               </div>
-
-              {/* Denomination */}
-              <div className="space-y-3">
-                <label className="text-xs font-black text-slate-700 block">Denomination</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[100, 200, 400, 500].map((denom) => (
-                    <motion.button
-                      key={denom}
-                      onClick={() => setPinDenom(denom)}
-                      whileHover={{ scale: 1.05 }}
-                      className={cn(
-                        "py-3 rounded-xl border-2 text-xs font-black transition-all text-center",
-                        pinDenom === denom 
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-300" 
-                          : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                      )}
-                    >
-                      ₦{denom}
-                    </motion.button>
-                  ))}
-                </div>
+              <h4 className="font-bold text-slate-900 text-base">Cyber Cafés & Business Centers</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Small business centers use our unified portal to process instant electricity meter tokens, exam pins, and TV subscriptions for walk-in clients.
+              </p>
+              <div className="pt-2 text-[11px] font-semibold text-[#3B7A3B]">
+                • Instant token generation
               </div>
+            </div>
 
-              {/* Quantity */}
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <label className="text-xs font-black text-slate-700">Quantity</label>
-                  <span className="text-xs font-bold text-slate-800">{pinQty} pins</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <motion.button 
-                    onClick={() => setPinQty(prev => Math.max(1, prev - 1))}
-                    whileHover={{ scale: 1.1 }}
-                    className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold transition-all"
-                  >
-                    <Minus size={16} />
-                  </motion.button>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="50" 
-                    value={pinQty}
-                    onChange={(e) => setPinQty(Number(e.target.value))}
-                    className="flex-1 accent-emerald-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
-                  />
-                  <motion.button 
-                    onClick={() => setPinQty(prev => Math.min(50, prev + 1))}
-                    whileHover={{ scale: 1.1 }}
-                    className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold transition-all"
-                  >
-                    <Plus size={16} />
-                  </motion.button>
-                </div>
+            <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
+                📱
               </div>
-
-              {/* Total */}
-              <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-2xl border-2 border-emerald-200 flex justify-between items-center">
-                <span className="text-xs font-bold text-slate-700">Total Cost</span>
-                <span className="text-2xl font-black text-emerald-600 font-mono">₦{(pinDenom * pinQty).toLocaleString()}</span>
+              <h4 className="font-bold text-slate-900 text-base">Individual Smart Users</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Subscribers who want to stop paying regular commercial rates for cellular data and get immediate refunds if a recharge ever fails.
+              </p>
+              <div className="pt-2 text-[11px] font-semibold text-[#3B7A3B]">
+                • 100% automated refund failsafe
               </div>
-
-            </motion.div>
+            </div>
 
           </div>
+
+          <div className="mt-8 text-center">
+            <p className="text-xs text-slate-500 font-medium">
+              Want to share your experience or partner with NORODATA? Reach out to our community desk.
+            </p>
+          </div>
+
         </div>
       </section>
 
-      {/* HOW IT WORKS */}
-      <section className="py-28 px-4 bg-slate-50">
-        <div className="max-w-7xl mx-auto">
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="mb-16 space-y-4"
-          >
-            <span className="text-xs font-bold tracking-widest uppercase text-emerald-600">How it works</span>
-            <h2 className="text-5xl font-black text-slate-900">Three steps to your first payment.</h2>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            
-            {[
-              { num: '01', title: 'Create account', desc: 'Sign up with email and phone. Takes under a minute.' },
-              { num: '02', title: 'Fund wallet', desc: 'Get a one-time bank account. Transfer any amount and wallet credits instantly.' },
-              { num: '03', title: 'Pay for anything', desc: 'Buy airtime, data, cable, electricity or print pins from your balance.' }
-            ].map((step, i) => (
-              <motion.div 
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                whileHover={{ y: -4 }}
-                className="bg-white rounded-3xl p-8 border border-slate-200 shadow-lg relative group overflow-hidden"
-              >
-                <div className="absolute -top-8 -right-8 w-32 h-32 bg-emerald-100 rounded-full group-hover:scale-110 transition-transform duration-500 opacity-0 group-hover:opacity-100" />
-                
-                <span className="text-6xl font-black text-slate-200 group-hover:text-emerald-200 transition-colors">{step.num}</span>
-                
-                <div className="relative z-10 mt-6 space-y-3">
-                  <h4 className="text-2xl font-black text-slate-900">{step.title}</h4>
-                  <p className="text-slate-600 font-medium">{step.desc}</p>
-                </div>
-              </motion.div>
-            ))}
-
-          </div>
+      {/* ========================================================================= */}
+      {/* SECTION 8: FAQ ACCORDION */}
+      {/* ========================================================================= */}
+      <section id="faq" className="py-24 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto scroll-mt-24">
+        
+        <div className="text-center mb-16 space-y-3">
+          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+            Frequently Asked Questions
+          </span>
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+            Got Questions? We’ve Got Answers.
+          </h2>
+          <p className="text-sm sm:text-base text-slate-600">
+            Clear, honest answers about how funding, fulfillment, and wallet safety work on NORODATA.
+          </p>
         </div>
-      </section>
 
-      {/* MARKETPLACE PROMOTION */}
-      <MarketplaceSection onAuth={onAuth} />
-
-      {/* FEATURES */}
-      <section id="features" className="py-28 px-4 bg-white">
-        <div className="max-w-7xl mx-auto space-y-16">
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="space-y-4 max-w-2xl"
-          >
-            <span className="text-xs font-bold tracking-widest uppercase text-emerald-600">Why NORODATA</span>
-            <h2 className="text-5xl font-black text-slate-900">Built for speed, honesty and reliability.</h2>
-          </motion.div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-            
-            {[
-              { icon: ShieldCheck, title: 'Secure payments', desc: 'Instant checkouts & virtual accounts powered by Bachs.io' },
-              { icon: ZapIcon, title: 'Instant delivery', desc: 'Airtime, data, cable in seconds' },
-              { icon: Sparkles, title: 'Auto-refunds', desc: 'Failed transactions reversed instantly' },
-              { icon: DollarSign, title: 'Transparent fees', desc: 'No hidden costs or surprises' },
-              { icon: FileCheck2, title: 'All receipts saved', desc: 'Timestamped and printable' },
-              { icon: TrendingUp, title: 'Live pricing', desc: 'Real-time rates from providers' }
-            ].map((feature, i) => (
-              <motion.div 
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.05 }}
-                whileHover={{ y: -4 }}
-                className="bg-gradient-to-br from-slate-50 to-emerald-50/20 p-8 rounded-2xl border border-slate-200 shadow-md group"
-              >
-                <div className="w-12 h-12 bg-white border-2 border-slate-200 rounded-xl flex items-center justify-center text-emerald-600 group-hover:scale-110 group-hover:border-emerald-300 transition-all">
-                  <feature.icon size={24} />
-                </div>
-                <h4 className="text-xl font-black text-slate-900 mt-4">{feature.title}</h4>
-                <p className="text-slate-600 text-sm font-medium mt-2">{feature.desc}</p>
-              </motion.div>
-            ))}
-
-          </div>
-        </div>
-      </section>
-
-      {/* FAQs */}
-      <section id="faq" className="py-28 px-4 bg-slate-50">
-        <div className="max-w-4xl mx-auto">
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-16 space-y-4"
-          >
-            <span className="text-xs font-bold tracking-widest uppercase text-emerald-600">FAQ</span>
-            <h2 className="text-5xl font-black text-slate-900">Frequently asked questions.</h2>
-          </motion.div>
-
-          <div className="space-y-4">
-            {faqs.map((f, idx) => (
-              <motion.div 
+        <div className="space-y-4">
+          {[
+            {
+              q: "How do I fund my wallet?",
+              a: "Upon registration, NORODATA automatically provisions a dedicated Nigerian bank account (Sterling Bank / Monnify) linked directly to your wallet. Any bank transfer sent from your mobile banking app or USSD to this account credits your wallet balance automatically within 5 to 10 seconds, 24/7."
+            },
+            {
+              q: "What happens if a purchase fails?",
+              a: "Our smart server engine operates an automated failsafe. If a telecom network experiences downtime or rejects a transaction, 100% of your funds are reversed to your NORODATA wallet balance instantly. You never lose your money."
+            },
+            {
+              q: "How long does delivery take?",
+              a: "Airtime, data bundles, and electricity meter tokens are pushed directly through active provider APIs and deliver within 3 to 10 seconds of pressing confirm."
+            },
+            {
+              q: "Is my money safe?",
+              a: "Yes. All deposits are reconciled through licensed Nigerian financial partners (Monnify and partner banks). We use standard TLS encryption for all data transmissions, and Supabase security policies safeguard your profile."
+            },
+            {
+              q: "How do I get help?",
+              a: "You can reach our human support team directly via WhatsApp (+234 814 388 9102 or +234 703 451 9634) or through our official Telegram group. We answer inquiries promptly during active business hours."
+            },
+            {
+              q: "Can I resell data and airtime to make a profit?",
+              a: "Yes! NORODATA is built for both personal users and VTU vendors. Because our data and airtime rates are set to wholesale pricing, you can sell to your own clients, classmates, or business center customers at market rates and pocket the margin."
+            }
+          ].map((item, idx) => {
+            const isOpen = openFaqIdx === idx;
+            return (
+              <div
                 key={idx}
-                initial={{ opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: idx * 0.05 }}
-                className={cn(
-                  "border-2 rounded-2xl overflow-hidden transition-all duration-300",
-                  faqOpenIdx === idx ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:border-slate-300"
-                )}
+                className="bg-white rounded-2xl border border-[#E2E2DC] overflow-hidden shadow-sm transition-all"
               >
-                <motion.button
-                  onClick={() => setFaqOpenIdx(faqOpenIdx === idx ? null : idx)}
-                  className="w-full px-6 py-5 text-left flex justify-between items-center font-bold text-slate-900 transition-colors"
+                <button
+                  onClick={() => setOpenFaqIdx(isOpen ? null : idx)}
+                  className="w-full p-5 sm:p-6 text-left flex justify-between items-center gap-4 focus:outline-none"
+                  aria-expanded={isOpen}
                 >
-                  <span className="pr-4">{f.q}</span>
-                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 flex-shrink-0 transition-all">
-                    {faqOpenIdx === idx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  <span className="font-bold text-slate-900 text-sm sm:text-base">
+                    {item.q}
+                  </span>
+                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 flex-shrink-0">
+                    <ChevronDown
+                      size={18}
+                      className={cn("transition-transform duration-200", isOpen && "rotate-180")}
+                    />
                   </div>
-                </motion.button>
-                
+                </button>
+
                 <AnimatePresence initial={false}>
-                  {faqOpenIdx === idx && (
+                  {isOpen && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
+                      animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="px-6 pb-6 text-slate-600 font-medium leading-relaxed"
+                      transition={{ duration: 0.2 }}
+                      className="px-5 pb-6 sm:px-6 text-xs sm:text-sm text-slate-600 leading-relaxed border-t border-slate-100 pt-3"
                     >
-                      {f.a}
+                      {item.a}
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </motion.div>
-            ))}
-          </div>
-
+              </div>
+            );
+          })}
         </div>
+
       </section>
 
-      {/* FINAL CTA */}
-      <motion.section 
-        initial={{ opacity: 0 }}
-        whileInView={{ opacity: 1 }}
-        viewport={{ once: true }}
-        className="py-28 px-4 bg-white border-t border-slate-100"
-      >
-        <div className="max-w-4xl mx-auto text-center space-y-8">
-          <h2 className="text-5xl md:text-6xl font-black text-slate-900">
-            Start paying bills instantly.
-          </h2>
-          <p className="text-slate-600 text-xl font-medium max-w-2xl mx-auto">
-            Create your free account today and experience lightning-fast automated data, instant airtime, and seamless bill payments.
-          </p>
-          <div className="flex flex-col items-center gap-4 pt-4">
-            <motion.button 
-              onClick={onAuth}
-              whileHover={{ scale: 1.05, y: -2 }}
-              whileTap={{ scale: 0.95 }}
-              className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-black text-xl px-10 py-6 rounded-2xl shadow-xl shadow-emerald-500/30 flex items-center gap-3 transition-all"
-            >
-              Get Started Now <ArrowRight size={24} />
-            </motion.button>
-            <motion.button 
-              onClick={onAuth}
-              whileHover={{ scale: 1.05 }}
-              className="text-slate-600 hover:text-slate-900 font-bold transition-all"
-            >
-              Already have an account? <span className="text-emerald-600 underline">Log in</span>
-            </motion.button>
-          </div>
-        </div>
-      </motion.section>
-
-      {/* FOOTER */}
-      <footer className="bg-slate-950 text-white pt-20 pb-12 border-t border-slate-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+      {/* ========================================================================= */}
+      {/* SECTION 9: FOOTER */}
+      {/* ========================================================================= */}
+      <footer className="pt-20 pb-16 text-white border-t border-emerald-950" style={{ backgroundColor: '#132613' }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
           
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-12">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10">
             
-            <div className="col-span-2 space-y-6">
+            {/* Col 1 & 2: Brand Info */}
+            <div className="lg:col-span-2 space-y-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-white" />
+                <div className="w-10 h-10 rounded-xl bg-[#3B7A3B] flex items-center justify-center shadow">
+                  <span className="text-lg font-black text-[#B5D430]">N</span>
                 </div>
-                <span className="text-2xl font-black tracking-tight">NORODATA</span>
+                <span className="text-2xl font-black tracking-tight text-white">NORODATA</span>
               </div>
-              <p className="text-slate-400 text-sm leading-relaxed max-w-sm font-medium">
-                Simplify how you recharge, subscribe, and pay utilities in Nigeria.
+              <p className="text-xs sm:text-sm text-slate-300 max-w-sm leading-relaxed">
+                Nigeria’s reliable digital recharge and utility payment platform. Instant data bundles, airtime top-ups, electric tokens, and eSIM connectivity.
               </p>
+              <div className="pt-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Reconciliation Partner
+                </span>
+                <span className="text-xs font-semibold text-emerald-300">
+                  Powered by Monnify / Sterling Bank
+                </span>
+              </div>
             </div>
 
-            <div className="space-y-4">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Company</h4>
-              <ul className="space-y-2.5 text-sm text-slate-400 font-bold">
-                <li><a href="#services" className="hover:text-emerald-400 transition-colors">Services</a></li>
-                <li><span onClick={onAuth} className="hover:text-emerald-400 transition-colors cursor-pointer">Login</span></li>
-                <li><span onClick={onAuth} className="hover:text-emerald-400 transition-colors cursor-pointer">Create account</span></li>
-              </ul>
-            </div>
-
-            <div className="space-y-4">
+            {/* Col 3: Services */}
+            <div className="space-y-3">
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Services</h4>
-              <ul className="space-y-2.5 text-sm text-slate-400 font-bold">
-                <li><span onClick={onAuth} className="hover:text-emerald-400 transition-colors cursor-pointer">Airtime</span></li>
-                <li><span onClick={onAuth} className="hover:text-emerald-400 transition-colors cursor-pointer">Data</span></li>
-                <li><span onClick={onAuth} className="hover:text-emerald-400 transition-colors cursor-pointer">Electricity</span></li>
+              <ul className="space-y-2 text-xs text-slate-400 font-semibold">
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Airtime VTU</button></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Data Bundles</button></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Cable TV Renewals</button></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Electricity Bills</button></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Foreign Numbers</button></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">eSIM Profiles</button></li>
               </ul>
             </div>
 
-            <div className="space-y-4 col-span-2 md:col-span-1">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Developers</h4>
-              <ul className="space-y-2.5 text-sm text-slate-400 font-bold">
-                <li><a href="#" className="hover:text-emerald-400 transition-colors">API Docs</a></li>
-                <li><a href="#" className="hover:text-emerald-400 transition-colors">Getting Started</a></li>
+            {/* Col 4: Quick Links */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Quick Links</h4>
+              <ul className="space-y-2 text-xs text-slate-400 font-semibold">
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">Live Pricing</a></li>
+                <li><a href="#faq" className="hover:text-white transition-colors">Help & FAQ</a></li>
+                <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Account Login</button></li>
+                <li><button onClick={() => onAuth('signup')} className="hover:text-white transition-colors">Create Account</button></li>
               </ul>
+            </div>
+
+            {/* Col 5: Support & Contact */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Support Desk</h4>
+              <div className="space-y-2 text-xs text-slate-400 font-semibold">
+                {SUPPORT_CONTACTS.map((item) => (
+                  <a
+                    key={item.number}
+                    href={`https://wa.me/${item.number}?text=Hello%20NORODATA%20Support,%20I%20need%20assistance%20with...`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 hover:text-[#B5D430] transition-colors"
+                  >
+                    <MessageCircle size={14} className="text-[#B5D430]" />
+                    <span>WhatsApp: +{item.number}</span>
+                  </a>
+                ))}
+                <a
+                  href={TELEGRAM_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 hover:text-[#B5D430] transition-colors pt-1"
+                >
+                  <Send size={14} className="text-[#B5D430]" />
+                  <span>Telegram Channel</span>
+                </a>
+              </div>
             </div>
 
           </div>
 
-          <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="space-y-1 text-center md:text-left">
-              <p className="text-slate-500 text-xs font-bold">© 2026 NORODATA. All rights reserved.</p>
-              <p className="text-slate-600 text-xs font-bold uppercase tracking-wider">Payments Powered by Bachs.io</p>
-            </div>
-            <div className="flex gap-6 text-xs text-slate-500 font-bold">
-              <a href="#" className="hover:text-emerald-400 transition-colors">Privacy</a>
-              <a href="#" className="hover:text-emerald-400 transition-colors">Terms</a>
+          <div className="pt-8 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-400 font-semibold">
+            <p>© {currentYear} NORODATA. All rights reserved.</p>
+            <div className="flex gap-6">
+              <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+              <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+              <a href="#" className="hover:text-white transition-colors">Security</a>
             </div>
           </div>
 
         </div>
       </footer>
 
-      {/* DEPOSIT MODAL */}
-      <AnimatePresence>
-        {depositModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
-              onClick={() => setDepositModalOpen(false)}
-            />
-
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white rounded-3xl p-8 w-full max-w-md relative z-10 border border-slate-200 shadow-2xl space-y-6"
-            >
-              
-              <div className="flex justify-between items-start">
-                <div className="space-y-2">
-                  <span className="text-xs font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full inline-block">
-                    Bachs.io Gateway
-                  </span>
-                  <h3 className="text-2xl font-black text-slate-900">Your Bank Account</h3>
-                </div>
-                <motion.button 
-                  onClick={() => setDepositModalOpen(false)}
-                  whileHover={{ scale: 1.1 }}
-                  className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-900 transition-colors"
-                >
-                  <X size={18} />
-                </motion.button>
-              </div>
-
-              <p className="text-slate-600 text-sm font-medium">
-                Transfer any amount to this account. Your wallet credits instantly.
-              </p>
-
-              <div className="bg-gradient-to-br from-slate-50 to-emerald-50/30 rounded-2xl p-6 space-y-4 border border-slate-200">
-                
-                {[
-                  { label: 'Bank Name', value: 'Sterling Bank' },
-                  { label: 'Account Number', value: '8234850192' },
-                  { label: 'Account Name', value: 'NORODATA / Ibrahim Faruq' }
-                ].map((item, i) => (
-                  <motion.div 
-                    key={i}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.1 }}
-                    className={cn(
-                      "flex justify-between items-center text-sm",
-                      i < 2 && "pb-4 border-b border-slate-200"
-                    )}
-                  >
-                    <span className="text-slate-600 font-bold">{item.label}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{item.value}</span>
-                      <motion.button 
-                        onClick={() => handleCopy(item.value, item.label)}
-                        whileHover={{ scale: 1.1 }}
-                        className="text-slate-400 hover:text-emerald-600 transition-colors"
-                      >
-                        {copiedText === item.label ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
-                      </motion.button>
-                    </div>
-                  </motion.div>
-                ))}
-
-              </div>
-
-              <div className="flex gap-3 bg-emerald-50 border border-emerald-200 p-4 rounded-xl items-start">
-                <Sparkles className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <span className="text-xs font-black text-emerald-900 block mb-1">Instant & Automatic</span>
-                  <p className="text-xs text-emerald-700 font-medium">
-                    No OTP or passwords. Your wallet credits in seconds.
-                  </p>
-                </div>
-              </div>
-
-              <motion.button 
-                onClick={() => setDepositModalOpen(false)}
-                whileHover={{ scale: 1.02 }}
-                className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm py-4 rounded-xl w-full transition-all"
-              >
-                Close
-              </motion.button>
-
-            </motion.div>
-
-          </div>
-        )}
-      </AnimatePresence>
+      {/* ========================================================================= */}
+      {/* SECTION 10: STICKY MOBILE CTA */}
+      {/* ========================================================================= */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-[#E2E2DC] z-40 flex items-center justify-between gap-3 shadow-lg">
+        <div className="flex flex-col">
+          <span className="text-xs font-black text-slate-900 leading-tight">Instant VTU Top-Up</span>
+          <span className="text-[10px] text-slate-500">Fund once, recharge in seconds</span>
+        </div>
+        <button
+          onClick={() => onAuth('signup')}
+          className="px-5 py-2.5 rounded-xl text-xs font-black text-white shadow-md"
+          style={{ backgroundColor: '#3B7A3B' }}
+        >
+          Get Started
+        </button>
+      </div>
 
     </div>
   );
