@@ -1244,7 +1244,6 @@ async function startServer() {
 
       // 3. Look up plan config + chosen provider from services_config
       let planConfig: any = null;
-      let vtuPlan: any = null;
       try {
         const { data: pc } = await supabase
           .from('services_config')
