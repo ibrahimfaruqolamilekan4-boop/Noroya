@@ -24,14 +24,19 @@ interface NormalizedPlan {
 
 const MOZO_SERVICES = [
   { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+  { id: "mtn_cg", network: "MTN", plan_type: "CG" },
   { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
   { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
   { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
   { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+  { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
   { id: "glo_sme", network: "GLO", plan_type: "SME" },
+  { id: "glo_cg", network: "GLO", plan_type: "CG" },
   { id: "glo_data", network: "GLO", plan_type: "DATA" },
   { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+  { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
   { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+  { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
   { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" },
 ];
 
@@ -173,20 +178,21 @@ Deno.serve(async (req: Request) => {
     let addedCount = 0;
     let updatedCount = 0;
 
-    // Preserve existing custom retail price if already configured
-    const upsertRows = livePlans.map((p) => {
-      const existing = existingMap.get(p.provider_plan_id);
-      if (existing) {
-        updatedCount++;
-        return {
-          ...p,
-          price_to_user: existing.price_to_user > 0 ? existing.price_to_user : p.price_to_user,
-        };
-      } else {
-        addedCount++;
-        return p;
-      }
-    });
+    // Deduplicate strictly by provider_plan_id to prevent ON CONFLICT DO UPDATE cannot affect row a second time
+    const uniquePlansMap = new Map<string, any>();
+    for (const p of livePlans) {
+      const key = String(p.provider_plan_id || "").trim();
+      if (!key) continue;
+      const existing = existingMap.get(key);
+      const row = {
+        ...p,
+        provider_plan_id: key,
+        price_to_user: existing && existing.price_to_user > 0 ? existing.price_to_user : p.price_to_user,
+      };
+      if (existing) updatedCount++; else addedCount++;
+      uniquePlansMap.set(key, row);
+    }
+    const upsertRows = Array.from(uniquePlansMap.values());
 
     // 5. Upsert into vtu_plans using provider_plan_id as unique key
     const { error: upsertErr } = await supabase

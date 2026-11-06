@@ -11,6 +11,7 @@ import type { NetworkType, ServicePlan, UserProfile } from '../types';
 const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
   MTN: [
     { id: 'mtn_sme', label: 'SME' },
+    { id: 'mtn_cg', label: 'Corporate (CG)' },
     { id: 'mtn_gifting', label: 'Gifting' },
     { id: 'mtn_datashare', label: 'Datashare' },
     { id: 'mtn_awoof', label: 'Awoof' },
@@ -18,10 +19,12 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
   ],
   GLO: [
     { id: 'glo_sme', label: 'SME' },
+    { id: 'glo_cg', label: 'Corporate (CG)' },
     { id: 'glo_data', label: 'Data' },
   ],
   Airtel: [
     { id: 'airtel_sme', label: 'SME' },
+    { id: 'airtel_cg', label: 'Corporate (CG)' },
     { id: 'airtel_gifting', label: 'Gifting' },
   ],
   '9mobile': [
@@ -31,13 +34,16 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
 
 const BALANCE_CODES: Record<string, { label: string; code: string }[]> = {
   mtn_sme: [{ label: 'SME Balance', code: '*461*4#' }],
+  mtn_cg: [{ label: 'CG Balance', code: '*460*260#' }, { label: 'Data Balance', code: '*131*4#' }],
   mtn_gifting: [{ label: 'Gifting Balance', code: '*131*4#' }],
   mtn_datashare: [{ label: 'Datashare Balance', code: '*461*4#' }],
   mtn_awoof: [{ label: 'Awoof Balance', code: '*461*4#' }],
   mtn_awoof2: [{ label: 'Awoof 2 Balance', code: '*461*4#' }],
   glo_sme: [{ label: 'SME Balance', code: '*127*0#' }],
+  glo_cg: [{ label: 'CG Balance', code: '*127*0#' }],
   glo_data: [{ label: 'Data Balance', code: '*127*0#' }],
   airtel_sme: [{ label: 'SME Balance', code: '*140#' }],
+  airtel_cg: [{ label: 'CG Balance', code: '*140#' }],
   airtel_gifting: [{ label: 'Gifting Balance', code: '*140#' }],
   etisalat_data: [{ label: 'Data Balance', code: '*228#' }],
 };

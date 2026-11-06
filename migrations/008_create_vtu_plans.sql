@@ -32,6 +32,10 @@ ALTER TABLE public.vtu_plans ADD COLUMN IF NOT EXISTS validity text DEFAULT '30 
 ALTER TABLE public.vtu_plans ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.vtu_plans ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+-- 1.5 Clean duplicate entries if any exist, then create unique index
+DELETE FROM public.vtu_plans a USING public.vtu_plans b
+WHERE a.id < b.id AND a.provider_plan_id = b.provider_plan_id;
+
 -- Ensure provider_plan_id has a unique index for ON CONFLICT upsert
 CREATE UNIQUE INDEX IF NOT EXISTS vtu_plans_provider_plan_id_idx ON public.vtu_plans(provider_plan_id);
 
@@ -86,26 +90,36 @@ CREATE POLICY "Service role full control on failure log" ON public.vtu_failure_l
 -- 5. Ensure transactions table has metadata column
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
 
--- 6. Backfill vtu_plans from services_config
+-- 6. Backfill vtu_plans from services_config (partitioned CTE guarantees zero duplicate keys)
+WITH ranked_plans AS (
+  SELECT
+    COALESCE(network_type, network, provider_or_network, 'MTN') AS network,
+    COALESCE(plan_name, name, item_name, 'Unknown Plan') AS plan_name,
+    TRIM(COALESCE(mozosubz_plan_id, bigisub_identifier_id, id::text)) AS clean_plan_id,
+    COALESCE(selling_price, retail_price, 0) AS price_to_user,
+    COALESCE(cost_price, 0) AS provider_price,
+    COALESCE(is_active, true) AS is_active,
+    COALESCE(provider, 'mozosubz') AS provider,
+    COALESCE(mozosubz_service, 'mtn_sme') AS service,
+    COALESCE(validity_days, '30 Days') AS validity,
+    ROW_NUMBER() OVER (
+      PARTITION BY TRIM(COALESCE(mozosubz_plan_id, bigisub_identifier_id, id::text))
+      ORDER BY updated_at DESC NULLS LAST
+    ) AS rn
+  FROM public.services_config
+  WHERE service_type = 'data'
+    AND COALESCE(mozosubz_plan_id, bigisub_identifier_id) IS NOT NULL
+    AND TRIM(COALESCE(mozosubz_plan_id, bigisub_identifier_id)) != ''
+)
 INSERT INTO public.vtu_plans (
   network, plan_name, provider_plan_id, price_to_user, provider_price,
   is_active, provider, service, validity, last_synced_at
 )
 SELECT
-  COALESCE(network_type, network, provider_or_network, 'MTN') AS network,
-  COALESCE(plan_name, name, item_name, 'Unknown Plan') AS plan_name,
-  COALESCE(mozosubz_plan_id, bigisub_identifier_id, id::text) AS provider_plan_id,
-  COALESCE(selling_price, retail_price, 0) AS price_to_user,
-  COALESCE(cost_price, 0) AS provider_price,
-  COALESCE(is_active, true),
-  COALESCE(provider, 'mozosubz'),
-  COALESCE(mozosubz_service, 'mtn_sme'),
-  COALESCE(validity_days, '30 Days'),
-  now()
-FROM public.services_config
-WHERE service_type = 'data'
-  AND COALESCE(mozosubz_plan_id, bigisub_identifier_id) IS NOT NULL
-  AND COALESCE(mozosubz_plan_id, bigisub_identifier_id) != ''
+  network, plan_name, clean_plan_id, price_to_user, provider_price,
+  is_active, provider, service, validity, now()
+FROM ranked_plans
+WHERE rn = 1
 ON CONFLICT (provider_plan_id) DO UPDATE SET
   plan_name = EXCLUDED.plan_name,
   price_to_user = EXCLUDED.price_to_user,

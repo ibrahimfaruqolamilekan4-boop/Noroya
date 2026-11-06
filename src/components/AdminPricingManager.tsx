@@ -13,7 +13,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   RefreshCw, Save, DollarSign, CheckCircle, AlertTriangle,
-  Loader2, Search, Eye, EyeOff, TrendingUp, Zap,
+  Loader2, Search, Eye, EyeOff, TrendingUp, Zap, Tv, FileText, Smartphone,
   BarChart2, Globe, Percent, ToggleLeft, ToggleRight, Filter,
   Trash2, Layers, Key, ShieldCheck, Check, ChevronDown, ChevronUp, Sparkles
 } from 'lucide-react';
@@ -25,14 +25,19 @@ import AdminFailureLog from './AdminFailureLog';
 
 const MOZOSUBZ_SERVICES = [
   { id: 'mtn_sme',        label: 'MTN SME',        network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
+  { id: 'mtn_cg',         label: 'MTN CG',         network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_gifting',    label: 'MTN Gifting',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_datashare',  label: 'MTN Datashare',  network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_awoof',      label: 'MTN Awoof',      network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
-  { id: 'mtn_awoof2',     label: 'MTN Awoof 2',     network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
+  { id: 'mtn_awoof2',     label: 'MTN Awoof 2',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
+  { id: 'mtn_coupon',     label: 'MTN Coupon',     network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'glo_sme',        label: 'GLO SME',        network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
+  { id: 'glo_cg',         label: 'GLO CG',         network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'glo_data',       label: 'GLO Data',       network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'airtel_sme',     label: 'Airtel SME',     network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
+  { id: 'airtel_cg',      label: 'Airtel CG',      network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
   { id: 'airtel_gifting', label: 'Airtel Gifting', network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
+  { id: 'etisalat_sme',   label: '9mobile SME',    network: '9mobile', color: '#2DD4BF', bg: 'rgba(45,212,191,0.10)', border: 'rgba(45,212,191,0.30)' },
   { id: 'etisalat_data',  label: '9mobile Data',   network: '9mobile', color: '#2DD4BF', bg: 'rgba(45,212,191,0.10)', border: 'rgba(45,212,191,0.30)' },
 ] as const;
 
@@ -48,12 +53,34 @@ type NetworkTab = typeof NETWORK_TABS[number]['id'];
 const MTN_SUBTABS = [
   { id: 'all_mtn',       label: 'All MTN'    },
   { id: 'mtn_sme',       label: 'SME'        },
+  { id: 'mtn_cg',        label: 'CG / Corporate' },
   { id: 'mtn_gifting',   label: 'Gifting'    },
   { id: 'mtn_datashare', label: 'Datashare'  },
   { id: 'mtn_awoof',     label: 'Awoof'      },
   { id: 'mtn_awoof2',    label: 'Awoof 2'    },
+  { id: 'mtn_coupon',    label: 'Coupon'     },
 ] as const;
 type MtnSubTab = typeof MTN_SUBTABS[number]['id'];
+
+export type MainCategory = 'data' | 'cable' | 'electricity' | 'exam';
+
+export interface UtilityRow {
+  id: string;
+  planId: string;
+  name: string;
+  provider_or_network: string;
+  network: string;
+  costPrice: number;
+  markupPct: number;
+  sellingPrice: number;
+  saved: boolean;
+  saving: boolean;
+  dirty: boolean;
+  isActive: boolean;
+  serviceType: 'cable' | 'electricity' | 'exam_pin';
+  validityDays?: string;
+  minimumAmount?: number;
+}
 
 type ServiceID = typeof MOZOSUBZ_SERVICES[number]['id'] | string;
 
@@ -198,6 +225,145 @@ export default function AdminPricingManager() {
   const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
   const [isSyncingFromProvider, setIsSyncingFromProvider] = useState(false);
   const [showFailureLogs, setShowFailureLogs] = useState(false);
+
+  // ── Utility Services State (Cable TV, Electricity DISCOs, Exam PINs) ───────
+  const [mainCategory, setMainCategory] = useState<MainCategory>('data');
+  const [utilityRows, setUtilityRows] = useState<UtilityRow[]>([]);
+  const [loadingUtility, setLoadingUtility] = useState(false);
+  const [publishingUtility, setPublishingUtility] = useState(false);
+  const [cableFilter, setCableFilter] = useState<'all' | 'GOTV' | 'DSTV' | 'STARTIMES' | 'SHOWMAX'>('all');
+  const [examFilter, setExamFilter] = useState<'all' | 'WAEC' | 'NECO' | 'NABTEB'>('all');
+
+  const fetchUtilityPlans = useCallback(async (cat: MainCategory) => {
+    if (cat === 'data') return;
+    setLoadingUtility(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/fetch-utility-catalog', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ serviceType: cat, provider: selectedProvider }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load catalog');
+      const mapped: UtilityRow[] = (data.plans || []).map((p: any) => ({
+        id: String(p.id),
+        planId: String(p.plan_id || p.id),
+        name: String(p.name),
+        provider_or_network: String(p.provider_or_network || p.network),
+        network: String(p.network || p.provider_or_network),
+        costPrice: Number(p.cost_price || 0),
+        markupPct: Number(p.markup_pct || 0),
+        sellingPrice: Number(p.selling_price || 0),
+        saved: !!p.saved,
+        saving: false,
+        dirty: false,
+        isActive: p.is_active !== false,
+        serviceType: p.service_type || (cat === 'exam' ? 'exam_pin' : cat),
+        validityDays: p.validity_days,
+        minimumAmount: p.minimum_amount,
+      }));
+      setUtilityRows(mapped);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to fetch catalog');
+    } finally {
+      setLoadingUtility(false);
+    }
+  }, [selectedProvider]);
+
+  const updateUtilitySelling = useCallback((id: string, price: number) => {
+    setUtilityRows(prev => prev.map(r => {
+      if (r.id !== id && r.planId !== id) return r;
+      const markup = r.costPrice > 0 ? Math.round(((price - r.costPrice) / r.costPrice) * 1000) / 10 : 0;
+      return { ...r, sellingPrice: price, markupPct: markup, dirty: true };
+    }));
+  }, []);
+
+  const updateUtilityMarkup = useCallback((id: string, pct: number) => {
+    setUtilityRows(prev => prev.map(r => {
+      if (r.id !== id && r.planId !== id) return r;
+      const selling = Math.ceil(r.costPrice * (1 + pct / 100));
+      return { ...r, markupPct: pct, sellingPrice: selling, dirty: true };
+    }));
+  }, []);
+
+  const toggleUtilityActive = useCallback((id: string) => {
+    setUtilityRows(prev => prev.map(r => {
+      if (r.id !== id && r.planId !== id) return r;
+      return { ...r, isActive: !r.isActive, dirty: true };
+    }));
+  }, []);
+
+  const saveUtilityRow = useCallback(async (row: UtilityRow) => {
+    setUtilityRows(prev => prev.map(r => (r.id === row.id || r.planId === row.planId) ? { ...r, saving: true } : r));
+    try {
+      const headers = await getAdminHeaders();
+      const payload = {
+        id: row.planId,
+        name: row.name,
+        network: row.network,
+        provider: row.provider_or_network,
+        provider_or_network: row.provider_or_network,
+        type: row.serviceType,
+        service_type: row.serviceType,
+        cost_price: row.costPrice,
+        selling_price: row.sellingPrice,
+        retail_price: row.sellingPrice,
+        validity_days: row.validityDays || '30 Days',
+        is_active: row.isActive,
+      };
+      const res = await fetch('/api/admin/create-plan', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to save');
+      setUtilityRows(prev => prev.map(r => (r.id === row.id || r.planId === row.planId) ? { ...r, saved: true, saving: false, dirty: false } : r));
+      toast.success(`✅ Saved ${row.name} (₦${row.sellingPrice})`);
+    } catch (err: any) {
+      setUtilityRows(prev => prev.map(r => (r.id === row.id || r.planId === row.planId) ? { ...r, saving: false } : r));
+      toast.error(err.message || 'Save failed');
+    }
+  }, []);
+
+  const publishAllUtility = useCallback(async () => {
+    const targets = utilityRows.filter(r => r.dirty || !r.saved);
+    if (!targets.length) { toast('No unsaved changes in current utility view'); return; }
+    setPublishingUtility(true);
+    let ok = 0;
+    try {
+      const headers = await getAdminHeaders();
+      for (const row of targets) {
+        const payload = {
+          id: row.planId,
+          name: row.name,
+          network: row.network,
+          provider: row.provider_or_network,
+          provider_or_network: row.provider_or_network,
+          type: row.serviceType,
+          service_type: row.serviceType,
+          cost_price: row.costPrice,
+          selling_price: row.sellingPrice,
+          retail_price: row.sellingPrice,
+          validity_days: row.validityDays || '30 Days',
+          is_active: row.isActive,
+        };
+        const res = await fetch('/api/admin/create-plan', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) ok++;
+      }
+      setUtilityRows(prev => prev.map(r => ({ ...r, saved: true, saving: false, dirty: false })));
+      toast.success(`🎉 Published ${ok} utility item${ok > 1 ? 's' : ''} to live store!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Publish failed');
+    } finally {
+      setPublishingUtility(false);
+    }
+  }, [utilityRows]);
 
   // ── Provider API Key Management ───────────────────────────────────────────
   const [apiKeyInput,     setApiKeyInput]     = useState('');
@@ -382,9 +548,22 @@ export default function AdminPricingManager() {
         const existing = existingPrices[planKey] || existingPrices[String(p.plan_id)] || existingPrices[`${p.service}_${p.id}`];
         const cost     = Number(p.price);
         let markup     = defaultMarkup;
+        const costChanged = existing && existing.cost > 0 && Math.abs(existing.cost - cost) > 0.5;
+
         if (existing && existing.selling > 0 && existing.cost > 0) {
           markup = ((existing.selling - existing.cost) / existing.cost) * 100;
         }
+
+        // When provider wholesale cost changes (e.g. dropped to 400), don't stick to stale old selling price!
+        let sellingPrice = 0;
+        if (costChanged) {
+          sellingPrice = calcSelling(cost, markup);
+        } else if (existing?.selling && existing.selling > 0) {
+          sellingPrice = existing.selling;
+        } else {
+          sellingPrice = calcSelling(cost, markup);
+        }
+
         const svc = SERVICE_MAP[p.service] || {
           id: p.service || 'custom',
           label: `${p.network} ${p.plan_type || 'Data'}`,
@@ -401,10 +580,10 @@ export default function AdminPricingManager() {
           name:          String(p.name),
           costPrice:     cost,
           markupPct:     Math.round(markup * 10) / 10,
-          sellingPrice:  existing?.selling || calcSelling(cost, markup),
-          saved:         !!existing?.selling,
+          sellingPrice:  sellingPrice,
+          saved:         !costChanged && !!existing?.selling,
           saving:        false,
-          dirty:         false,
+          dirty:         !!costChanged,
           provider:      (p.provider || existing?.provider || selectedProvider) as ProviderSlug,
           bigisubPlanId: existing?.bigisub_id || planKey,
           isActive:      existing?.active !== false,
@@ -574,9 +753,21 @@ export default function AdminPricingManager() {
         const existing = existingPrices[planKey] || existingPrices[String(p.plan_id)] || existingPrices[`${p.service}_${p.id}`];
         const cost     = Number(p.price);
         let markup     = defaultMarkup;
+        const costChanged = existing && existing.cost > 0 && Math.abs(existing.cost - cost) > 0.5;
+
         if (existing && existing.selling > 0 && existing.cost > 0) {
           markup = ((existing.selling - existing.cost) / existing.cost) * 100;
         }
+
+        let sellingPrice = 0;
+        if (costChanged) {
+          sellingPrice = calcSelling(cost, markup);
+        } else if (existing?.selling && existing.selling > 0) {
+          sellingPrice = existing.selling;
+        } else {
+          sellingPrice = calcSelling(cost, markup);
+        }
+
         const svc = SERVICE_MAP[p.service] || {
           id: p.service || 'custom',
           label: `${p.network} ${p.plan_type || 'Data'}`,
@@ -593,10 +784,10 @@ export default function AdminPricingManager() {
           name:          String(p.name),
           costPrice:     cost,
           markupPct:     Math.round(markup * 10) / 10,
-          sellingPrice:  existing?.selling || calcSelling(cost, markup),
-          saved:         autoPublish || !!existing?.selling,
+          sellingPrice:  sellingPrice,
+          saved:         autoPublish || (!costChanged && !!existing?.selling),
           saving:        false,
-          dirty:         false,
+          dirty:         !!costChanged,
           provider:      (p.provider || existing?.provider || 'mozosubz') as ProviderSlug,
           bigisubPlanId: existing?.bigisub_id || planKey,
           isActive:      existing?.active !== false,
@@ -972,7 +1163,79 @@ export default function AdminPricingManager() {
         )}
       </div>
 
-      {/* Stat cards */}
+      {/* Main Service Category Navigation (Data, Cable, Electricity, Exam PINs) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+        <button
+          onClick={() => setMainCategory('data')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            mainCategory === 'data'
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
+          }`}
+        >
+          <Smartphone size={15} />
+          <span>Data Bundles</span>
+          <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+            {rows.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setMainCategory('cable'); fetchUtilityPlans('cable'); }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            mainCategory === 'cable'
+              ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
+          }`}
+        >
+          <Tv size={15} />
+          <span>Cable TV (DSTV, GOTV, StarTimes)</span>
+          {mainCategory === 'cable' && utilityRows.length > 0 && (
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+              {utilityRows.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => { setMainCategory('electricity'); fetchUtilityPlans('electricity'); }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            mainCategory === 'electricity'
+              ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
+          }`}
+        >
+          <Zap size={15} />
+          <span>Electricity DISCOs</span>
+          {mainCategory === 'electricity' && utilityRows.length > 0 && (
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+              {utilityRows.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => { setMainCategory('exam'); fetchUtilityPlans('exam'); }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+            mainCategory === 'exam'
+              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
+          }`}
+        >
+          <FileText size={15} />
+          <span>Exam PINs (WAEC, NECO, NABTEB)</span>
+          {mainCategory === 'exam' && utilityRows.length > 0 && (
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+              {utilityRows.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* RENDER DATA BUNDLES SECTION */}
+      {mainCategory === 'data' && (
+        <>
+          {/* Stat cards */}
       {fetched && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {([
@@ -1292,6 +1555,232 @@ export default function AdminPricingManager() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* RENDER UTILITY SECTION (Cable TV, Electricity DISCOs, Exam PINs) */}
+      {mainCategory !== 'data' && (
+        <div className="space-y-4">
+          {/* Header & Controls for Utility */}
+          <div className="rounded-2xl border border-slate-700/50 bg-slate-900/60 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  {mainCategory === 'cable' && <Tv className="text-purple-400" size={18} />}
+                  {mainCategory === 'electricity' && <Zap className="text-amber-400" size={18} />}
+                  {mainCategory === 'exam' && <FileText className="text-emerald-400" size={18} />}
+                  <span>
+                    {mainCategory === 'cable' && 'Cable TV Package Pricing & Markup'}
+                    {mainCategory === 'electricity' && 'Electricity DISCO Convenience Fee Manager'}
+                    {mainCategory === 'exam' && 'Exam Result PIN Pricing & Gain Manager'}
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {mainCategory === 'cable' && 'Manage wholesale provider costs and custom markup for DSTV, GOTV, StarTimes & Showmax'}
+                  {mainCategory === 'electricity' && 'Configure custom admin markup and fee per electricity token generation across DISCOs'}
+                  {mainCategory === 'exam' && 'Configure custom selling price and profit markup for WAEC, NECO & NABTEB result checker PINs'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchUtilityPlans(mainCategory)}
+                  disabled={loadingUtility}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 cursor-pointer disabled:opacity-50 transition"
+                >
+                  {loadingUtility ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  <span>{loadingUtility ? 'Loading...' : 'Refresh Catalog'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={publishAllUtility}
+                  disabled={publishingUtility}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 cursor-pointer disabled:opacity-50 transition"
+                >
+                  {publishingUtility ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  <span>{publishingUtility ? 'Saving...' : 'Publish All to Store'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-filters */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">
+              {mainCategory === 'cable' && (
+                <>
+                  <span className="text-xs text-slate-400 font-semibold mr-1">Provider:</span>
+                  {(['all', 'GOTV', 'DSTV', 'STARTIMES', 'SHOWMAX'] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setCableFilter(p)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                        cableFilter === p
+                          ? 'bg-purple-600 text-white border-purple-500'
+                          : 'bg-slate-800/80 text-slate-400 hover:text-white border-slate-700'
+                      }`}
+                    >
+                      {p === 'all' ? 'All Providers' : p}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {mainCategory === 'exam' && (
+                <>
+                  <span className="text-xs text-slate-400 font-semibold mr-1">Exam Type:</span>
+                  {(['all', 'WAEC', 'NECO', 'NABTEB'] as const).map(e => (
+                    <button
+                      key={e}
+                      onClick={() => setExamFilter(e)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                        examFilter === e
+                          ? 'bg-emerald-600 text-white border-emerald-500'
+                          : 'bg-slate-800/80 text-slate-400 hover:text-white border-slate-700'
+                      }`}
+                    >
+                      {e === 'all' ? 'All Exams' : e}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {/* Search */}
+              <div className="relative ml-auto">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Filter packages..."
+                  className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-700 text-white text-xs rounded-lg w-48 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Table */}
+          {loadingUtility && utilityRows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 rounded-xl border border-slate-800 bg-slate-900/40">
+              <Loader2 size={24} className="animate-spin text-indigo-400 mb-2" />
+              <p className="text-xs text-slate-400">Loading catalog from provider...</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-700/50 overflow-hidden bg-slate-900/40">
+              <div
+                className="grid gap-2 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-900/90 border-b border-slate-700/50"
+                style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr auto' }}
+              >
+                <span>Package / Item</span>
+                <span>Provider</span>
+                <span>Wholesale Cost</span>
+                <span>Markup % / Gain</span>
+                <span>Selling Price</span>
+                <span>Status</span>
+                <span className="text-right">Actions</span>
+              </div>
+
+              <div className="divide-y divide-slate-800/50">
+                {utilityRows
+                  .filter(r => {
+                    if (mainCategory === 'cable' && cableFilter !== 'all' && r.provider_or_network.toUpperCase() !== cableFilter) return false;
+                    if (mainCategory === 'exam' && examFilter !== 'all' && r.provider_or_network.toUpperCase() !== examFilter) return false;
+                    if (search) {
+                      const q = search.toLowerCase();
+                      return r.name.toLowerCase().includes(q) || r.provider_or_network.toLowerCase().includes(q);
+                    }
+                    return true;
+                  })
+                  .map(row => {
+                    const gain = row.sellingPrice - row.costPrice;
+                    return (
+                      <div
+                        key={row.planId}
+                        className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/40 transition-colors ${
+                          row.dirty ? 'bg-amber-500/5' : ''
+                        }`}
+                        style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr auto' }}
+                      >
+                        <div>
+                          <p className="text-xs font-bold text-white">{row.name}</p>
+                          <span className="text-[10px] text-slate-500 font-mono">{row.planId}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                            {row.provider_or_network}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-slate-300 font-mono font-medium">
+                          {fmt(row.costPrice)}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            step={0.5}
+                            value={row.markupPct}
+                            onChange={e => updateUtilityMarkup(row.id, parseFloat(e.target.value) || 0)}
+                            className="w-16 bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2 py-1 font-mono focus:outline-none focus:border-indigo-500"
+                          />
+                          <span className="text-xs text-slate-400">%</span>
+                        </div>
+
+                        <div>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs">₦</span>
+                            <input
+                              type="number"
+                              value={row.sellingPrice}
+                              onChange={e => updateUtilitySelling(row.id, parseFloat(e.target.value) || 0)}
+                              className="w-28 pl-6 pr-2 py-1 bg-slate-950 border border-slate-700 text-emerald-400 font-bold text-xs rounded-lg font-mono focus:outline-none focus:border-emerald-500"
+                            />
+                          </div>
+                          {gain > 0 && (
+                            <p className="text-[10px] text-emerald-400/80 mt-0.5 font-mono">
+                              Gain: +{fmt(gain)}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => toggleUtilityActive(row.id)}
+                            className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition cursor-pointer ${
+                              row.isActive
+                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                : 'bg-slate-800 border-slate-700 text-slate-500'
+                            }`}
+                          >
+                            {row.isActive ? <ToggleRight size={14} className="text-emerald-400" /> : <ToggleLeft size={14} />}
+                            <span>{row.isActive ? 'Active' : 'Disabled'}</span>
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => saveUtilityRow(row)}
+                            disabled={row.saving}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              row.saved && !row.dirty
+                                ? 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-white'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                            }`}
+                          >
+                            {row.saving ? <Loader2 size={12} className="animate-spin" /> : row.saved && !row.dirty ? <Check size={12} className="text-emerald-400" /> : <Save size={12} />}
+                            <span>{row.saving ? 'Saving...' : row.saved && !row.dirty ? 'Saved' : 'Save'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
