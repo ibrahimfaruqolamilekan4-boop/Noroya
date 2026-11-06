@@ -1952,11 +1952,21 @@ async function startServer() {
 
       if (mozoKey && mozoKey.length > 5) {
         const MOZO_SERVICES = [
-          { id: "mtn_sme", network: "MTN" }, { id: "mtn_gifting", network: "MTN" },
-          { id: "mtn_datashare", network: "MTN" }, { id: "mtn_awoof", network: "MTN" },
-          { id: "mtn_awoof2", network: "MTN" }, { id: "glo_sme", network: "GLO" },
-          { id: "glo_data", network: "GLO" }, { id: "airtel_sme", network: "AIRTEL" },
-          { id: "airtel_gifting", network: "AIRTEL" }, { id: "etisalat_data", network: "9MOBILE" }
+          { id: "mtn_sme", network: "MTN" },
+          { id: "mtn_cg", network: "MTN" },
+          { id: "mtn_gifting", network: "MTN" },
+          { id: "mtn_datashare", network: "MTN" },
+          { id: "mtn_awoof", network: "MTN" },
+          { id: "mtn_awoof2", network: "MTN" },
+          { id: "mtn_coupon", network: "MTN" },
+          { id: "glo_sme", network: "GLO" },
+          { id: "glo_cg", network: "GLO" },
+          { id: "glo_data", network: "GLO" },
+          { id: "airtel_sme", network: "AIRTEL" },
+          { id: "airtel_cg", network: "AIRTEL" },
+          { id: "airtel_gifting", network: "AIRTEL" },
+          { id: "etisalat_sme", network: "9MOBILE" },
+          { id: "etisalat_data", network: "9MOBILE" }
         ];
         for (const svc of MOZO_SERVICES) {
           try {
@@ -1992,15 +2002,27 @@ async function startServer() {
             headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" }
           });
           const d: any = await resp.json().catch(() => ({}));
-          const list = Array.isArray(d.plans) ? d.plans : (Array.isArray(d) ? d : []);
+          let list: any[] = [];
+          if (Array.isArray(d)) list = d;
+          else if (Array.isArray(d?.plans)) list = d.plans;
+          else if (Array.isArray(d?.data)) list = d.data;
+          else if (Array.isArray(d?.results)) list = d.results;
+          else if (d && typeof d === 'object') {
+            for (const k of Object.keys(d)) {
+              if (Array.isArray(d[k])) list.push(...d[k]);
+            }
+          }
+
           for (const p of list) {
-            const rawNet = String(p.network || "MTN").toUpperCase();
+            const rawNet = String(p.network || p.network_name || "MTN").toUpperCase();
             const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
-            const cost = Number(p.price || 0);
+            const cost = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
+            const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid);
+            const pId = `nifex_${net.toLowerCase()}_${planId}`;
             livePlans.push({
               network: net,
-              plan_name: p.plan_name || (net + " Data"),
-              provider_plan_id: String(p.plan_id ?? p.pId ?? p.id),
+              plan_name: p.plan_name || p.name || (net + " Data"),
+              provider_plan_id: pId,
               provider_price: cost,
               price_to_user: Math.ceil(cost * 1.10),
               is_active: true,
@@ -2020,23 +2042,29 @@ async function startServer() {
       const { data: existingRows } = await supabase.from("vtu_plans").select("provider_plan_id, price_to_user, is_active");
       const existingMap = new Map();
       if (existingRows) {
-        for (const row of existingRows) existingMap.set(row.provider_plan_id, row);
+        for (const row of existingRows) existingMap.set(String(row.provider_plan_id).trim(), row);
       }
 
       let added = 0;
       let updated = 0;
-      const upsertRows = livePlans.map((p) => {
-        const ext = existingMap.get(p.provider_plan_id);
-        if (ext) {
-          updated++;
-          return { ...p, price_to_user: ext.price_to_user > 0 ? ext.price_to_user : p.price_to_user };
-        } else {
-          added++;
-          return p;
-        }
-      });
+      // Deduplicate strictly by provider_plan_id to prevent ON CONFLICT DO UPDATE cannot affect row a second time
+      const uniquePlanMap = new Map<string, any>();
+      for (const p of livePlans) {
+        const key = String(p.provider_plan_id).trim();
+        if (!key) continue;
+        const ext = existingMap.get(key);
+        const row = {
+          ...p,
+          provider_plan_id: key,
+          price_to_user: ext && ext.price_to_user > 0 ? ext.price_to_user : p.price_to_user
+        };
+        if (ext) updated++; else added++;
+        uniquePlanMap.set(key, row);
+      }
+      const upsertRows = Array.from(uniquePlanMap.values());
 
       const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
+      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
       if (upsertErr) return res.status(500).json({ error: upsertErr.message });
 
       const liveSet = new Set(livePlans.map(p => p.provider_plan_id));
@@ -2171,14 +2199,19 @@ async function startServer() {
 
       const SERVICES = [
         { id: "mtn_sme",       network: "MTN",    plan_type: "SME"       },
+        { id: "mtn_cg",        network: "MTN",    plan_type: "CG"        },
         { id: "mtn_gifting",   network: "MTN",    plan_type: "GIFTING"   },
         { id: "mtn_datashare", network: "MTN",    plan_type: "DATASHARE" },
         { id: "mtn_awoof",     network: "MTN",    plan_type: "AWOOF"     },
         { id: "mtn_awoof2",    network: "MTN",    plan_type: "AWOOF"     },
+        { id: "mtn_coupon",    network: "MTN",    plan_type: "COUPON"    },
         { id: "glo_sme",       network: "GLO",    plan_type: "SME"       },
+        { id: "glo_cg",        network: "GLO",    plan_type: "CG"        },
         { id: "glo_data",      network: "GLO",    plan_type: "DATA"      },
         { id: "airtel_sme",    network: "AIRTEL", plan_type: "SME"       },
+        { id: "airtel_cg",     network: "AIRTEL", plan_type: "CG"        },
         { id: "airtel_gifting",network: "AIRTEL", plan_type: "GIFTING"   },
+        { id: "etisalat_sme",  network: "9MOBILE",plan_type: "SME"       },
         { id: "etisalat_data", network: "9MOBILE",plan_type: "DATA"      },
       ];
 
@@ -2255,23 +2288,204 @@ async function startServer() {
       // Load existing DB selling prices for comparison
       const { data: dbRows } = await supabase
         .from('services_config')
-        .select('mozosubz_plan_id, bigisub_identifier_id, selling_price');
-      const priceMap: Record<string, number> = {};
+        .select('mozosubz_plan_id, bigisub_identifier_id, selling_price, cost_price');
+      const priceMap: Record<string, { selling: number; cost: number }> = {};
       (dbRows || []).forEach((r: any) => {
         const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || '');
-        if (k) priceMap[k] = Number(r.selling_price || 0);
+        if (k) priceMap[k] = { selling: Number(r.selling_price || 0), cost: Number(r.cost_price || 0) };
       });
 
-      const enriched = allPlans.map(p => ({
-        ...p,
-        selling_price: priceMap[p.id] || 0,
-      }));
+      const enriched = allPlans.map(p => {
+        const ext = priceMap[p.id];
+        let selling = 0;
+        if (ext) {
+          // If cost changed significantly (e.g. wholesale price changed to 400), recalculate selling
+          if (ext.cost > 0 && Math.abs(ext.cost - p.price) > 0.5) {
+            selling = Math.ceil(p.price * 1.10);
+          } else {
+            selling = ext.selling || Math.ceil(p.price * 1.10);
+          }
+        } else {
+          selling = Math.ceil(p.price * 1.10);
+        }
+        return {
+          ...p,
+          selling_price: selling,
+          cost_changed: ext && ext.cost > 0 && Math.abs(ext.cost - p.price) > 0.5
+        };
+      });
 
       console.log(`[fetch-mozosubz-plans] Returning ${enriched.length} plans across ${SERVICES.length} services`);
       return res.json({ plans: enriched });
     } catch (err: any) {
       console.error("[POST /api/admin/fetch-mozosubz-plans Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // POST /api/admin/fetch-utility-catalog — Fetch Cable TV, Electricity, or Exam PIN catalog
+  app.post("/api/admin/fetch-utility-catalog", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { serviceType = 'cable', provider = 'mozosubz' } = req.body;
+      const cleanType = String(serviceType).toLowerCase();
+
+      if (cleanType === 'cable') {
+        const { data: dbRows } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'cable')
+          .order('provider_or_network', { ascending: true })
+          .order('selling_price', { ascending: true });
+
+        const dbMap = new Map<string, any>();
+        (dbRows || []).forEach((r: any) => {
+          const k = `${String(r.provider_or_network).toUpperCase()}_${String(r.item_name).toLowerCase().trim()}`;
+          dbMap.set(k, r);
+          if (r.bigisub_plan_id) dbMap.set(String(r.bigisub_plan_id), r);
+          if (r.mozosubz_plan_id) dbMap.set(String(r.mozosubz_plan_id), r);
+        });
+
+        const baseCable = [
+          { provider: 'GOTV', plan_id: 'gotv_smallie', name: 'GOtv Smallie', cost: 1575, defaultSelling: 1750, duration: '30 Days' },
+          { provider: 'GOTV', plan_id: 'gotv_jinja', name: 'GOtv Jinja', cost: 3300, defaultSelling: 3500, duration: '30 Days' },
+          { provider: 'GOTV', plan_id: 'gotv_jolli', name: 'GOtv Jolli', cost: 4850, defaultSelling: 5100, duration: '30 Days' },
+          { provider: 'GOTV', plan_id: 'gotv_max', name: 'GOtv Max', cost: 7200, defaultSelling: 7500, duration: '30 Days' },
+          { provider: 'GOTV', plan_id: 'gotv_supa', name: 'GOtv Supa', cost: 9600, defaultSelling: 9900, duration: '30 Days' },
+          { provider: 'GOTV', plan_id: 'gotv_supaplus', name: 'GOtv Supa Plus', cost: 15700, defaultSelling: 16100, duration: '30 Days' },
+
+          { provider: 'DSTV', plan_id: 'dstv_padi', name: 'DStv Padi', cost: 3600, defaultSelling: 3850, duration: '30 Days' },
+          { provider: 'DSTV', plan_id: 'dstv_yanga', name: 'DStv Yanga', cost: 5100, defaultSelling: 5400, duration: '30 Days' },
+          { provider: 'DSTV', plan_id: 'dstv_confam', name: 'DStv Confam', cost: 9300, defaultSelling: 9650, duration: '30 Days' },
+          { provider: 'DSTV', plan_id: 'dstv_compact', name: 'DStv Compact', cost: 15700, defaultSelling: 16200, duration: '30 Days' },
+          { provider: 'DSTV', plan_id: 'dstv_compactplus', name: 'DStv Compact Plus', cost: 25000, defaultSelling: 25700, duration: '30 Days' },
+          { provider: 'DSTV', plan_id: 'dstv_premium', name: 'DStv Premium', cost: 37000, defaultSelling: 38000, duration: '30 Days' },
+
+          { provider: 'STARTIMES', plan_id: 'startimes_nova', name: 'Nova', cost: 1700, defaultSelling: 1900, duration: '30 Days' },
+          { provider: 'STARTIMES', plan_id: 'startimes_basic', name: 'Basic', cost: 3000, defaultSelling: 3250, duration: '30 Days' },
+          { provider: 'STARTIMES', plan_id: 'startimes_smart', name: 'Smart', cost: 3800, defaultSelling: 4100, duration: '30 Days' },
+          { provider: 'STARTIMES', plan_id: 'startimes_classic', name: 'Classic', cost: 4500, defaultSelling: 4800, duration: '30 Days' },
+          { provider: 'STARTIMES', plan_id: 'startimes_super', name: 'Super', cost: 7000, defaultSelling: 7400, duration: '30 Days' },
+
+          { provider: 'SHOWMAX', plan_id: 'showmax_mobile', name: 'Showmax Mobile Only', cost: 1600, defaultSelling: 1800, duration: '30 Days' },
+          { provider: 'SHOWMAX', plan_id: 'showmax_pro', name: 'Showmax Pro', cost: 3200, defaultSelling: 3500, duration: '30 Days' },
+        ];
+
+        const plans = baseCable.map(item => {
+          const match = dbMap.get(item.plan_id) || dbMap.get(`${item.provider}_${item.name.toLowerCase()}`);
+          const cost = Number(match?.cost_price || item.cost);
+          const selling = Number(match?.selling_price || match?.retail_price || item.defaultSelling);
+          const markup = cost > 0 ? Math.round(((selling - cost) / cost) * 1000) / 10 : 10;
+          return {
+            id: match?.id || item.plan_id,
+            plan_id: item.plan_id,
+            name: match?.item_name || item.name,
+            provider_or_network: item.provider,
+            network: item.provider,
+            cost_price: cost,
+            selling_price: selling,
+            markup_pct: markup,
+            validity_days: match?.validity_days || item.duration,
+            is_active: match ? match.is_active !== false : true,
+            service_type: 'cable',
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+
+        return res.json({ success: true, serviceType: 'cable', plans });
+      }
+
+      if (cleanType === 'electricity') {
+        const { data: dbRows } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'electricity');
+
+        const dbMap = new Map<string, any>();
+        (dbRows || []).forEach((r: any) => {
+          const k = String(r.provider_or_network).toUpperCase().trim();
+          dbMap.set(k, r);
+        });
+
+        const discos = [
+          ['IKEDC', 'Ikeja Electric'], ['EKEDC', 'Eko Electric'], ['AEDC', 'Abuja Electric'],
+          ['PHED', 'Port Harcourt Electric'], ['IBEDC', 'Ibadan Electric'], ['KAEDCO', 'Kaduna Electric'],
+          ['KEDCO', 'Kano Electric'], ['JED', 'Jos Electric'], ['EEDC', 'Enugu Electric'],
+          ['BEDC', 'Benin Electric'], ['YEDC', 'Yola Electric'], ['BAEDC', 'Bauchi Electric'],
+        ];
+
+        const plans = discos.map(([code, name]) => {
+          const match = dbMap.get(code);
+          const cost = Number(match?.cost_price || 0); // Convenience cost
+          const fee = Number(match?.selling_price || 100); // Admin markup/convenience fee
+          return {
+            id: match?.id || `disco_${code.toLowerCase()}`,
+            plan_id: `disco_${code.toLowerCase()}`,
+            name,
+            provider_or_network: code,
+            network: code,
+            cost_price: cost,
+            selling_price: fee,
+            markup_pct: 0,
+            minimum_amount: 1000,
+            is_active: match ? match.is_active !== false : true,
+            service_type: 'electricity',
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+
+        return res.json({ success: true, serviceType: 'electricity', plans });
+      }
+
+      if (cleanType === 'exam' || cleanType === 'exam_pin') {
+        const { data: dbRows } = await supabase
+          .from('services_config')
+          .select('*')
+          .or("service_type.eq.exam,service_type.eq.exam_pin");
+
+        const dbMap = new Map<string, any>();
+        (dbRows || []).forEach((r: any) => {
+          const k = String(r.provider_or_network).toUpperCase().trim();
+          dbMap.set(k, r);
+          if (r.bigisub_plan_id) dbMap.set(String(r.bigisub_plan_id), r);
+        });
+
+        const defaultExams = [
+          { code: 'WAEC', name: 'WAEC Result Checker PIN', cost: 3000, defaultSelling: 3400 },
+          { code: 'NECO', name: 'NECO Result Token', cost: 2600, defaultSelling: 2900 },
+          { code: 'NABTEB', name: 'NABTEB Result Card PIN', cost: 2800, defaultSelling: 3200 },
+        ];
+
+        const plans = defaultExams.map(item => {
+          const match = dbMap.get(item.code);
+          const cost = Number(match?.cost_price || item.cost);
+          const selling = Number(match?.selling_price || match?.retail_price || item.defaultSelling);
+          const markup = cost > 0 ? Math.round(((selling - cost) / cost) * 1000) / 10 : 10;
+          return {
+            id: match?.id || `exam_${item.code.toLowerCase()}`,
+            plan_id: `exam_${item.code.toLowerCase()}`,
+            name: match?.item_name || item.name,
+            provider_or_network: item.code,
+            network: item.code,
+            cost_price: cost,
+            selling_price: selling,
+            markup_pct: markup,
+            is_active: match ? match.is_active !== false : true,
+            service_type: 'exam_pin',
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+
+        return res.json({ success: true, serviceType: 'exam', plans });
+      }
+
+      return res.status(400).json({ error: `Unsupported utility serviceType: ${serviceType}` });
+    } catch (err: any) {
+      console.error("[fetch-utility-catalog Exception]:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -2416,14 +2630,45 @@ async function startServer() {
       const { type } = req.params;
       const { group, provider, network } = req.query;
 
-      const allowedTypes = ['data', 'airtime', 'cable', 'electricity', 'exam_pin'];
+      const allowedTypes = ['data', 'airtime', 'cable', 'electricity', 'exam_pin', 'exam'];
       if (!allowedTypes.includes(type)) {
         return res.status(400).json({ error: `Invalid service type: ${type}. Must be one of: ${allowedTypes.join(', ')}` });
       }
 
-      // Electricity is an amount-based service. Return supported DISCO capabilities,
-      // not fake admin plan rows; the user's entered amount is sent directly to Mozosubz.
+      // Exam PINs handling (WAEC, NECO, NABTEB)
+      if (type === 'exam' || type === 'exam_pin') {
+        const { data: dbExams, error: examErr } = await supabase
+          .from('services_config')
+          .select('*')
+          .or("service_type.eq.exam,service_type.eq.exam_pin")
+          .eq('is_active', true)
+          .order('selling_price', { ascending: true });
+
+        if (!examErr && dbExams && dbExams.length > 0) {
+          return res.json(sanitizePublicPlans(dbExams));
+        }
+
+        // Fallback default standard exam pin packages
+        const defaultExams = [
+          { id: 'exam_waec', provider_or_network: 'WAEC', item_name: 'WAEC Result Checker PIN', cost_price: 3000, selling_price: 3400, retail_price: 3400, service_type: 'exam_pin', is_active: true },
+          { id: 'exam_neco', provider_or_network: 'NECO', item_name: 'NECO Result Token', cost_price: 2600, selling_price: 2900, retail_price: 2900, service_type: 'exam_pin', is_active: true },
+          { id: 'exam_nabteb', provider_or_network: 'NABTEB', item_name: 'NABTEB Result Card PIN', cost_price: 2800, selling_price: 3200, retail_price: 3200, service_type: 'exam_pin', is_active: true },
+        ];
+        return res.json(defaultExams);
+      }
+
+      // Electricity is an amount-based service.
       if (type === 'electricity') {
+        const { data: dbDiscos } = await supabase
+          .from('services_config')
+          .select('*')
+          .eq('service_type', 'electricity')
+          .eq('is_active', true);
+
+        if (dbDiscos && dbDiscos.length > 0) {
+          return res.json(sanitizePublicPlans(dbDiscos));
+        }
+
         const discos = [
           ['IKEDC', 'Ikeja Electric'], ['EKEDC', 'Eko Electric'], ['AEDC', 'Abuja Electric'],
           ['PHED', 'Port Harcourt Electric'], ['IBEDC', 'Ibadan Electric'], ['KAEDCO', 'Kaduna Electric'],
@@ -2459,6 +2704,30 @@ async function startServer() {
       if (queryErr) {
         console.error("[Supabase GET Services Error]:", queryErr);
         return res.status(500).json({ error: `Database error: ${queryErr.message}` });
+      }
+
+      if (type === 'cable' && (!services || services.length === 0)) {
+        // Fallback default cable packages if none saved in DB yet
+        const defaultCable = [
+          { id: 'cable_gotv_smallie', provider_or_network: 'GOTV', item_name: 'GOtv Smallie', cost_price: 1575, selling_price: 1750, retail_price: 1750, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_gotv_jinja', provider_or_network: 'GOTV', item_name: 'GOtv Jinja', cost_price: 3300, selling_price: 3500, retail_price: 3500, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_gotv_jolli', provider_or_network: 'GOTV', item_name: 'GOtv Jolli', cost_price: 4850, selling_price: 5100, retail_price: 5100, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_gotv_max', provider_or_network: 'GOTV', item_name: 'GOtv Max', cost_price: 7200, selling_price: 7500, retail_price: 7500, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_gotv_supa', provider_or_network: 'GOTV', item_name: 'GOtv Supa', cost_price: 9600, selling_price: 9900, retail_price: 9900, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_gotv_supaplus', provider_or_network: 'GOTV', item_name: 'GOtv Supa Plus', cost_price: 15700, selling_price: 16100, retail_price: 16100, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_padi', provider_or_network: 'DSTV', item_name: 'DStv Padi', cost_price: 3600, selling_price: 3850, retail_price: 3850, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_yanga', provider_or_network: 'DSTV', item_name: 'DStv Yanga', cost_price: 5100, selling_price: 5400, retail_price: 5400, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_confam', provider_or_network: 'DSTV', item_name: 'DStv Confam', cost_price: 9300, selling_price: 9650, retail_price: 9650, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_compact', provider_or_network: 'DSTV', item_name: 'DStv Compact', cost_price: 15700, selling_price: 16200, retail_price: 16200, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_compactplus', provider_or_network: 'DSTV', item_name: 'DStv Compact Plus', cost_price: 2500, selling_price: 25700, retail_price: 25700, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_dstv_premium', provider_or_network: 'DSTV', item_name: 'DStv Premium', cost_price: 37000, selling_price: 38000, retail_price: 38000, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_startimes_nova', provider_or_network: 'STARTIMES', item_name: 'Nova', cost_price: 1700, selling_price: 1900, retail_price: 1900, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_startimes_basic', provider_or_network: 'STARTIMES', item_name: 'Basic', cost_price: 3000, selling_price: 3250, retail_price: 3250, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_startimes_smart', provider_or_network: 'STARTIMES', item_name: 'Smart', cost_price: 3800, selling_price: 4100, retail_price: 4100, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_startimes_classic', provider_or_network: 'STARTIMES', item_name: 'Classic', cost_price: 4500, selling_price: 4800, retail_price: 4800, validity_days: '30 Days', service_type: 'cable', is_active: true },
+          { id: 'cable_startimes_super', provider_or_network: 'STARTIMES', item_name: 'Super', cost_price: 7000, selling_price: 7400, retail_price: 7400, validity_days: '30 Days', service_type: 'cable', is_active: true },
+        ];
+        return res.json(defaultCable);
       }
 
       // Group outputs logically if requested
@@ -2998,11 +3267,15 @@ if (Object.keys(updateData).length <= 1) {
         resellerPrice, agentPrice, duration, peyflex_variation_id,
       } = req.body;
 
-      const rawNet = String(network || 'MTN').trim().toUpperCase();
-      let finalNet = rawNet.includes('AIRTEL') ? 'AIRTEL'
-        : rawNet.includes('GLO')               ? 'GLO'
-        : (rawNet.includes('9MOBILE') || rawNet.includes('ETISALAT')) ? '9MOBILE'
-        : 'MTN';
+      const rawType = String(type || 'data').toLowerCase();
+      const rawNet = String(network || req.body.provider || req.body.provider_or_network || 'MTN').trim().toUpperCase();
+      let finalNet = rawNet;
+      if (rawType === 'data' || rawType === 'airtime') {
+        finalNet = rawNet.includes('AIRTEL') ? 'AIRTEL'
+          : rawNet.includes('GLO')               ? 'GLO'
+          : (rawNet.includes('9MOBILE') || rawNet.includes('ETISALAT')) ? '9MOBILE'
+          : 'MTN';
+      }
 
       const pNameUpper = String(name || '').toUpperCase();
       let planCat = plan_category?.toUpperCase()
@@ -3013,10 +3286,6 @@ if (Object.keys(updateData).length <= 1) {
       const planId       = String(mozosubz_plan_id || id || `plan_${Date.now()}`);
 
       const record: any = {
-        // Core identifiers — upsert on mozosubz_plan_id when available, else bigisub_identifier_id.
-        // bigisub_plan_id is a separate legacy NOT NULL column on services_config (distinct from
-        // bigisub_identifier_id) -- must always be populated or inserts of new plans fail with
-        // "null value in column bigisub_plan_id violates not-null constraint".
         mozosubz_plan_id:     planId,
         bigisub_identifier_id: planId,
         bigisub_plan_id:      planId,
@@ -3036,15 +3305,18 @@ if (Object.keys(updateData).length <= 1) {
         network:              finalNet,
         network_type:         finalNet,
         provider_or_network:  finalNet,
-        service_type:         String(type || 'data').toLowerCase(),
+        service_type:         rawType === 'exam' ? 'exam_pin' : rawType,
         plan_category:        planCat,
-        type:                 String(type || 'data').toLowerCase(),
+        type:                 rawType === 'exam' ? 'exam_pin' : rawType,
         validity_days:        validity_days || duration || '30 Days',
+
+        // Provider
+        provider:             req.body.provider || 'mozosubz',
 
         // Legacy / compat
         peyflex_variation_id: peyflex_variation_id || planId,
 
-        is_active:            true,
+        is_active:            req.body.is_active !== undefined ? req.body.is_active : true,
         updated_at:           new Date().toISOString(),
       };
 
@@ -6265,14 +6537,19 @@ if (Object.keys(updateData).length <= 1) {
         const MOZO_BASE = "https://mozosubz.xyz/api/v1";
         const MOZO_SERVICES = [
           { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+          { id: "mtn_cg", network: "MTN", plan_type: "CG" },
           { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
           { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
           { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
           { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
           { id: "glo_sme", network: "GLO", plan_type: "SME" },
+          { id: "glo_cg", network: "GLO", plan_type: "CG" },
           { id: "glo_data", network: "GLO", plan_type: "DATA" },
           { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+          { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
           { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+          { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
           { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" },
         ];
 
@@ -6362,14 +6639,23 @@ if (Object.keys(updateData).length <= 1) {
           };
         });
 
+        // Deduplicate strictly by bigisub_identifier_id before upserting to prevent ON CONFLICT DO UPDATE errors
+        const uniqueById = new Map<string, any>();
+        for (const row of rowsToUpsert) {
+          const key = String(row.bigisub_identifier_id || '').trim();
+          if (key) uniqueById.set(key, row);
+        }
+        const dedupedRowsToUpsert = Array.from(uniqueById.values());
+
         // Batch upsert in chunks of 50
         const db = getScopedSupabaseClient(req.headers.authorization);
-        for (let i = 0; i < rowsToUpsert.length; i += 50) {
-          const chunk = rowsToUpsert.slice(i, i + 50);
+        for (let i = 0; i < dedupedRowsToUpsert.length; i += 50) {
+          const chunk = dedupedRowsToUpsert.slice(i, i + 50);
           const { error } = await db
             .from('services_config')
             .upsert(chunk, { onConflict: 'bigisub_identifier_id' });
           if (!error) publishedCount += chunk.length;
+          else console.warn("[fetch-all-providers-plans chunk upsert error]:", error.message);
         }
       }
 

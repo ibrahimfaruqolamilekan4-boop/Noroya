@@ -39,10 +39,19 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
   const [emailDelivery, setEmailDelivery] = React.useState('');
   const [liveCablePlans, setLiveCablePlans] = React.useState<any[]>([]);
   const [liveElectricityPlans, setLiveElectricityPlans] = React.useState<any[]>([]);
+  const [liveExamPlans, setLiveExamPlans] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    Promise.all([fetch('/api/services/cable').then(r => r.ok ? r.json() : []), fetch('/api/services/electricity').then(r => r.ok ? r.json() : [])])
-      .then(([cable, electricity]) => { setLiveCablePlans(Array.isArray(cable) ? cable : []); setLiveElectricityPlans(Array.isArray(electricity) ? electricity : []); })
+    Promise.all([
+      fetch('/api/services/cable').then(r => r.ok ? r.json() : []),
+      fetch('/api/services/electricity').then(r => r.ok ? r.json() : []),
+      fetch('/api/services/exam').then(r => r.ok ? r.json() : [])
+    ])
+      .then(([cable, electricity, exam]) => {
+        setLiveCablePlans(Array.isArray(cable) ? cable : []);
+        setLiveElectricityPlans(Array.isArray(electricity) ? electricity : []);
+        setLiveExamPlans(Array.isArray(exam) ? exam : []);
+      })
       .catch(() => toast.error('Could not load live utility plans.'));
   }, []);
 
@@ -168,8 +177,9 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
         finalAmount = Number(amount);
         finalPlan = String(liveElectricityPlans.find((row: any) => String(row.provider_or_network || '').toUpperCase() === provider)?.bigisub_plan_id || liveElectricityPlans.find((row: any) => String(row.provider_or_network || '').toUpperCase() === provider)?.mozosubz_plan_id || `${provider.toLowerCase()}_${amount}`);
       } else if (selectedService === 'exam') {
-        const unitPrices: any = { 'WAEC': 3200, 'NECO': 2800, 'NABTEB': 3000 };
-        finalAmount = (unitPrices[provider] || 3000) * examQty;
+        const matched = liveExamPlans.find((r: any) => String(r.provider_or_network || '').toUpperCase() === provider.toUpperCase());
+        const unitPrice = Number(matched?.selling_price || matched?.retail_price || (provider === 'WAEC' ? 3400 : provider === 'NECO' ? 2900 : 3200));
+        finalAmount = unitPrice * examQty;
         finalPlan = `${examQty}x ${provider} PIN(s) delivered to ${emailDelivery}`;
       } else if (selectedService === 'betting') {
         finalAmount = Number(amount);
@@ -508,7 +518,9 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                         {selectedService === 'cable' ? formatCurrency(Number(planName.split('|')[1] || 0)) : ''}
                         {selectedService === 'electricity' ? formatCurrency(Number(amount)) : ''}
                         {selectedService === 'betting' ? formatCurrency(Number(amount)) : ''}
-                        {selectedService === 'exam' ? formatCurrency((provider === 'WAEC' ? 3200 : provider === 'NECO' ? 2800 : 3000) * examQty) : ''}
+                        {selectedService === 'exam' ? formatCurrency(
+                          (Number(liveExamPlans.find((r: any) => String(r.provider_or_network || '').toUpperCase() === provider.toUpperCase())?.selling_price) || (provider === 'WAEC' ? 3400 : provider === 'NECO' ? 2900 : 3200)) * examQty
+                        ) : ''}
                       </span>
                     </div>
                   </div>

@@ -383,6 +383,71 @@ export async function purchaseNifexUtility(p: UtilityPurchaseParams): Promise<Pu
   }
 }
 
+// ─── Exam PIN Purchases (WAEC, NECO, NABTEB) ─────────────────────────────────
+
+export interface ExamPurchaseParams {
+  provider: 'mozosubz' | 'nifex';
+  examType: string; // 'WAEC' | 'NECO' | 'NABTEB'
+  quantity: number;
+  phone?: string;
+  apiKey: string;
+}
+
+export async function purchaseExamPin(p: ExamPurchaseParams): Promise<PurchaseResult> {
+  const isNifex = p.provider === 'nifex';
+  const cleanExam = p.examType.toUpperCase().trim();
+
+  if (isNifex) {
+    const base = process.env.NIFEX_BASE_URL || 'https://nifexdataapp.com.ng/api';
+    const examMap: Record<string, number> = { WAEC: 1, NECO: 2, NABTEB: 3 };
+    const payload = {
+      exam_name: examMap[cleanExam] || 1,
+      quantity: Number(p.quantity || 1),
+    };
+    try {
+      const resp = await axios.post(`${base}/exam/`, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${p.apiKey.replace(/^Token\s+/i, '').trim()}`,
+        },
+        timeout: 15000,
+      });
+      const d = resp.data;
+      const ok = d?.status === 'success' || d?.Status === 'successful' || d?.status === true || d?.success === true;
+      if (ok) {
+        return { success: true, reference: d.ident || d.id || d.reference, raw: d };
+      }
+      return { success: false, error: d?.msg || d?.message || 'Rejected by Nifex Data Exam API', raw: d };
+    } catch (err: any) {
+      return { success: false, error: err.response?.data?.msg || err.message, raw: err.response?.data };
+    }
+  } else {
+    // Mozosubz
+    const base = process.env.MOZOSUBZ_BASE_URL || 'https://mozosubz.xyz/api/v1';
+    const payload = {
+      exam_type: cleanExam,
+      quantity: Number(p.quantity || 1),
+      phone: p.phone || '08000000000',
+    };
+    try {
+      const resp = await axios.post(`${base}/exam/purchase`, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Connect-Key': p.apiKey,
+        },
+        timeout: 15000,
+      });
+      const d = resp.data;
+      if (d?.success === true || d?.status === 'success') {
+        return { success: true, reference: d.transaction_id || d.reference || d.id, raw: d };
+      }
+      return { success: false, error: d?.error || d?.message || 'Rejected by Mozosubz Exam API', raw: d };
+    } catch (err: any) {
+      return { success: false, error: err.response?.data?.error || err.message, raw: err.response?.data };
+    }
+  }
+}
+
 // ─── Nifex User / Balance Lookup ──────────────────────────────────────────────
 
 export async function fetchNifexUser(apiKey: string) {
@@ -435,19 +500,41 @@ export async function fetchNifexPlans(apiKey?: string): Promise<{
       timeout: 15000,
     });
     const d = resp.data;
-    if (d?.status === 'success' || Array.isArray(d?.plans)) {
+    // Handle all variations of Nifex API responses:
+    // 1) Direct top-level array: [ { id: 1, ... } ]
+    // 2) Standard { status: 'success', plans: [ ... ] } or { plans: [ ... ] }
+    // 3) Wrapped { data: [ ... ] } or { results: [ ... ] }
+    // 4) Grouped object by network: { MTN: [ ... ], GLO: [ ... ] }
+    let rawList: any[] = [];
+    if (Array.isArray(d)) {
+      rawList = d;
+    } else if (Array.isArray(d?.plans)) {
+      rawList = d.plans;
+    } else if (Array.isArray(d?.data)) {
+      rawList = d.data;
+    } else if (Array.isArray(d?.results)) {
+      rawList = d.results;
+    } else if (d && typeof d === 'object') {
+      for (const k of Object.keys(d)) {
+        if (Array.isArray(d[k])) {
+          rawList.push(...d[k]);
+        }
+      }
+    }
+
+    if (rawList.length > 0 || d?.status === 'success') {
       return {
         success: true,
-        plans: Array.isArray(d.plans) ? d.plans : [],
-        account_type: d.account_type || 'Vendor',
-        count: d.count || (Array.isArray(d.plans) ? d.plans.length : 0),
+        plans: rawList,
+        account_type: d?.account_type || 'Vendor',
+        count: rawList.length,
         raw: d,
       };
     }
     return {
       success: false,
       plans: [],
-      error: d?.message || 'Failed to retrieve plans from Nifex Data',
+      error: d?.message || d?.msg || d?.error || 'Failed to retrieve plans from Nifex Data',
       raw: d,
     };
   } catch (err: any) {
@@ -496,7 +583,7 @@ export async function fetchNifexLivePlans(apiKey?: string): Promise<{
   }
 
   const mapped = (res.plans || []).map((p: any) => {
-    const netRaw = String(p.network || 'MTN').toUpperCase();
+    const netRaw = String(p.network || p.network_name || 'MTN').toUpperCase();
     const netUpper = netRaw.includes('MTN')
       ? 'MTN'
       : netRaw.includes('AIRTEL')
@@ -504,7 +591,9 @@ export async function fetchNifexLivePlans(apiKey?: string): Promise<{
       : netRaw.includes('GLO')
       ? 'GLO'
       : '9MOBILE';
-    const planType = String(p.type || 'SME').toUpperCase();
+    const rawType = String(p.plan_type || p.type || '').toUpperCase();
+    const rawName = String(p.plan_name || p.name || p.plan || p.title || `${netUpper} Data`);
+    const planType = rawType || (rawName.toUpperCase().includes('CG') ? 'CG' : rawName.toUpperCase().includes('GIFT') ? 'GIFTING' : 'SME');
     const service =
       netUpper === 'MTN'
         ? planType.includes('CG') || planType.includes('CORPORATE')
@@ -513,19 +602,21 @@ export async function fetchNifexLivePlans(apiKey?: string): Promise<{
           ? 'mtn_gifting'
           : 'mtn_sme'
         : netUpper === 'AIRTEL'
-        ? 'airtel_data'
+        ? planType.includes('CG') ? 'airtel_cg' : 'airtel_sme'
         : netUpper === 'GLO'
-        ? 'glo_data'
+        ? planType.includes('CG') ? 'glo_cg' : 'glo_data'
         : 'etisalat_data';
-    const planId = Number(p.plan_id ?? p.pId ?? p.id ?? 0);
+    const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid ?? Math.floor(Math.random() * 100000));
+    const price = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
+    const validity = String(p.validity || p.month_validate || p.duration || '30 Days');
     return {
       id: `nifex_${netUpper.toLowerCase()}_${planId}`,
       plan_id: planId,
-      name: `${netUpper} ${p.plan_name} ${planType} (${p.validity || '30 Days'})`,
-      price: Number(p.price || 0),
+      name: `${netUpper} ${rawName} ${planType} (${validity})`,
+      price,
       network: netUpper,
       plan_type: planType,
-      validity: p.validity || '30 Days',
+      validity,
       service,
       provider: 'nifex',
     };
