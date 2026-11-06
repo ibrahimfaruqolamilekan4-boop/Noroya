@@ -14,7 +14,31 @@ import { PWAInstallBanner } from './components/PWAInstallBanner';
 
 function AppContent() {
   const { user, loading } = useAuth();
-  const [showAuth, setShowAuth] = React.useState(false);
+  const [showAuth, setShowAuth] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return (
+        window.location.pathname === '/auth' ||
+        window.location.pathname === '/login' ||
+        window.location.search.includes('auth=true') ||
+        window.location.search.includes('mode=login') ||
+        window.location.search.includes('mode=signup')
+      );
+    }
+    return false;
+  });
+  const [authMode, setAuthMode] = React.useState<'login' | 'signup'>('login');
+
+  const handleOpenAuth = (mode?: 'login' | 'signup') => {
+    if (mode) setAuthMode(mode);
+    setShowAuth(true);
+  };
+
+  const handleCloseAuth = () => {
+    setShowAuth(false);
+    if (typeof window !== 'undefined' && window.location.pathname === '/auth') {
+      window.history.pushState({}, '', '/');
+    }
+  };
 
   if (loading) {
     return (
@@ -57,11 +81,14 @@ function AppContent() {
         </div>
       }>
         {!user && !showAuth && (
-          <LandingPage onAuth={() => setShowAuth(true)} />
+          <LandingPage onAuth={handleOpenAuth} />
         )}
 
         {!user && showAuth && (
-          <AuthPage onBack={() => setShowAuth(false)} />
+          <AuthPage
+            initialMode={authMode}
+            onBack={handleCloseAuth}
+          />
         )}
 
         {user && (
