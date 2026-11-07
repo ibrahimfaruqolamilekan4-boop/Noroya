@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NORODATA QR Poster</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        @media print {
+            .no-print { display: none !important; }
+            body { background-color: white !important; }
+            .a4-poster {
+                margin: 0 !important;
+                box-shadow: none !important;
+                width: 100% !important;
+                height: 100% !important;
+                border: 8px solid #3B7A3B !important;
+                padding: 10mm !important;
+            }
+        }
+        body { background-color: #f3f4f6; font-family: system-ui, -apple-system, sans-serif; }
+        .a4-poster {
+            background: white;
+            width: 210mm;
+            min-height: 297mm;
+            margin: 40px auto;
+            padding: 20mm;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="text-center mt-8 no-print">
+        <button onclick="window.print()" class="bg-[#3B7A3B] text-white px-8 py-4 rounded-2xl font-bold text-xl shadow-lg hover:bg-green-700 transition transform hover:scale-105 active:scale-95">
+            🖨️ Print Poster (A4)
+        </button>
+        <p class="mt-4 text-gray-500 font-medium">Tip: In your print settings, make sure Paper Size is A4,<br>and uncheck "Headers and Footers".</p>
+    </div>
+
+    <div class="a4-poster border-8 border-[#3B7A3B]">
+        <div class="w-32 h-32 rounded-[2rem] flex items-center justify-center bg-[#3B7A3B] mb-6 mx-auto shadow-lg">
+            <span class="text-white font-black text-7xl">N</span>
+        </div>
+        <h1 class="text-6xl font-black text-gray-900 mb-4 tracking-tighter">NORODATA</h1>
+        <h2 class="text-4xl font-bold text-[#3B7A3B] mb-16 tracking-tight">Buy Cheap Data Instantly!</h2>
+        
+        <div id="qrcode" class="p-6 bg-white border-4 border-gray-100 rounded-[2rem] shadow-sm inline-block mb-16"></div>
+        
+        <p class="text-3xl font-bold text-gray-800 leading-snug">Scan with your phone camera<br>to visit our website</p>
+        <p class="text-2xl font-black text-[#3B7A3B] mt-6 tracking-wide">noroya.vercel.app</p>
+    </div>
+
+    <script>
+        new QRCode(document.getElementById("qrcode"), {
+            text: "https://noroya.vercel.app",
+            width: 400,
+            height: 400,
+            colorDark : "#132613",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+    </script>
+</body>
+</html>

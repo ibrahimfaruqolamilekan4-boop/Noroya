@@ -1,0 +1,122 @@
+/* ============================================================
+   UID display card (matches referral code card styling)
+   ============================================================ */
+.uid-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.uid-label {
+  display: inline-block;
+  background: #e6f0ff;
+  color: #1a4fd6;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+
+.uid-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.uid-box {
+  flex: 1;
+  background: #f5f6fa;
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.uid-copy-btn {
+  background: #0b0f2b;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 14px 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.uid-copy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.uid-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #8a8fa3;
+}
+
+/* ============================================================
+   Balance card buttons
+   ============================================================ */
+.balance-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.fund-btn {
+  background: #3358f4;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1;
+}
+
+.transfer-btn {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1;
+}
+
+/* ============================================================
+   Transfer modal
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  position: relative;
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-size: 26px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #666;
+}
