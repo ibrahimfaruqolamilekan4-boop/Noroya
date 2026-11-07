@@ -6,28 +6,52 @@
   <!-- Homepage -->
   <url>
     <loc>https://noroya.vercel.app/</loc>
-    <lastmod>2026-10-30</lastmod>
-    <changefreq>daily</changefreq>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>hourly</changefreq>
     <priority>1.0</priority>
     <image:image>
       <image:loc>https://noroya.vercel.app/icons/icon-512.png</image:loc>
-      <image:title>NORODATA - Automated VTU Portal &amp; Digital Marketplace in Nigeria</image:title>
-      <image:caption>Instant MTN, Airtel, Glo data, foreign virtual numbers for OTP, and travel eSIMs.</image:caption>
+      <image:title>NORODATA - Nigeria's Leading VTU &amp; Digital Marketplace</image:title>
+      <image:caption>Cheap MTN, Airtel, Glo data, foreign virtual numbers for OTP, and travel eSIMs.</image:caption>
     </image:image>
   </url>
 
   <!-- Digital Marketplace (Foreign Numbers & Accounts) -->
   <url>
     <loc>https://noroya.vercel.app/#marketplace</loc>
-    <lastmod>2026-10-30</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>0.95</priority>
   </url>
 
-  <!-- Telecommunication & Utility Services -->
+  <!-- Instant Cheap Data Purchases -->
   <url>
-    <loc>https://noroya.vercel.app/#services</loc>
-    <lastmod>2026-10-30</lastmod>
+    <loc>https://noroya.vercel.app/#data</loc>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.95</priority>
+  </url>
+
+  <!-- Discounted Airtime Top-up -->
+  <url>
+    <loc>https://noroya.vercel.app/#airtime</loc>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.90</priority>
+  </url>
+
+  <!-- Electricity & Utility Bills -->
+  <url>
+    <loc>https://noroya.vercel.app/#electricity</loc>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+
+  <!-- Cable TV Renewal -->
+  <url>
+    <loc>https://noroya.vercel.app/#cable</loc>
+    <lastmod>2026-11-07</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.85</priority>
   </url>
@@ -35,25 +59,25 @@
   <!-- Live Pricing & Network Plans -->
   <url>
     <loc>https://noroya.vercel.app/#prices</loc>
-    <lastmod>2026-10-30</lastmod>
+    <lastmod>2026-11-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.85</priority>
-  </url>
-
-  <!-- Platform Features & Automated Failsafe Refund -->
-  <url>
-    <loc>https://noroya.vercel.app/#features</loc>
-    <lastmod>2026-10-30</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
   </url>
 
   <!-- Frequently Asked Questions -->
   <url>
     <loc>https://noroya.vercel.app/#faq</loc>
-    <lastmod>2026-10-30</lastmod>
+    <lastmod>2026-11-07</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.75</priority>
+    <priority>0.80</priority>
+  </url>
+
+  <!-- User Authentication -->
+  <url>
+    <loc>https://noroya.vercel.app/#signup</loc>
+    <lastmod>2026-11-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.80</priority>
   </url>
 
 </urlset>
