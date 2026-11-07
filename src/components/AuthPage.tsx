@@ -67,6 +67,18 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
     ownerName?: string;
   }>({ state: 'idle' });
 
+  // ITEM 5: Welcome Billboard & Verified User State
+  const [showWelcomeBillboard, setShowWelcomeBillboard] = useState(false);
+  const [registeredUserId, setRegisteredUserId] = useState<string | null>(null);
+
+  const normalizeNigerianPhone = (num: string): string => {
+    const digits = num.replace(/\D/g, '');
+    if (digits.startsWith('234') && digits.length === 13) return digits;
+    if (digits.startsWith('0') && digits.length === 11) return `234${digits.slice(1)}`;
+    if (digits.length === 10 && /^[789][01]\d{8}$/.test(digits)) return `234${digits}`;
+    return digits;
+  };
+
   // Handle URL redirect query parameter if present
   const getRedirectPath = () => {
     try {
@@ -259,13 +271,23 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
           const nextAttempts = failedLoginAttempts + 1;
           setFailedLoginAttempts(nextAttempts);
 
-          if (nextAttempts >= 5) {
+          const errLower = (error.message || '').toLowerCase();
+          if (errLower.includes('email not confirmed') || errLower.includes('not confirmed') || errLower.includes('confirm your email')) {
+            setAuthError('Please confirm your email first. Check your Gmail for the Supabase message.');
+          } else if (nextAttempts >= 5) {
             setCooldownRemaining(60);
             setAuthError('Too many failed login attempts. For your security, account login is paused for 60 seconds.');
           } else {
             // Human-friendly, non-technical error message as required
             setAuthError('Email or password is incorrect. Please check your credentials and try again.');
           }
+          setLoading(false);
+          return;
+        }
+
+        // Check if unconfirmed email login attempt
+        if (data.user && !data.user.email_confirmed_at && !data.session) {
+          setAuthError('Please confirm your email first. Check your Gmail for the Supabase message.');
           setLoading(false);
           return;
         }
@@ -303,7 +325,8 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
           throw new Error('Please enter your full name.');
         }
 
-        if (!validateNigerianPhone(phone)) {
+        const normalizedPhone = normalizeNigerianPhone(phone);
+        if (!validateNigerianPhone(phone) || !normalizedPhone || normalizedPhone.length < 10) {
           throw new Error('Please enter a valid 11-digit Nigerian phone number (e.g. 08012345678 or +2348012345678).');
         }
 
@@ -317,6 +340,17 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
 
         if (!agreeTerms) {
           throw new Error('You must agree to the Terms of Service and Privacy Policy to continue.');
+        }
+
+        // Check if phone number is already registered by another account
+        const { data: phoneInUse } = await supabase
+          .from('profiles')
+          .select('id')
+          .or(`phone_number.eq.${normalizedPhone},phone_number.eq.0${normalizedPhone.slice(3)},phone_number.eq.+${normalizedPhone}`)
+          .maybeSingle();
+
+        if (phoneInUse) {
+          throw new Error('This phone number is already registered to an account. Please log in or use a different number.');
         }
 
         // Validate Referral Code if entered
@@ -346,7 +380,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
           options: {
             data: {
               full_name: fullName.trim(),
-              phone_number: phone.trim(),
+              phone_number: normalizedPhone,
               referral_code: referralCode.trim().toUpperCase(),
             },
           },
@@ -361,18 +395,14 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
             data.user.id,
             data.user.email || '',
             fullName.trim(),
-            phone.trim(),
+            normalizedPhone,
             verifiedReferrerUid
           );
+          setRegisteredUserId(data.user.id);
         }
 
-        toast.success('Account created successfully! Welcome to NORODATA.');
-        const redirectPath = getRedirectPath();
-        if (redirectPath && redirectPath.startsWith('/')) {
-          window.location.href = redirectPath;
-        } else if (onBack) {
-          onBack();
-        }
+        // ITEM 5: Show full-screen welcome billboard once right after signup
+        setShowWelcomeBillboard(true);
       }
     } catch (err: any) {
       setAuthError(err.message || 'An unexpected authentication error occurred.');
@@ -1012,6 +1042,55 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
           </div>
         )}
       </AnimatePresence>
+
+      {/* ─── ITEM 5: Full-screen Welcome Billboard after Signup ──────────────── */}
+      {showWelcomeBillboard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 sm:p-8 space-y-5 text-center border border-gray-100"
+          >
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center mx-auto text-3xl shadow-inner">
+              ✨
+            </div>
+            <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+              Welcome to NORODATA Subs
+            </h3>
+            <div className="text-sm text-gray-600 leading-relaxed text-left space-y-3 bg-[#EDEDE9]/50 p-5 rounded-2xl border border-gray-200">
+              <p className="font-semibold text-gray-900">Get your cheap data and other services here.</p>
+              <p className="font-semibold text-gray-900">To confirm your email:</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-gray-700 pl-1 font-medium">
+                <li>Open your Gmail.</li>
+                <li>Find the message from Supabase.</li>
+                <li>Click the confirmation link.</li>
+                <li>Come back here and log in.</li>
+              </ol>
+              <p className="font-bold text-[#3B7A3B] pt-1">Enjoy the website!</p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (registeredUserId) {
+                  try {
+                    await supabase
+                      .from('profiles')
+                      .update({ welcome_seen_at: new Date().toISOString() })
+                      .eq('id', registeredUserId);
+                  } catch (_) {}
+                }
+                setShowWelcomeBillboard(false);
+                setMode('login');
+                toast.success('Check your Gmail to confirm, then log in!');
+              }}
+              className="w-full text-white font-black rounded-xl py-4 shadow-lg hover:shadow-xl transition-all cursor-pointer text-base uppercase tracking-wider"
+              style={{ backgroundColor: '#3B7A3B' }}
+            >
+              OK
+            </button>
+          </motion.div>
+        </div>
+      )}
 
     </div>
   );
