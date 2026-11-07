@@ -6064,11 +6064,6 @@ if (Object.keys(updateData).length <= 1) {
       return res.status(500).json({ status: 'error', error: err.message || "Transfer processing failed." });
     }
   });
-    } catch (err: any) {
-      console.error("[Wallet Transfer Error]:", err.message);
-      return res.status(500).json({ status: 'error', error: err.message || "Transfer failed." });
-    }
-  });
 
   // ─── Admin: Users list (paginated, searchable) ──────────────────────────
   app.get("/api/admin/users", async (req, res) => {
