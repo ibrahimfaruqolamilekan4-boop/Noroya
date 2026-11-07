@@ -59,6 +59,7 @@ import {
 import { toast } from 'react-hot-toast';
 import AdminPricingManager from './AdminPricingManager';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
+import { subscribeAdminToPush } from '../lib/push';
 
 // Pure deterministic UUID mapper to prevent PostgreSQL id column type conflicts (UUID vs text)
 export const ensureUUID = (strId: string): string => {
@@ -89,28 +90,13 @@ export const ensureUUID = (strId: string): string => {
 
 export default function AdminPanelSection() {
   const { user } = useAuth();
-  const userRole = String(user?.role || '').toLowerCase().trim();
-  const isSuperAdmin = userRole === 'admin' || user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
+  const isSuperAdmin = user?.email?.toLowerCase() === 'ibrahimfaruqolamilekan4@gmail.com';
   const isAccountantAdmin = user?.email?.toLowerCase() === 'adewaleogunkeye200@gmail.com';
-  const isEsimAdmin = userRole === 'operator' || ['jeffholland299@gmail.com', 'triumphanttosin@gmail.com'].includes(
-    (user?.email || '').toLowerCase().trim()
-  );
+  const isEsimAdmin = user?.email?.toLowerCase() === 'jeffholland299@gmail.com';
   const isRestrictedAdmin = isAccountantAdmin || isEsimAdmin;
-
-  if (!isSuperAdmin && !isEsimAdmin && !isAccountantAdmin && userRole !== 'admin' && userRole !== 'operator') {
-    return (
-      <div className="p-8 text-center bg-white rounded-3xl border border-red-200 shadow-sm max-w-md mx-auto my-12">
-        <div className="w-12 h-12 bg-red-100 rounded-2xl flex items-center justify-center text-red-600 mx-auto mb-3">
-          <AlertTriangle size={24} />
-        </div>
-        <h3 className="text-lg font-black text-slate-900">403 Forbidden</h3>
-        <p className="text-xs text-slate-500 mt-1">Admin or Operator access required from the database to open this area.</p>
-      </div>
-    );
-  }
-
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
+  const [pushLoading, setPushLoading] = React.useState(false);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
   const [utilityPlansList, setUtilityPlansList] = React.useState<any[]>([]);
   const [examPlansList, setExamPlansList] = React.useState<any[]>([]);
@@ -153,16 +139,6 @@ export default function AdminPanelSection() {
 
   const [opayRevenueStats, setOpayRevenueStats] = React.useState<any>(null);
   const [loadingOpayStats, setLoadingOpayStats] = React.useState(false);
-  const [bachsSecretInput, setBachsSecretInput] = React.useState('');
-  const [bachsWebhookInput, setBachsWebhookInput] = React.useState('');
-  const [savingBachsConfig, setSavingBachsConfig] = React.useState(false);
-  const [testingBachsConfig, setTestingBachsConfig] = React.useState(false);
-  const [bachsAdminStatus, setBachsAdminStatus] = React.useState<{
-    configured: boolean;
-    masked: string | null;
-    webhookConfigured: boolean;
-    webhookMasked: string | null;
-  } | null>(null);
   const [planSearchQuery, setPlanSearchQuery] = React.useState('');
   const [planFilterNetwork, setPlanFilterNetwork] = React.useState<string>('All');
   const [planFilterType, setPlanFilterType] = React.useState<string>('All');
@@ -828,93 +804,17 @@ export default function AdminPanelSection() {
     setLoadingOpayStats(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const headers = { 'Authorization': `Bearer ${session?.access_token}` };
-      const [res, secRes] = await Promise.all([
-        fetch('/api/admin/bachs-revenue', { headers }),
-        fetch('/api/admin/provider-secrets', { headers }).catch(() => null),
-      ]);
+      const res = await fetch('/api/admin/opay-revenue', {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setOpayRevenueStats(data);
       }
-      if (secRes && secRes.ok) {
-        const secData = await secRes.json();
-        if (secData?.bachs) {
-          setBachsAdminStatus(secData.bachs);
-        }
-      }
     } catch (err) {
-      console.error("Error fetching Bachs.io revenue stats:", err);
+      console.error("Error fetching OPy revenue stats:", err);
     } finally {
       setLoadingOpayStats(false);
-    }
-  };
-
-  const handleSaveBachsSecrets = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!bachsSecretInput.trim() && !bachsWebhookInput.trim()) {
-      toast.error("Enter a Bachs.io Secret Key or Webhook Signing Secret to save.");
-      return;
-    }
-    setSavingBachsConfig(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`,
-      };
-      if (bachsSecretInput.trim()) {
-        const r1 = await fetch('/api/admin/provider-secrets', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ identifier: 'bachs_secret_key', secret: bachsSecretInput.trim() }),
-        });
-        if (!r1.ok) throw new Error('Failed to save Bachs Secret Key');
-      }
-      if (bachsWebhookInput.trim()) {
-        const r2 = await fetch('/api/admin/provider-secrets', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ identifier: 'bachs_webhook_secret', secret: bachsWebhookInput.trim() }),
-        });
-        if (!r2.ok) throw new Error('Failed to save Bachs Webhook Secret');
-      }
-      toast.success("Bachs.io credentials saved and activated!");
-      setBachsSecretInput('');
-      setBachsWebhookInput('');
-      fetchOpayRevenueStats();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save Bachs.io credentials");
-    } finally {
-      setSavingBachsConfig(false);
-    }
-  };
-
-  const handleTestBachsKey = async () => {
-    if (!bachsSecretInput.trim()) {
-      toast.error("Paste your Bachs.io Secret Key (sk_live_... or sk_sandbox_...) to test.");
-      return;
-    }
-    setTestingBachsConfig(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/api/admin/test-provider-key', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({ provider: 'bachs', key: bachsSecretInput.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Bachs.io rejected the secret key");
-      }
-      toast.success(data.message || "Bachs.io connection verified!");
-    } catch (err: any) {
-      toast.error(err.message || "Bachs.io connection test failed");
-    } finally {
-      setTestingBachsConfig(false);
     }
   };
 
@@ -985,18 +885,41 @@ export default function AdminPanelSection() {
           </div>
           <div>
             <h4 className="font-extrabold text-slate-800 text-lg">
-              {isEsimAdmin ? "Foreign Numbers & eSIM Admin Desk" : "Platform Admin Control"}
+              {isEsimAdmin ? "eSIM Operator Desk" : "Platform Admin Control"}
             </h4>
             <p className="text-xs text-slate-400 font-semibold font-sans uppercase">
               {isEsimAdmin 
-                ? `Logged in as ${user?.email?.toLowerCase()} · Restricted to Foreign Numbers & eSIM Only`
+                ? "Logged in as jeffholland299@gmail.com · Restricted to eSIM Messages & Fulfillment"
                 : "Continuous Whitelisted Bypass Mode"}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Dedicated Foreign Numbers & eSIM Desk quick button available on ALL admin accounts */}
+          {/* Admin Push Notifications toggle button */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                setPushLoading(true);
+                const currentUserId = user?.id || (user as any)?.uid;
+                if (!currentUserId) throw new Error('Admin not authenticated');
+                const res = await subscribeAdminToPush(currentUserId);
+                toast.success(res.message || 'Admin notifications enabled!');
+              } catch (err: any) {
+                toast.error(err.message || 'Could not enable admin notifications.');
+              } finally {
+                setPushLoading(false);
+              }
+            }}
+            disabled={pushLoading}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95 border bg-amber-500 hover:bg-amber-600 text-white border-amber-600 disabled:opacity-50"
+          >
+            <Bell size={14} />
+            <span>{pushLoading ? 'Enabling...' : 'Enable admin notifications'}</span>
+          </button>
+
+          {/* Dedicated eSIM Messages quick button available on ALL THREE admin accounts */}
           <button
             type="button"
             onClick={() => setAdminSubTab('esim-messages')}
@@ -1008,7 +931,7 @@ export default function AdminPanelSection() {
             )}
           >
             <MessageSquare size={14} />
-            <span>📱 Foreign Numbers & eSIM Desk</span>
+            <span>📶 eSIM Messages</span>
           </button>
 
           <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
@@ -1017,9 +940,17 @@ export default function AdminPanelSection() {
         </div>
       </div>
 
+      {/* iPhone PWA Notification Guidance */}
+      <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
+        <span className="text-base">📲</span>
+        <span>
+          <strong>On iPhone, install NORODATA to your Home Screen first, then enable notifications.</strong>
+        </span>
+      </div>
+
       {/* Tab Switcher */}
       <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1.5 rounded-2xl max-w-5xl select-none font-bold">
-        {/* On all admin accounts, Foreign Numbers & eSIM Desk button is always available */}
+        {/* On all 3 accounts, eSIM Messages button is always available */}
         <button
           type="button"
           onClick={() => setAdminSubTab('esim-messages')}
@@ -1030,7 +961,7 @@ export default function AdminPanelSection() {
               : "text-teal-700 hover:text-teal-900 hover:bg-teal-50"
           )}
         >
-          <span>📱 Foreign Numbers & eSIM Desk</span>
+          <span>📶 eSIM Messages</span>
         </button>
 
         {!isEsimAdmin && !isRestrictedAdmin && (
@@ -1057,7 +988,7 @@ export default function AdminPanelSection() {
                   : "text-slate-500 hover:text-slate-850"
               )}
             >
-              Bachs.io Gateway & Audit
+              Bank Deposits Audit
             </button>
             <button
               onClick={() => setAdminSubTab('pricing-manager')}
@@ -1965,11 +1896,11 @@ export default function AdminPanelSection() {
 
       {!isRestrictedAdmin && adminSubTab === 'opay-receipts' && (
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-slate-50">
+          <div className="flex justify-between items-center pb-6 border-b border-slate-50">
             <div>
-              <h5 className="font-extrabold text-slate-900 text-lg">Bachs.io Payment Gateway & Deposits Audit</h5>
+              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
               <p className="text-sm text-slate-400 font-medium font-sans">
-                Configure live Bachs.io API credentials (`sk_live_...` / `sk_sandbox_...`), webhook signing secrets, and audit incoming wallet deposits.
+                Real-time transaction values, status checks, and revenue auditing.
               </p>
             </div>
             <button
@@ -1981,83 +1912,10 @@ export default function AdminPanelSection() {
             </button>
           </div>
 
-          {/* Live Bachs.io API Key & Webhook Secret Configuration Card */}
-          <form onSubmit={handleSaveBachsSecrets} className="bg-slate-900 text-white rounded-2xl p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h6 className="font-extrabold text-sm uppercase tracking-wider text-emerald-400">
-                  🔑 Bachs.io Dynamic Credentials (https://docs.bachs.io)
-                </h6>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Keys are stored encrypted in `provider_secrets` (no hardcoding required). Webhook URL: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">{window.location.origin}/api/webhooks/bachs</code>
-                </p>
-              </div>
-              <div className="flex items-center gap-2 text-xs font-bold">
-                <span className={cn(
-                  "px-2.5 py-1 rounded-full",
-                  bachsAdminStatus?.configured ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"
-                )}>
-                  API Key: {bachsAdminStatus?.configured ? (bachsAdminStatus.masked || "Configured") : "Not Set"}
-                </span>
-                <span className={cn(
-                  "px-2.5 py-1 rounded-full",
-                  bachsAdminStatus?.webhookConfigured ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"
-                )}>
-                  Webhook Secret: {bachsAdminStatus?.webhookConfigured ? (bachsAdminStatus.webhookMasked || "Configured") : "Not Set"}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                  Bachs.io Secret Key (`BACHS_SECRET_KEY`)
-                </label>
-                <input
-                  type="password"
-                  value={bachsSecretInput}
-                  onChange={(e) => setBachsSecretInput(e.target.value)}
-                  placeholder="sk_live_... or sk_sandbox_..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                  Bachs.io Webhook Signing Secret (`BACHS_WEBHOOK_SECRET`)
-                </label>
-                <input
-                  type="password"
-                  value={bachsWebhookInput}
-                  onChange={(e) => setBachsWebhookInput(e.target.value)}
-                  placeholder="whsec_..."
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleTestBachsKey}
-                disabled={testingBachsConfig || !bachsSecretInput.trim()}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white disabled:opacity-50 cursor-pointer transition"
-              >
-                {testingBachsConfig ? "Testing Connection..." : "Test Secret Key Live"}
-              </button>
-              <button
-                type="submit"
-                disabled={savingBachsConfig || (!bachsSecretInput.trim() && !bachsWebhookInput.trim())}
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white disabled:opacity-50 cursor-pointer transition"
-              >
-                {savingBachsConfig ? "Saving..." : "Save Bachs.io Credentials"}
-              </button>
-            </div>
-          </form>
-
           {loadingOpayStats && !opayRevenueStats ? (
             <div className="py-16 text-center space-y-3">
               <div className="w-8 h-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-slate-400 font-bold font-sans">Loading Bachs.io deposit receipts...</p>
+              <p className="text-xs text-slate-400 font-bold font-sans">Loading administrative receipts...</p>
             </div>
           ) : (
             <div className="space-y-8">
@@ -2086,7 +1944,7 @@ export default function AdminPanelSection() {
 
               {/* Transactions List */}
               <div className="space-y-4">
-                <h6 className="font-extrabold text-slate-900">Bachs.io Deposit & Webhook Transaction Logs</h6>
+                <h6 className="font-extrabold text-slate-900">Deposit Webhook Transaction Logs</h6>
                 <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-50">
                   {opayRevenueStats?.payments && opayRevenueStats.payments.length > 0 ? (
                     opayRevenueStats.payments.map((p: any) => (
@@ -2113,7 +1971,7 @@ export default function AdminPanelSection() {
                       </div>
                     ))
                   ) : (
-                    <div className="p-12 text-center text-slate-500">No Bachs.io payment gateway transactions recorded yet.</div>
+                    <div className="p-12 text-center text-slate-500">No Flutterwave payment gateway transactions recorded yet.</div>
                   )}
                 </div>
               </div>
@@ -2121,6 +1979,8 @@ export default function AdminPanelSection() {
           )}
         </div>
       )}
+
+      {/* Monnify Configuration form completely deleted */}
 
       {/* EDIT SERVICE PLAN OVERLAY MODAL */}
       <AnimatePresence>

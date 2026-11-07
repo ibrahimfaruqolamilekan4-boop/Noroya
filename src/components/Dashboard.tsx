@@ -62,19 +62,19 @@ import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
-import { fetchWalletSnapshot, lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
 
-const ServicePurchase = React.lazy(() => import('./ServicePurchase'));
-const PayBillsSection = React.lazy(() => import('./PayBillsSection'));
-const AdminPanelSection = React.lazy(() => import('./AdminPanelSection'));
-const ElectricitySection = React.lazy(() => import('./ElectricitySection'));
-const BettingSection = React.lazy(() => import('./BettingSection'));
-const CableTvSection = React.lazy(() => import('./CableTvSection'));
-const ResellerPortal = React.lazy(() => import('./ResellerPortal'));
-const TransactionHistory = React.lazy(() => import('./TransactionHistory'));
-const MarketplaceHome = React.lazy(() =>
-  import('./Marketplace/MarketplaceHome').then((m) => ({ default: m.MarketplaceHome }))
-);
+import { calculateFundingFee } from '../lib/fundingFee';
+import { lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
+import { normalizeNigerianPhone, isValidNigerianPhone } from '../lib/validation';
+import ServicePurchase from './ServicePurchase';
+import PayBillsSection from './PayBillsSection';
+import AdminPanelSection from './AdminPanelSection';
+import ElectricitySection from './ElectricitySection';
+import BettingSection from './BettingSection';
+import CableTvSection from './CableTvSection';
+import ResellerPortal from './ResellerPortal';
+import TransactionHistory from './TransactionHistory';
+import { MarketplaceHome } from './Marketplace/MarketplaceHome';
 
 // Admin WhatsApp contacts — edit labels/numbers here any time.
 const ADMIN_CONTACTS = [
@@ -142,20 +142,6 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     if (storedAnn) setBroadcastAlert(storedAnn);
   }, [activeTab]);
 
-  // Ensure Deposit Funds button / Marketplace "Fund Wallet First" works from any tab
-  React.useEffect(() => {
-    const handleOpenFundFromAnyTab = () => {
-      if (activeTab !== 'dashboard') {
-        setActiveTab('dashboard');
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('open-fund-modal'));
-        }, 120);
-      }
-    };
-    window.addEventListener('open-fund-modal', handleOpenFundFromAnyTab);
-    return () => window.removeEventListener('open-fund-modal', handleOpenFundFromAnyTab);
-  }, [activeTab]);
-
   // Auto-logout after 15 minutes
   React.useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -199,26 +185,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
 
-  const isOperator =
-    user.role === 'operator' ||
-    [
-      'jeffholland299@gmail.com',
-      'triumphanttosin@gmail.com',
-    ].includes((user.email || '').toLowerCase().trim());
-
-  const isUserAdmin =
-    user.role === 'admin' ||
-    isOperator ||
-    ['ibrahimfaruqolamilekan4@gmail.com', 'adewaleogunkeye200@gmail.com'].includes(
-      (user.email || '').toLowerCase().trim()
-    );
-
-  if (isUserAdmin) {
-    sidebarItems.push({
-      id: 'admin',
-      label: isOperator ? 'Numbers & eSIM Desk' : 'Admin Control',
-      icon: <ShieldCheck size={18} />,
-    });
+  if (user.role === 'admin') {
+    sidebarItems.push({ id: 'admin', label: 'Admin Control', icon: <ShieldCheck size={18} /> });
   }
 
   const handleLoggedOut = () => {
@@ -476,33 +444,18 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               onSelectTx={setSelectedReceiptTx}
             />
           )}
-          <React.Suspense fallback={
-            <div className="flex flex-col items-center justify-center py-24 space-y-3">
-              <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-              <p className="text-xs text-slate-500 font-semibold">Loading section...</p>
-            </div>
-          }>
-            {activeTab === 'marketplace' && (
-              <MarketplaceHome
-                currentUser={user}
-                user={user}
-                onBalanceUpdate={(newBal) => {
-                  window.dispatchEvent(new CustomEvent('wallet-balance-updated', { detail: { balance: newBal } }));
-                }}
-              />
-            )}
-            {activeTab === 'buy-data' && <ServicePurchase type="data" />}
-            {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
-            {activeTab === 'electricity' && <ElectricitySection />}
-            {activeTab === 'cable' && <CableTvSection />}
-            {activeTab === 'betting' && <BettingSection />}
-            {activeTab === 'reseller' && <ResellerPortal />}
-            {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
-            {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
-            {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
-            {activeTab === 'settings' && <SettingsSection user={user} />}
-            {activeTab === 'admin' && <AdminPanelSection />}
-          </React.Suspense>
+          {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
+          {activeTab === 'buy-data' && <ServicePurchase type="data" />}
+          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
+          {activeTab === 'electricity' && <ElectricitySection />}
+          {activeTab === 'cable' && <CableTvSection />}
+          {activeTab === 'betting' && <BettingSection />}
+          {activeTab === 'reseller' && <ResellerPortal />}
+          {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
+          {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
+          {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
+          {activeTab === 'settings' && <SettingsSection user={user} />}
+          {activeTab === 'admin' && <AdminPanelSection />}
         </main>
       </div>
 
@@ -775,10 +728,9 @@ function DashboardOverview({
 
   // Fund modal state
   const [showFundModal, setShowFundModal] = React.useState(false);
-  const [fundingTab, setFundingTab] = React.useState<'gateway' | 'manual'>('gateway');
+  const [fundingTab, setFundingTab] = React.useState<'bank' | 'gateway' | 'manual'>('bank');
   const [opayAmount, setOpayAmount] = React.useState('2000');
   const [manualAmount, setManualAmount] = React.useState('');
-  const [manualSenderName, setManualSenderName] = React.useState('');
   const [copiedAccount, setCopiedAccount] = React.useState(false);
   const [fwLoading, setFwLoading] = React.useState(false);
 
@@ -809,33 +761,14 @@ function DashboardOverview({
     return () => window.removeEventListener('open-transfer-modal', handler);
   }, []);
 
-  // Listen for automatic wallet balance updates (e.g. Foreign Number deal completion auto-debit)
-  React.useEffect(() => {
-    const handler = (e: any) => {
-      if (typeof e?.detail?.balance === 'number') {
-        setCurrentBalance(e.detail.balance);
-      }
-      refreshBalance();
-    };
-    window.addEventListener('wallet-balance-updated', handler);
-    return () => window.removeEventListener('wallet-balance-updated', handler);
-  }, []);
-
   const refreshBalance = async () => {
-    try {
-      const snap = await fetchWalletSnapshot();
-      if (snap && typeof snap.balance === 'number') {
-        setCurrentBalance(snap.balance);
-        return;
-      }
-    } catch (_) {}
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
     const { data: profile } = await supabase
       .from('profiles')
       .select('wallet_balance')
       .eq('id', authUser.id)
-      .maybeSingle();
+      .single();
     if (profile) setCurrentBalance(profile.wallet_balance || 0);
   };
 
@@ -853,24 +786,82 @@ function DashboardOverview({
     return () => { supabase.removeChannel(channel); };
   }, [user?.uid, (user as any)?.id]);
 
-  const handleLookupRecipient = async () => {
-    if (!transferUid.trim()) { toast.error('Please enter recipient details'); return; }
-    const amt = Number(transferAmount);
-    if (!amt || amt <= 0) { toast.error('Please enter a valid transfer amount'); return; }
-    setTransferLoading(true);
+  // Missing Phone Modal state
+  const [showAddPhoneModal, setShowAddPhoneModal] = React.useState(false);
+  const [newPhoneNumber, setNewPhoneNumber] = React.useState('');
+  const [savingPhone, setSavingPhone] = React.useState(false);
+
+  const userPhone = (user as any)?.phone_number || (user as any)?.phoneNumber || '';
+
+  const handleSavePhoneNumber = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const normalized = normalizeNigerianPhone(newPhoneNumber);
+    if (!isValidNigerianPhone(normalized)) {
+      toast.error('Please enter a valid 11-digit Nigerian phone number.');
+      return;
+    }
+    setSavingPhone(true);
     try {
-      const q = transferUid.trim();
-      const { recipient } = await lookupTransferRecipient(q);
-      if (!recipient) { toast.error('User not found.'); setTransferLoading(false); return; }
-      if (recipient.id === (user as any).uid || recipient.id === (user as any).id) {
-        toast.error('Cannot transfer to yourself.');
-        setTransferLoading(false);
+      const currentUserId = (user as any)?.id || user?.uid;
+      const { data: existing, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone_number', normalized)
+        .neq('id', currentUserId)
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+      if (existing) {
+        toast.error('This phone number is already registered to another account.');
+        setSavingPhone(false);
         return;
       }
-      setTransferRecipient(recipient);
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ phone_number: normalized })
+        .eq('id', currentUserId);
+
+      if (updateError) throw updateError;
+
+      (user as any).phone_number = normalized;
+      toast.success('Phone number added successfully!');
+      setShowAddPhoneModal(false);
+      setNewPhoneNumber('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save phone number');
+    } finally {
+      setSavingPhone(false);
+    }
+  };
+
+  const handleLookupRecipient = async () => {
+    if (!userPhone) {
+      toast.error('Please add your phone number first before sending a transfer.');
+      setShowAddPhoneModal(true);
+      return;
+    }
+    const rawInput = transferUid.trim();
+    if (!rawInput) {
+      toast.error('Please enter recipient phone number');
+      return;
+    }
+    const normalized = normalizeNigerianPhone(rawInput);
+    if (!isValidNigerianPhone(normalized)) {
+      toast.error('Please enter a valid Nigerian phone number (11 digits or +234)');
+      return;
+    }
+    setTransferLoading(true);
+    try {
+      const res = await lookupTransferRecipient(normalized);
+      if (!res?.recipient) {
+        toast.error('No NORODATA account uses this number.');
+        return;
+      }
+      setTransferRecipient(res.recipient);
       setTransferStep('confirm');
     } catch (err: any) {
-      toast.error(err.message || 'Failed to find recipient');
+      toast.error(err.message || 'No NORODATA account uses this number.');
     } finally {
       setTransferLoading(false);
     }
@@ -878,20 +869,25 @@ function DashboardOverview({
 
   const handleConfirmTransfer = async () => {
     const amt = Number(transferAmount);
-    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
-    if (!transferRecipient?.id) { toast.error('No recipient selected'); return; }
+    if (!amt || amt < 100) {
+      toast.error('Minimum transfer amount is ₦100');
+      return;
+    }
+    if (!transferRecipient?.id) {
+      toast.error('Please verify recipient first');
+      return;
+    }
     setTransferLoading(true);
+    const transferKey = `txf_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     try {
-      const result = await executeWalletTransfer({
+      const res = await executeWalletTransfer({
         recipientId: transferRecipient.id,
         amount: amt,
-        note: transferNote,
+        transferKey,
+        note: transferNote
       });
-      if (result.status === 'success') {
-        toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.full_name || 'recipient'}!`);
-        if (typeof result.newBalance === 'number') {
-          setCurrentBalance(result.newBalance);
-        }
+      if (res.status === 'success') {
+        toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.display_name}!`);
         setShowTransferModal(false);
         setTransferStep('input');
         setTransferUid('');
@@ -899,10 +895,10 @@ function DashboardOverview({
         setTransferNote('');
         setTransferRecipient(null);
         refreshBalance();
-      } else if (result.status === 'insufficient_funds') {
-        toast.error(result.error || 'Insufficient balance.');
+      } else if (res.status === 'insufficient_funds') {
+        toast.error('Insufficient wallet balance to cover amount and ₦10 fee.');
       } else {
-        toast.error(result.error || 'Transfer failed');
+        toast.error(res.error || 'Transfer failed');
       }
     } catch (err: any) {
       toast.error(err.message || 'Transfer failed');
@@ -1074,6 +1070,27 @@ function DashboardOverview({
   return (
     <div className="space-y-5 max-w-2xl mx-auto md:max-w-none">
 
+      {/* ── Missing Phone Banner (ITEM 3) ── */}
+      {(!user?.phone_number && !(user as any)?.phoneNumber) && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+              <Phone size={20} />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-900">Add your phone number to enable wallet transfers</p>
+              <p className="text-xs text-amber-700">A Nigerian phone number is required on your profile before sending wallet funds to other users.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAddPhoneModal(true)}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition shadow-sm shrink-0 active:scale-95 cursor-pointer"
+          >
+            Add Phone Number
+          </button>
+        </div>
+      )}
+
       {/* ── Wallet card ───────────────────────────────────────────── */}
       <div
         className="relative rounded-3xl p-6 overflow-hidden"
@@ -1227,35 +1244,184 @@ function DashboardOverview({
                 </button>
               </div>
 
-              {/* Tabs: Bachs Payment & Manual Payment only */}
-              <div className="flex p-1.5 mx-4 mt-4 bg-gray-100 rounded-2xl gap-1">
-                {(['gateway', 'manual'] as const).map((t) => (
+              {/* Tabs */}
+              <div className="flex p-2 mx-4 mt-4 bg-gray-100 rounded-xl gap-1">
+                {(['bank', 'gateway', 'manual'] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setFundingTab(t)}
-                    className={cn(
-                      'flex-1 py-2.5 px-3 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-1.5',
-                      fundingTab === t
-                        ? 'bg-white shadow-sm text-gray-900 border border-gray-200/60'
-                        : 'text-gray-500 hover:text-gray-800'
-                    )}
+                    className={cn('flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all',
+                      fundingTab === t ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700')}
                   >
-                    {t === 'gateway' ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                        <span>Bachs Payment</span>
-                      </>
-                    ) : (
-                      <>
-                        <Wallet size={13} className="shrink-0 text-amber-600" />
-                        <span>Manual Payment</span>
-                      </>
-                    )}
+                    {t === 'bank' ? 'Bank Transfer' : t === 'gateway' ? 'Bachs.io Checkout' : 'Manual Request'}
                   </button>
                 ))}
               </div>
 
               <div className="p-6">
+                {fundingTab === 'bank' && (
+                  <div className="space-y-4">
+                    {/* OPay Bank Transfer */}
+                    <div className="rounded-2xl p-5 border-2 border-green-200 bg-green-50 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg" style={{ backgroundColor: '#3B7A3B' }}>
+                          🏦
+                        </div>
+                        <div>
+                          <p className="font-black text-gray-900 text-sm">OPay Bank Transfer</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Send money directly to our account</p>
+                        </div>
+                      </div>
+
+                      {/* Account Details */}
+                      <div className="bg-white rounded-xl p-4 space-y-3 border border-green-100">
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Bank Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">OPay</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('OPay');
+                                setCopiedAccount(true);
+                                toast.success('Bank copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Number</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono font-black text-gray-900 text-lg">8143889102</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('8143889102');
+                                setCopiedAccount(true);
+                                toast.success('Account number copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Account Name</p>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-900">Ibrahim Faruq OLAMILEKAN</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText('Ibrahim Faruq OLAMILEKAN');
+                                setCopiedAccount(true);
+                                toast.success('Account name copied!');
+                                setTimeout(() => setCopiedAccount(false), 2000);
+                              }}
+                              className="text-xs px-2 py-1 rounded-lg font-bold transition-all"
+                              style={{ backgroundColor: copiedAccount ? '#B5D430' : '#E8F0E8', color: copiedAccount ? '#132613' : '#3B7A3B' }}
+                            >
+                              {copiedAccount ? '✓' : <Copy size={12} className="inline" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Instructions */}
+                      <div className="bg-white rounded-xl p-4 space-y-2 border border-green-100">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">NEXT STEPS:</p>
+                        <ol className="space-y-2 text-sm text-gray-700">
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>1</span>
+                            <span>Transfer money to the account above</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>2</span>
+                            <span>Take a screenshot of the payment proof</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ backgroundColor: '#3B7A3B' }}>3</span>
+                            <span>Message Admin on WhatsApp with the proof</span>
+                          </li>
+                        </ol>
+                      </div>
+
+                      {/* All Admin WhatsApp contacts */}
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Contact Admin via WhatsApp</p>
+                        {ADMIN_CONTACTS.map((admin) => (
+                          <a
+                            key={admin.number}
+                            href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Admin,%20I%20have%20sent%20money%20to%20the%20OPay%20account%208143889102.%20Please%20find%20attached%20proof%20of%20payment.`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+                            style={{ backgroundColor: '#25D366' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                            </svg>
+                            {admin.label} — {admin.number}
+                          </a>
+                        ))}
+                      </div>
+
+                      {/* Live Bachs.io Virtual Account (if active on merchant account) */}
+                      {bachsVirtualAccount && (
+                        <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                              ⚡ Instant Automated Virtual Account (Bachs.io)
+                            </span>
+                            <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
+                              {bachsVirtualAccount.status}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between pt-1">
+                            <div>
+                              <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
+                              <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
+                              {bachsVirtualAccount.account_name && (
+                                <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(bachsVirtualAccount.account_number);
+                                toast.success('Bachs Virtual Account copied!');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-xs font-bold transition"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-emerald-200/90">
+                            Include your email ({user.email}) in the transfer narration for automatic instant wallet credit.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Bachs.io Gateway notice */}
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1">
+                        <p className="text-xs font-bold text-emerald-900 flex items-center gap-2">
+                          <AlertCircle size={14} />
+                          Instant Automated Checkout Available
+                        </p>
+                        <p className="text-xs text-emerald-700">
+                          Switch to the <strong>Bachs.io Checkout</strong> tab above to fund your wallet automatically via Card or Instant Bank Transfer with real-time webhook confirmation.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {fundingTab === 'gateway' && (
                   <form onSubmit={handleBachsFundSubmit} className="space-y-4">
                     <div className="rounded-2xl p-4 bg-emerald-50/70 border border-emerald-200 space-y-1">
@@ -1269,7 +1435,7 @@ function DashboardOverview({
                         </span>
                       </div>
                       <p className="text-xs text-emerald-800">
-                        Pay securely via Card or Instant Bank Transfer on Bachs.io. Your wallet is credited automatically once payment succeeds.
+                        Pay securely via Bank Transfer or Card on Bachs.io. Your wallet is credited automatically once payment succeeds.
                       </p>
                       {bachsConfigStatus && !bachsConfigStatus.configured && (
                         <p className="text-[11px] text-amber-800 bg-amber-100/80 rounded-lg p-2 font-medium">
@@ -1277,43 +1443,6 @@ function DashboardOverview({
                         </p>
                       )}
                     </div>
-
-                    {/* Live Bachs.io Virtual Account (if active on merchant account) */}
-                    {bachsVirtualAccount && (
-                      <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
-                            ⚡ Instant Automated Virtual Account (Bachs.io)
-                          </span>
-                          <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
-                            {bachsVirtualAccount.status}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between pt-1">
-                          <div>
-                            <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
-                            <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
-                            {bachsVirtualAccount.account_name && (
-                              <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(bachsVirtualAccount.account_number);
-                              toast.success('Bachs Virtual Account copied!');
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-xs font-bold transition"
-                          >
-                            Copy
-                          </button>
-                        </div>
-                        <p className="text-[11px] text-emerald-200/90">
-                          Include your email ({user?.email}) in the transfer narration for automatic instant wallet credit.
-                        </p>
-                      </div>
-                    )}
-
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
                       <input
@@ -1335,126 +1464,76 @@ function DashboardOverview({
                         ))}
                       </div>
                     </div>
+
+                    {/* ITEM 1: FEE BREAKDOWN */}
+                    {(() => {
+                      const num = Number(opayAmount) || 0;
+                      if (num < 100) return null;
+                      const feeBreakdown = calculateFundingFee(num);
+                      return (
+                        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2 text-xs">
+                          <div className="flex justify-between text-gray-600">
+                            <span>Amount</span>
+                            <span className="font-semibold">₦{feeBreakdown.amount.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-600">
+                            <span>NORODATA fee</span>
+                            <span className="font-semibold">₦{feeBreakdown.norodataFee.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-600">
+                            <span>Gateway fee</span>
+                            <span className="font-semibold">₦{feeBreakdown.gatewayFee.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-sm font-black text-gray-900 border-t pt-2 border-gray-200">
+                            <span>Total</span>
+                            <span style={{ color: '#3B7A3B' }}>₦{feeBreakdown.totalCharged.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <button
                       type="submit"
                       disabled={fwLoading || !opayAmount || Number(opayAmount) < 100}
-                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer shadow-lg hover:shadow-xl"
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
-                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${Number(opayAmount || 0).toLocaleString()} via Bachs.io`}
+                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${(Number(opayAmount) >= 100 ? calculateFundingFee(Number(opayAmount)).totalCharged : Number(opayAmount || 0)).toLocaleString()} via Bachs.io`}
                     </button>
                   </form>
                 )}
 
                 {fundingTab === 'manual' && (
                   <div className="space-y-4">
-                    {/* Bank Details Card */}
-                    <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold text-sm">
-                          🏦
-                        </div>
-                        <div>
-                          <p className="text-xs font-black text-amber-950 uppercase tracking-wider">Manual Deposit Account</p>
-                          <p className="text-[11px] text-amber-800">Transfer directly to our verified OPay business account</p>
-                        </div>
-                      </div>
-
-                      <div className="bg-white rounded-xl p-3 space-y-2.5 border border-amber-100 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Bank</span>
-                          <span className="font-extrabold text-gray-900">OPay</span>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-gray-50 pt-2">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account No.</span>
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-black text-gray-900 text-sm">8143889102</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText('8143889102');
-                                setCopiedAccount(true);
-                                toast.success('Account number copied!');
-                                setTimeout(() => setCopiedAccount(false), 2000);
-                              }}
-                              className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 transition"
-                            >
-                              {copiedAccount ? 'Copied ✓' : 'Copy'}
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-gray-50 pt-2">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account Name</span>
-                          <span className="font-bold text-gray-900 text-right">Ibrahim Faruq OLAMILEKAN</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Amount Transferred */}
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount Transferred (₦)</label>
                       <input
-                        type="number"
-                        value={manualAmount}
+                        type="number" value={manualAmount}
                         onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
                         placeholder="e.g. 5000"
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500 text-lg"
                       />
-                      <div className="flex gap-2 mt-2">
-                        {['1000', '2000', '5000', '10000'].map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => setManualAmount(preset)}
-                            className="flex-1 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 transition"
-                          >
-                            ₦{Number(preset).toLocaleString()}
-                          </button>
-                        ))}
-                      </div>
                     </div>
-
-                    {/* Sender Name / Narration (optional) */}
-                    <div>
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Sender Name or Bank (Optional)</label>
-                      <input
-                        type="text"
-                        value={manualSenderName}
-                        onChange={(e) => setManualSenderName(e.target.value)}
-                        placeholder="e.g. John Doe (Access Bank)"
-                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 font-medium text-gray-900 focus:outline-none focus:border-green-500 text-sm"
-                      />
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                      <p className="text-xs font-bold text-blue-900">ℹ️ Manual Transfer Request</p>
+                      <p className="text-xs text-blue-800">Enter the amount you transferred to our OPay account. Our admin will verify your payment proof on WhatsApp and top up your wallet within minutes.</p>
                     </div>
-
-                    {/* Send Proof to Admin on WhatsApp */}
-                    <div className="space-y-2 pt-1">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Send Payment Proof to Admin</p>
-                      {ADMIN_CONTACTS.map((admin) => {
-                        const amtStr = manualAmount ? `₦${Number(manualAmount).toLocaleString()}` : 'money';
-                        const senderPart = manualSenderName.trim() ? ` (Sender: ${manualSenderName.trim()})` : '';
-                        const waMsg = encodeURIComponent(
-                          `Hello ${admin.label}, I have sent ${amtStr} to your OPay account 8143889102 for my NORODATA wallet (${user?.email || (user as any)?.name || 'User'})${senderPart}. Please find attached my proof of payment.`
-                        );
-                        return (
-                          <a
-                            key={admin.number}
-                            href={`https://wa.me/${admin.number}?text=${waMsg}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-white text-xs font-bold transition-all hover:brightness-110 active:scale-95"
-                            style={{ backgroundColor: '#25D366' }}
-                          >
-                            <span className="flex items-center gap-2">
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
-                                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.457L0 24zm6.59-4.846c1.6.95 3.182 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.97C16.528 2.016 14.1 1.01 11.999 1.01c-5.443 0-9.866 4.372-9.87 9.802 0 1.706.469 3.374 1.357 4.886l-.991 3.62 3.76-.98zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
-                              </svg>
-                              Message {admin.label}
-                            </span>
-                            <span className="font-mono text-[11px] opacity-90">+{admin.number}</span>
-                          </a>
-                        );
-                      })}
-                    </div>
+                    <button
+                      onClick={() => {
+                        if (!manualAmount) {
+                          toast.error('Enter amount');
+                          return;
+                        }
+                        navigator.clipboard.writeText(`Manual transfer request: ₦${manualAmount}\nPlease verify and credit my account.`);
+                        toast.success('Request info copied! Send to admin on WhatsApp.');
+                        setShowFundModal(false);
+                        setManualAmount('');
+                      }}
+                      className="w-full text-white font-bold rounded-xl py-3.5 transition-all"
+                      style={{ backgroundColor: '#3B7A3B' }}
+                    >
+                      Copy & Send to Admin
+                    </button>
                   </div>
                 )}
               </div>
@@ -1463,7 +1542,7 @@ function DashboardOverview({
         )}
       </AnimatePresence>
 
-      {/* ── Transfer Modal ────────────────────────────────────────── */}
+      {/* ── Transfer Modal (ITEM 3) ────────────────────────────────── */}
       <AnimatePresence>
         {showTransferModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1479,7 +1558,7 @@ function DashboardOverview({
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-black text-gray-900 text-xl">Send Money</h4>
-                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer via Transfer ID</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer by phone number</p>
                 </div>
                 <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
                   <X size={16} />
@@ -1488,60 +1567,35 @@ function DashboardOverview({
 
               {transferStep === 'input' && (
                 <div className="space-y-5">
-                  {/* Transfer ID field — primary / most prominent */}
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-black text-gray-900 uppercase tracking-wider">Recipient Transfer ID</label>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E8F0E8', color: '#3B7A3B' }}>
-                        same as referral code
-                      </span>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={transferUid}
-                        onChange={(e) => setTransferUid(e.target.value)}
-                        placeholder="e.g. NORODATA-AB12C"
-                        className="w-full bg-gray-50 border-2 rounded-xl px-4 py-4 font-mono font-black text-gray-900 text-lg focus:outline-none transition-all uppercase tracking-wider placeholder:normal-case placeholder:font-normal placeholder:text-sm placeholder:tracking-normal"
-                        style={{ borderColor: transferUid ? '#3B7A3B' : '#E5E7EB' }}
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400 mt-2 leading-relaxed">
-                      Ask the recipient to share their Transfer ID. They can find it on their dashboard under <strong>Refer & earn</strong> — it looks like <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">NORODATA-XXXXX</span>.
+                    <label className="text-xs font-black text-gray-900 uppercase tracking-wider block mb-1.5">Recipient Phone Number</label>
+                    <input
+                      type="tel"
+                      value={transferUid}
+                      onChange={(e) => setTransferUid(e.target.value)}
+                      placeholder="e.g. 08012345678 or +234..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 font-bold text-gray-900 focus:outline-none focus:border-green-500 transition-all placeholder:font-normal placeholder:text-sm"
+                    />
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      Enter the recipient's registered Nigerian phone number.
                     </p>
                   </div>
-
-                  {/* Your own Transfer ID for easy sharing */}
-                  {(() => {
-                    const myTransferId = user.referralCode || `NORODATA-${String(user.uid || (user as any).id || '').replace(/-/g, '').substring(0, 6).toUpperCase()}`;
-                    return (
-                      <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
-                        <div>
-                          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
-                          <p className="font-mono font-black text-gray-900 mt-0.5">{myTransferId}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => { navigator.clipboard.writeText(myTransferId); toast.success('Your Transfer ID copied!'); }}
-                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
-                          style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
-                        >
-                          <Copy size={12} /> Copy mine
-                        </button>
-                      </div>
-                    );
-                  })()}
 
                   {/* Amount */}
                   <div>
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Amount (₦)</label>
                     <input
                       type="number"
+                      min={100}
                       value={transferAmount}
                       onChange={(e) => setTransferAmount(e.target.value)}
-                      placeholder="0.00"
+                      placeholder="Min ₦100"
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 text-lg focus:outline-none focus:border-green-500 transition-all"
                     />
+                    <div className="flex justify-between items-center mt-1.5 text-xs text-gray-500">
+                      <span>Minimum transfer: ₦100</span>
+                      <span className="font-semibold text-gray-700">Fee: ₦10</span>
+                    </div>
                   </div>
 
                   {/* Note */}
@@ -1558,11 +1612,11 @@ function DashboardOverview({
 
                   <button
                     onClick={handleLookupRecipient}
-                    disabled={transferLoading || !transferUid || !transferAmount}
-                    className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all"
+                    disabled={transferLoading || !transferUid || !transferAmount || Number(transferAmount) < 100}
+                    className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer"
                     style={{ backgroundColor: '#3B7A3B' }}
                   >
-                    {transferLoading ? 'Looking up recipient…' : 'Find recipient & continue →'}
+                    {transferLoading ? 'Verifying recipient…' : 'Verify'}
                   </button>
                 </div>
               )}
@@ -1570,25 +1624,84 @@ function DashboardOverview({
               {transferStep === 'confirm' && transferRecipient && (
                 <div className="space-y-4">
                   <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Sending to</p>
-                    <p className="font-black text-gray-900">{transferRecipient.full_name || transferRecipient.username || transferRecipient.email}</p>
-                    <p className="text-sm text-gray-500">{transferRecipient.phone_number || transferRecipient.email}</p>
+                    <p className="text-xs text-gray-400 font-bold uppercase">Send to:</p>
+                    <p className="font-black text-gray-900 text-xl">{transferRecipient.display_name}</p>
                     {transferNote && <p className="text-sm text-gray-600 italic">"{transferNote}"</p>}
-                    <div className="pt-3 border-t border-gray-200 flex justify-between items-center">
-                      <span className="text-xs text-gray-400 font-bold uppercase">Amount</span>
-                      <span className="text-xl font-black" style={{ color: '#3B7A3B' }}>₦{Number(transferAmount).toLocaleString()}</span>
+                    <div className="pt-3 border-t border-gray-200 space-y-2 text-sm">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Transfer Amount</span>
+                        <span className="font-semibold">₦{Number(transferAmount).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Transfer Fee</span>
+                        <span className="font-semibold">₦10</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200 text-base font-black">
+                        <span className="text-gray-900">Total Debit</span>
+                        <span style={{ color: '#3B7A3B' }}>₦{(Number(transferAmount) + 10).toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer" style={{ backgroundColor: '#3B7A3B' }}>
                       {transferLoading ? 'Sending…' : 'Confirm'}
                     </button>
                   </div>
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Add Phone Number Modal (ITEM 3) ── */}
+      <AnimatePresence>
+        {showAddPhoneModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowAddPhoneModal(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-4 z-10"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-gray-900 text-lg">Add Phone Number</h4>
+                  <p className="text-xs text-gray-400 mt-0.5">Required for peer-to-peer wallet transfers</p>
+                </div>
+                <button onClick={() => setShowAddPhoneModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePhoneNumber} className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Nigerian Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={newPhoneNumber}
+                    onChange={(e) => setNewPhoneNumber(e.target.value)}
+                    placeholder="e.g. 08012345678 or +234..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Accepts 11 digits starting with 0 or +234</p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingPhone || !newPhoneNumber}
+                  className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer"
+                  style={{ backgroundColor: '#3B7A3B' }}
+                >
+                  {savingPhone ? 'Saving...' : 'Save Phone Number'}
+                </button>
+              </form>
             </motion.div>
           </div>
         )}
@@ -1947,15 +2060,11 @@ function SettingsSection({ user }: { user: UserProfile }) {
   const [isDeletingAllPlans, setIsDeletingAllPlans] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
-  const isRestrictedEsimOrNumberAdmin = [
-    'jeffholland299@gmail.com',
-    'triumphanttosin@gmail.com',
-  ].includes((user.email || '').toLowerCase().trim());
-
-  const isAdmin = !isRestrictedEsimOrNumberAdmin && (user.role === 'admin' || [
+  const isAdmin = user.role === 'admin' || [
     'ibrahimfaruqolamilekan4@gmail.com',
     'adewaleogunkeye200@gmail.com',
-  ].includes((user.email || '').toLowerCase().trim()));
+    'jeffholland299@gmail.com'
+  ].includes((user.email || '').toLowerCase().trim());
 
   const handleAdminForceFetch = async (autoPublish = false) => {
     setIsForceFetching(true);

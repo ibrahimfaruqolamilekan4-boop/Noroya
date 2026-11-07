@@ -137,6 +137,45 @@ const resolveBigisubApiKey = async (): Promise<string> =>
 // time and every /api route 500s with FUNCTION_INVOCATION_FAILED.
 // To add a new provider: implement VtuProvider there and add to PROVIDERS map
 import { getProvider, initProviders, listProviders, purchaseMozosubzUtility, purchaseNifexUtility, fetchNifexUser, fetchNifexLivePlans } from './src/lib/vtu-providers.ts';
+import { calculateFundingFee } from './src/lib/fundingFee.ts';
+
+const normalizeNigerianPhone = (raw: string): string => {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.startsWith('234') && digits.length === 13) {
+    return digits;
+  }
+  if (digits.startsWith('0') && digits.length === 11) {
+    return `234${digits.slice(1)}`;
+  }
+  if (digits.length === 10 && /^[789][01]\d{8}$/.test(digits)) {
+    return `234${digits}`;
+  }
+  return digits;
+};
+
+const triggerMarketplaceAdminPushNotification = async (payload: {
+  listing_name: string;
+  buyer_first_name: string;
+  order_id: string;
+}) => {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL || 'https://sdbfuuxdquzvtcwryimh.supabase.co';
+    const edgeEndpoint = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/notify-marketplace-admins`;
+    const serviceKey = await resolveProviderSecret('supabase_service_role_key', ['SUPABASE_SERVICE_ROLE_KEY']);
+
+    await axios.post(edgeEndpoint, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+      timeout: 5000,
+    }).catch(e => {
+      console.warn('[notify-marketplace-admins edge error]:', e?.message || e);
+    });
+  } catch (err: any) {
+    console.warn('[triggerMarketplaceAdminPushNotification error]:', err?.message || err);
+  }
+};
 
 // FIX: initProviders(supabase) must run AFTER its import above, not before it
 // (previously this call sat between two import statements near the top of the
@@ -5022,10 +5061,10 @@ if (Object.keys(updateData).length <= 1) {
     // 5. Tier 3: Direct atomic fallback
     const { data: existingTx } = await supabase
       .from("transactions")
-      .select("id")
+      .select("id, status")
       .eq("reference", cleanRef)
       .maybeSingle();
-    if (existingTx) {
+    if (existingTx && existingTx.status === "completed") {
       return { status: "already_processed", message: "Transaction already processed.", userId: profile.id };
     }
 
@@ -5049,16 +5088,25 @@ if (Object.keys(updateData).length <= 1) {
       })
       .eq("id", profile.id);
 
-    await supabase.from("transactions").insert({
-      user_id: profile.id,
-      user_email: cleanEmail || profile.email || "",
-      amount: numericAmount,
-      type: "funding",
-      status: "completed",
-      reference: cleanRef,
-      platform: "bachs",
-      payment_method: "bachs",
-      gateway: "bachs",
+    if (existingTx) {
+      await supabase.from("transactions").update({
+        status: "completed",
+      }).eq("id", existingTx.id);
+    } else {
+      await supabase.from("transactions").insert({
+        user_id: profile.id,
+        user_email: cleanEmail || profile.email || "",
+        amount: numericAmount,
+        type: "funding",
+        status: "completed",
+        reference: cleanRef,
+        platform: "bachs",
+        payment_method: "bachs",
+        gateway: "bachs",
+        description: desc,
+        created_at: new Date().toISOString(),
+      });
+    }
       description: desc,
       metadata: opts.metadata || {},
       created_at: new Date().toISOString(),
@@ -5103,9 +5151,15 @@ if (Object.keys(updateData).length <= 1) {
         cleanOrigin = "https://noroya.vercel.app";
       }
 
+      // Server recalculates fee breakdown using shared calculateFundingFee formula
+      const feeBreakdown = calculateFundingFee(numericAmount);
+      const totalCharged = feeBreakdown.totalCharged;
+      const norodataFee = feeBreakdown.margin;
+      const gatewayFee = feeBreakdown.gatewayFee;
+
       // Per Bachs.io OpenAPI specification:
       // Money is always a decimal string at the currency's precision (e.g. "2000.00")
-      const amountDecimalString = numericAmount.toFixed(2);
+      const totalChargedDecimalString = totalCharged.toFixed(2);
 
       const customerPayload: Record<string, any> = { email: customerEmail };
       if (name && String(name).trim()) {
@@ -5128,7 +5182,7 @@ if (Object.keys(updateData).length <= 1) {
         customer: customerPayload,
         pricing: {
           currency: "NGN",
-          amount: amountDecimalString,
+          amount: totalChargedDecimalString,
           price_type: "fixed",
         },
         billing_currency: "NGN",
@@ -5140,6 +5194,10 @@ if (Object.keys(updateData).length <= 1) {
           email: customerEmail,
           reference,
           purpose: "wallet_funding",
+          amount: String(numericAmount),
+          norodata_fee: String(norodataFee),
+          gateway_fee: String(gatewayFee),
+          total_charged: String(totalCharged),
         },
       };
 
@@ -5169,6 +5227,26 @@ if (Object.keys(updateData).length <= 1) {
         });
       }
 
+      // Record pending funding transaction with complete fee breakdown
+      try {
+        await supabase.from("transactions").insert({
+          user_id: String(userId || ""),
+          user_email: customerEmail,
+          amount: numericAmount, // Desired wallet credit
+          norodata_fee: norodataFee,
+          gateway_fee: gatewayFee,
+          total_charged: totalCharged,
+          status: "pending",
+          reference,
+          platform: "bachs",
+          gateway: "bachs",
+          description: `Wallet Top-Up via Bachs.io (Credit: ₦${numericAmount.toLocaleString()}, Charged: ₦${totalCharged.toLocaleString()})`,
+          created_at: new Date().toISOString(),
+        });
+      } catch (txErr: any) {
+        console.warn("[Bachs Checkout pending tx warning]:", txErr?.message || txErr);
+      }
+
       return res.status(201).json({
         success: true,
         checkout_id: respData.checkout_id,
@@ -5176,6 +5254,10 @@ if (Object.keys(updateData).length <= 1) {
         reference: respData.reference || reference,
         status: respData.status || "open",
         expires_at: respData.expires_at,
+        amount: numericAmount,
+        norodata_fee: norodataFee,
+        gateway_fee: gatewayFee,
+        total_charged: totalCharged,
       });
     } catch (err: any) {
       console.error("[POST /api/payments/bachs/checkout Exception]:", err);
@@ -5288,12 +5370,25 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(400).json({ error: `Unsupported settlement currency ${verifiedCurrency}. Expected NGN.` });
       }
 
+      // Read stored AMOUNT from funding transaction to ensure fees are never credited to the wallet
+      let finalCreditAmount = verifiedAmount;
+      try {
+        const { data: storedTx } = await supabase
+          .from("transactions")
+          .select("amount, norodata_fee, gateway_fee, total_charged")
+          .eq("reference", verifiedRef)
+          .maybeSingle();
+        if (storedTx && Number(storedTx.amount) > 0) {
+          finalCreditAmount = Number(storedTx.amount);
+        }
+      } catch (_) {}
+
       const creditOutcome = await creditUserWalletAtomically({
         reference: verifiedRef,
         email: verifiedEmail,
         userId: verifiedUserId,
-        amount: verifiedAmount,
-        description: `Wallet Top-Up via Bachs.io (₦${verifiedAmount.toLocaleString()})`,
+        amount: finalCreditAmount,
+        description: `Wallet Top-Up via Bachs.io (₦${finalCreditAmount.toLocaleString()})`,
       });
 
       if (creditOutcome.status === "error") {
@@ -5594,14 +5689,27 @@ if (Object.keys(updateData).length <= 1) {
           return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
         }
 
+        // Read stored AMOUNT from funding transaction to ensure fees are never credited to the wallet
+        let webhookCreditAmount = amount;
+        try {
+          const { data: storedTx } = await supabase
+            .from("transactions")
+            .select("amount, norodata_fee, gateway_fee, total_charged")
+            .eq("reference", reference)
+            .maybeSingle();
+          if (storedTx && Number(storedTx.amount) > 0) {
+            webhookCreditAmount = Number(storedTx.amount);
+          }
+        } catch (_) {}
+
         const creditRes = await creditUserWalletAtomically({
           reference,
           email: customerEmail,
           userId,
-          amount,
+          amount: webhookCreditAmount,
           description: bankTransfer
             ? `Wallet Deposit via Bachs Bank Transfer (${bankTransfer.sender_name || "Bank Transfer"})`
-            : `Wallet Top-Up via Bachs.io (₦${amount.toLocaleString()})`,
+            : `Wallet Top-Up via Bachs.io (₦${webhookCreditAmount.toLocaleString()})`,
           metadata: {
             event_id: eventId,
             event_type: eventType,
@@ -5846,84 +5954,40 @@ if (Object.keys(updateData).length <= 1) {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
-      const rawQuery = String(req.body?.query || "").trim();
-      if (!rawQuery) {
-        return res.status(400).json({ error: "Please enter recipient Transfer ID, email, or phone number." });
+      const rawPhone = String(req.body?.phone || req.body?.query || "").trim();
+      if (!rawPhone) {
+        return res.status(400).json({ error: "Please enter recipient phone number." });
       }
 
-      const safeQ = pgSafeFilter(rawQuery);
-      const upperQ = pgSafeFilter(rawQuery.toUpperCase());
-      const lowerQ = pgSafeFilter(rawQuery.toLowerCase());
-
-      // Normalize Nigerian phone variants if digits
-      const digitsOnly = rawQuery.replace(/[^0-9]/g, "");
-      const phoneVariants = new Set<string>([safeQ]);
-      if (digitsOnly.length >= 10) {
-        if (digitsOnly.startsWith("0") && digitsOnly.length === 11) {
-          phoneVariants.add(digitsOnly);
-          phoneVariants.add(`234${digitsOnly.slice(1)}`);
-          phoneVariants.add(`+234${digitsOnly.slice(1)}`);
-        } else if (digitsOnly.startsWith("234") && digitsOnly.length === 13) {
-          phoneVariants.add(`0${digitsOnly.slice(3)}`);
-          phoneVariants.add(digitsOnly);
-          phoneVariants.add(`+${digitsOnly}`);
-        }
+      const normalized = normalizeNigerianPhone(rawPhone);
+      if (!normalized || normalized.length < 10) {
+        return res.status(400).json({ error: "Please enter a valid Nigerian phone number." });
       }
 
-      const orParts = [
-        `email.ilike.${lowerQ}`,
-        `referral_code.ilike.${upperQ}`,
-        ...Array.from(phoneVariants).map((p) => `phone_number.eq.${pgSafeFilter(p)}`),
-      ];
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawQuery)) {
-        orParts.push(`id.eq.${rawQuery}`);
-      }
-
-      let recipient: any = null;
+      // Lookup recipient strictly by normalized phone number
       const { data: matchedRows, error: lookupErr } = await supabase
         .from('profiles')
-        .select('id, email, full_name, name, phone_number, referral_code')
-        .or(orParts.join(','))
-        .limit(5);
+        .select('id, full_name, name, email, phone_number')
+        .or(`phone_number.eq.${pgSafeFilter(normalized)},phone_number.eq.0${pgSafeFilter(normalized.slice(3))},phone_number.eq.+${pgSafeFilter(normalized)}`)
+        .limit(2);
 
-      if (!lookupErr && matchedRows && matchedRows.length > 0) {
-        recipient = matchedRows[0];
-      }
+      const recipient = matchedRows && matchedRows.length > 0 ? matchedRows[0] : null;
 
-      // Fallback: if query looks like NORODATA-XXXXXX (or a 6+ char hex prefix), match against user ID prefix
-      if (!recipient && (rawQuery.toUpperCase().startsWith('NORODATA-') || /^[A-Z0-9]{5,10}$/i.test(rawQuery))) {
-        const codePart = rawQuery.toUpperCase().replace(/^NORODATA-/, '').trim();
-        if (codePart.length >= 4) {
-          const { data: allProfiles } = await supabase
-            .from('profiles')
-            .select('id, email, full_name, name, phone_number, referral_code')
-            .limit(500);
-          if (allProfiles) {
-            recipient = allProfiles.find((p: any) => {
-              const pCode = String(p.referral_code || '').toUpperCase();
-              const idHex = String(p.id || '').replace(/-/g, '').toUpperCase();
-              return pCode === rawQuery.toUpperCase() || pCode === `NORODATA-${codePart}` || idHex.startsWith(codePart);
-            });
-          }
-        }
-      }
-
-      if (!recipient) {
-        return res.status(404).json({ error: "Recipient not found. Check the Transfer ID, email, or phone number." });
+      if (lookupErr || !recipient) {
+        return res.status(404).json({ error: "No NORODATA account uses this number." });
       }
 
       if (String(recipient.id) === String(authUser.id)) {
         return res.status(400).json({ error: "You cannot transfer money to your own wallet." });
       }
 
-      const displayCode = recipient.referral_code || `NORODATA-${String(recipient.id).replace(/-/g, '').substring(0, 6).toUpperCase()}`;
+      const displayName = recipient.full_name || recipient.name || (recipient.email ? recipient.email.split('@')[0] : 'NORODATA User');
+
+      // Return ONLY recipient display name and id. No email, balance, or phone number.
       return res.json({
         recipient: {
           id: recipient.id,
-          full_name: recipient.full_name || recipient.name || (recipient.email ? recipient.email.split('@')[0] : 'NORODATA User'),
-          email: recipient.email || '',
-          phone_number: recipient.phone_number || '',
-          referral_code: displayCode,
+          display_name: displayName,
         }
       });
     } catch (err: any) {
@@ -5939,6 +6003,7 @@ if (Object.keys(updateData).length <= 1) {
       const senderId = authUser.id;
       const recipientId = String(req.body?.recipientId || req.body?.recipient_uid || "").trim();
       const rawAmount = Number(req.body?.amount ?? req.body?.p_amount ?? 0);
+      const transferKey = String(req.body?.transferKey || req.body?.transfer_key || "").trim();
       const note = String(req.body?.note ?? req.body?.p_note ?? "").trim();
 
       if (!recipientId) {
@@ -5947,132 +6012,62 @@ if (Object.keys(updateData).length <= 1) {
       if (recipientId === senderId) {
         return res.status(400).json({ status: 'error', error: "You cannot transfer money to yourself." });
       }
-      if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
-        return res.status(400).json({ status: 'error', error: "Please enter a valid transfer amount greater than ₦0." });
+      if (!Number.isFinite(rawAmount) || rawAmount < 100) {
+        return res.status(400).json({ status: 'error', error: "Minimum transfer amount is ₦100.00." });
+      }
+      if (!transferKey) {
+        return res.status(400).json({ status: 'error', error: "Unique transfer key is required for idempotency." });
       }
 
       const amount = Number(rawAmount.toFixed(2));
 
-      // 1. Fetch sender and recipient profiles via service-role
-      const [{ data: senderProfile, error: sErr }, { data: recipientProfile, error: rErr }] = await Promise.all([
-        supabase.from('profiles').select('id, email, full_name, name, wallet_balance, balance, available_balance').eq('id', senderId).maybeSingle(),
-        supabase.from('profiles').select('id, email, full_name, name, wallet_balance, balance, available_balance').eq('id', recipientId).maybeSingle(),
-      ]);
+      // Verify sender has added a phone number before enabling transfers
+      const { data: senderProf } = await supabase
+        .from('profiles')
+        .select('phone_number, wallet_balance')
+        .eq('id', senderId)
+        .maybeSingle();
 
-      if (sErr || !senderProfile) {
-        return res.status(404).json({ status: 'error', error: "Sender wallet profile not found." });
-      }
-      if (rErr || !recipientProfile) {
-        return res.status(404).json({ status: 'error', error: "Recipient wallet profile not found." });
-      }
-
-      const senderBalance = Number(senderProfile.wallet_balance ?? senderProfile.balance ?? 0);
-      if (senderBalance < amount) {
+      if (!senderProf?.phone_number) {
         return res.status(400).json({
-          status: 'insufficient_funds',
-          error: `Insufficient wallet balance. Available: ₦${senderBalance.toLocaleString()}, Required: ₦${amount.toLocaleString()}.`,
-          balance: senderBalance,
-          required: amount,
+          status: 'error',
+          error: "You must add a phone number to your profile before you can send wallet transfers."
         });
       }
 
-      const recipientBalance = Number(recipientProfile.wallet_balance ?? recipientProfile.balance ?? 0);
-      const newSenderBalance = Number((senderBalance - amount).toFixed(2));
-      const newRecipientBalance = Number((recipientBalance + amount).toFixed(2));
-      const nowIso = new Date().toISOString();
+      // Execute transfer via atomic RPC execute_wallet_transfer_v2
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('execute_wallet_transfer_v2', {
+        p_sender_id: senderId,
+        p_recipient_id: recipientId,
+        p_amount: amount,
+        p_transfer_key: transferKey,
+        p_note: note || null,
+      });
 
-      // 2. Deduct from sender
-      const { error: deductErr } = await supabase
-        .from('profiles')
-        .update({
-          wallet_balance: newSenderBalance,
-          balance: newSenderBalance,
-          available_balance: newSenderBalance,
-          updated_at: nowIso,
-        })
-        .eq('id', senderId);
-
-      if (deductErr) {
-        throw new Error(`Failed to debit sender wallet: ${deductErr.message}`);
+      if (rpcErr) {
+        console.error("[Wallet Transfer RPC Error]:", rpcErr.message);
+        return res.status(500).json({ status: 'error', error: rpcErr.message || "Failed to execute transfer." });
       }
 
-      // 3. Credit recipient
-      const { error: creditErr } = await supabase
-        .from('profiles')
-        .update({
-          wallet_balance: newRecipientBalance,
-          balance: newRecipientBalance,
-          available_balance: newRecipientBalance,
-          updated_at: nowIso,
-        })
-        .eq('id', recipientId);
-
-      if (creditErr) {
-        // Rollback sender deduction if recipient update fails
-        await supabase
-          .from('profiles')
-          .update({
-            wallet_balance: senderBalance,
-            balance: senderBalance,
-            available_balance: senderBalance,
-            updated_at: nowIso,
-          })
-          .eq('id', senderId);
-        throw new Error(`Failed to credit recipient wallet: ${creditErr.message}`);
-      }
-
-      // Best-effort sync legacy users table if present
-      try {
-        await Promise.all([
-          supabase.from('users').update({ wallet_balance: newSenderBalance }).eq('id', senderId),
-          supabase.from('users').update({ wallet_balance: newRecipientBalance }).eq('id', recipientId),
-        ]);
-      } catch (_) {}
-
-      const baseRef = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const senderName = senderProfile.full_name || senderProfile.name || senderProfile.email || 'NORODATA User';
-      const recipientName = recipientProfile.full_name || recipientProfile.name || recipientProfile.email || 'NORODATA User';
-
-      // 4. Record transactions for both sender and recipient
-      try {
-        await supabase.from('transactions').insert([
-          {
-            user_id: String(senderId),
-            user_email: senderProfile.email || authUser.email || null,
-            type: 'transfer_out',
-            amount: amount,
-            status: 'completed',
-            reference: `${baseRef}-OUT`,
-            description: note ? `Wallet transfer to ${recipientName} (${note})` : `Wallet transfer sent to ${recipientName}`,
-            gateway: 'wallet_transfer',
-            created_at: nowIso,
-          },
-          {
-            user_id: String(recipientId),
-            user_email: recipientProfile.email || null,
-            type: 'funding',
-            amount: amount,
-            status: 'completed',
-            reference: `${baseRef}-IN`,
-            description: note ? `Wallet transfer from ${senderName} (${note})` : `Wallet transfer received from ${senderName}`,
-            gateway: 'wallet_transfer',
-            created_at: nowIso,
-          }
-        ]);
-      } catch (txLogErr: any) {
-        console.warn("[Wallet Transfer] Transaction log warning:", txLogErr.message);
+      if (rpcRes.status !== 'success') {
+        return res.status(rpcRes.status === 'insufficient_funds' ? 400 : 500).json(rpcRes);
       }
 
       return res.json({
         status: 'success',
-        amount,
-        newBalance: newSenderBalance,
-        reference: baseRef,
-        recipient: {
-          id: recipientId,
-          name: recipientName,
-        }
+        amount: rpcRes.amount,
+        fee: rpcRes.fee,
+        total_debited: rpcRes.total_debited,
+        reference: rpcRes.reference,
+        recipient_name: rpcRes.recipient_name,
+        newBalance: rpcRes.new_balance,
+        message: `₦${amount.toLocaleString()} sent successfully to ${rpcRes.recipient_name || 'recipient'}.`
       });
+    } catch (err: any) {
+      console.error("[Wallet Transfer Endpoint Error]:", err.message);
+      return res.status(500).json({ status: 'error', error: err.message || "Transfer processing failed." });
+    }
+  });
     } catch (err: any) {
       console.error("[Wallet Transfer Error]:", err.message);
       return res.status(500).json({ status: 'error', error: err.message || "Transfer failed." });
@@ -7769,6 +7764,19 @@ if (Object.keys(updateData).length <= 1) {
 
       orders.unshift(newOrder);
       await saveMarketplaceStore(listings, orders);
+
+      // ITEM 2: Push notification to marketplace admins (non-blocking, buyer first name and listing name only)
+      try {
+        const buyerFirstName = String(buyerName).split(' ')[0] || 'A buyer';
+        triggerMarketplaceAdminPushNotification({
+          listing_name: String(listing.title || 'Marketplace Item'),
+          buyer_first_name: buyerFirstName,
+          order_id: orderId,
+        }).catch((e) => console.warn('[Marketplace Push Notification Failed (non-fatal)]:', e?.message || e));
+      } catch (pushErr: any) {
+        console.warn('[Marketplace Order Push Notification Exception]:', pushErr?.message || pushErr);
+      }
+
       return res.json({ order: newOrder });
     } catch (err: any) {
       console.error("[POST /api/marketplace/orders/initiate Error]:", err.message);
