@@ -59,6 +59,7 @@ import {
 import { toast } from 'react-hot-toast';
 import AdminPricingManager from './AdminPricingManager';
 import type { UserProfile, Transaction, ServicePlan, NetworkType } from '../types';
+import { subscribeAdminToPush } from '../lib/push';
 
 // Pure deterministic UUID mapper to prevent PostgreSQL id column type conflicts (UUID vs text)
 export const ensureUUID = (strId: string): string => {
@@ -95,6 +96,7 @@ export default function AdminPanelSection() {
   const isRestrictedAdmin = isAccountantAdmin || isEsimAdmin;
   const { handleSupabaseError } = useSupabaseError();
   const [loading, setLoading] = React.useState(true);
+  const [pushLoading, setPushLoading] = React.useState(false);
   const [dataPlansList, setDataPlansList] = React.useState<any[]>([]);
   const [utilityPlansList, setUtilityPlansList] = React.useState<any[]>([]);
   const [examPlansList, setExamPlansList] = React.useState<any[]>([]);
@@ -894,6 +896,29 @@ export default function AdminPanelSection() {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Admin Push Notifications toggle button */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                setPushLoading(true);
+                const currentUserId = user?.id || (user as any)?.uid;
+                if (!currentUserId) throw new Error('Admin not authenticated');
+                const res = await subscribeAdminToPush(currentUserId);
+                toast.success(res.message || 'Admin notifications enabled!');
+              } catch (err: any) {
+                toast.error(err.message || 'Could not enable admin notifications.');
+              } finally {
+                setPushLoading(false);
+              }
+            }}
+            disabled={pushLoading}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95 border bg-amber-500 hover:bg-amber-600 text-white border-amber-600 disabled:opacity-50"
+          >
+            <Bell size={14} />
+            <span>{pushLoading ? 'Enabling...' : 'Enable admin notifications'}</span>
+          </button>
+
           {/* Dedicated eSIM Messages quick button available on ALL THREE admin accounts */}
           <button
             type="button"
@@ -913,6 +938,14 @@ export default function AdminPanelSection() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" /> Connection secure
           </span>
         </div>
+      </div>
+
+      {/* iPhone PWA Notification Guidance */}
+      <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
+        <span className="text-base">📲</span>
+        <span>
+          <strong>On iPhone, install NORODATA to your Home Screen first, then enable notifications.</strong>
+        </span>
       </div>
 
       {/* Tab Switcher */}

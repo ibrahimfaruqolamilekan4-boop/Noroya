@@ -104,3 +104,53 @@ self.addEventListener('fetch', (event) => {
     );
   }
 });
+
+// ─── Web Push & Notification Handling ─────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  try {
+    const payload = event.data.json();
+    const title = payload.title || 'New marketplace order';
+    const options = {
+      body: payload.body || 'You have a new marketplace order to review.',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      data: payload.data || {},
+      tag: payload.data?.order_id ? `order-${payload.data.order_id}` : 'norodata-order',
+      renotify: true,
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+  } catch (_) {
+    const text = event.data.text();
+    event.waitUntil(
+      self.registration.showNotification('New marketplace order', {
+        body: text,
+        icon: '/icon.svg',
+      })
+    );
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/?tab=admin';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ('focus' in client) {
+          if (client.url.includes(targetUrl)) {
+            return client.focus();
+          }
+          if ('navigate' in client) {
+            client.navigate(targetUrl);
+            return client.focus();
+          }
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});

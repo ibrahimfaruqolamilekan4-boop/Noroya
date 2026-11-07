@@ -63,6 +63,9 @@ import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
+import { calculateFundingFee } from '../lib/fundingFee';
+import { lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
+import { normalizeNigerianPhone, isValidNigerianPhone } from '../lib/validation';
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
 import AdminPanelSection from './AdminPanelSection';
@@ -783,46 +786,125 @@ function DashboardOverview({
     return () => { supabase.removeChannel(channel); };
   }, [user?.uid, (user as any)?.id]);
 
+  // Missing Phone Modal state
+  const [showAddPhoneModal, setShowAddPhoneModal] = React.useState(false);
+  const [newPhoneNumber, setNewPhoneNumber] = React.useState('');
+  const [savingPhone, setSavingPhone] = React.useState(false);
+
+  const userPhone = (user as any)?.phone_number || (user as any)?.phoneNumber || '';
+
+  const handleSavePhoneNumber = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const normalized = normalizeNigerianPhone(newPhoneNumber);
+    if (!isValidNigerianPhone(normalized)) {
+      toast.error('Please enter a valid 11-digit Nigerian phone number.');
+      return;
+    }
+    setSavingPhone(true);
+    try {
+      const currentUserId = (user as any)?.id || user?.uid;
+      const { data: existing, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone_number', normalized)
+        .neq('id', currentUserId)
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+      if (existing) {
+        toast.error('This phone number is already registered to another account.');
+        setSavingPhone(false);
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ phone_number: normalized })
+        .eq('id', currentUserId);
+
+      if (updateError) throw updateError;
+
+      (user as any).phone_number = normalized;
+      toast.success('Phone number added successfully!');
+      setShowAddPhoneModal(false);
+      setNewPhoneNumber('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save phone number');
+    } finally {
+      setSavingPhone(false);
+    }
+  };
+
   const handleLookupRecipient = async () => {
-    if (!transferUid.trim()) { toast.error('Please enter recipient details'); return; }
+    if (!userPhone) {
+      toast.error('Please add your phone number first before sending a transfer.');
+      setShowAddPhoneModal(true);
+      return;
+    }
+    const rawInput = transferUid.trim();
+    if (!rawInput) {
+      toast.error('Please enter recipient phone number');
+      return;
+    }
+    const normalized = normalizeNigerianPhone(rawInput);
+    if (!isValidNigerianPhone(normalized)) {
+      toast.error('Please enter a valid Nigerian phone number (11 digits or +234)');
+      return;
+    }
     setTransferLoading(true);
     try {
-      const q = transferUid.trim();
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .or(`email.eq.${q},phone_number.eq.${q},username.eq.${q},referral_code.eq.${q.toUpperCase()}`)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) { toast.error('User not found.'); setTransferLoading(false); return; }
-      if (data.id === (user as any).uid || data.id === (user as any).id) { toast.error('Cannot transfer to yourself.'); setTransferLoading(false); return; }
-      setTransferRecipient(data);
+      const res = await lookupTransferRecipient(normalized);
+      if (!res?.recipient) {
+        toast.error('No NORODATA account uses this number.');
+        return;
+      }
+      setTransferRecipient(res.recipient);
       setTransferStep('confirm');
-    } catch (err: any) { toast.error(err.message || 'Failed to find recipient'); }
-    finally { setTransferLoading(false); }
+    } catch (err: any) {
+      toast.error(err.message || 'No NORODATA account uses this number.');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   const handleConfirmTransfer = async () => {
     const amt = Number(transferAmount);
-    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    if (!amt || amt < 100) {
+      toast.error('Minimum transfer amount is ₦100');
+      return;
+    }
+    if (!transferRecipient?.id) {
+      toast.error('Please verify recipient first');
+      return;
+    }
     setTransferLoading(true);
-    const reference = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const transferKey = `txf_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     try {
-      const { data, error } = await supabase.rpc('transfer_funds', {
-        recipient_uid: transferRecipient.id, p_amount: amt, p_reference: reference, p_note: transferNote
+      const res = await executeWalletTransfer({
+        recipientId: transferRecipient.id,
+        amount: amt,
+        transferKey,
+        note: transferNote
       });
-      if (error) throw error;
-      if (data.status === 'success') {
-        toast.success(`₦${amt.toLocaleString()} sent!`);
+      if (res.status === 'success') {
+        toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.display_name}!`);
         setShowTransferModal(false);
         setTransferStep('input');
-        setTransferUid(''); setTransferAmount(''); setTransferNote(''); setTransferRecipient(null);
+        setTransferUid('');
+        setTransferAmount('');
+        setTransferNote('');
+        setTransferRecipient(null);
         refreshBalance();
-      } else if (data.status === 'insufficient_funds') {
-        toast.error(`Insufficient balance.`);
-      } else { toast.error(data.message || 'Transfer failed'); }
-    } catch (err: any) { toast.error(err.message || 'Transfer failed'); }
-    finally { setTransferLoading(false); }
+      } else if (res.status === 'insufficient_funds') {
+        toast.error('Insufficient wallet balance to cover amount and ₦10 fee.');
+      } else {
+        toast.error(res.error || 'Transfer failed');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Transfer failed');
+    } finally {
+      setTransferLoading(false);
+    }
   };
 
   // Bachs.io Gateway & Virtual Account state
@@ -987,6 +1069,27 @@ function DashboardOverview({
 
   return (
     <div className="space-y-5 max-w-2xl mx-auto md:max-w-none">
+
+      {/* ── Missing Phone Banner (ITEM 3) ── */}
+      {(!user?.phone_number && !(user as any)?.phoneNumber) && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+              <Phone size={20} />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-900">Add your phone number to enable wallet transfers</p>
+              <p className="text-xs text-amber-700">A Nigerian phone number is required on your profile before sending wallet funds to other users.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAddPhoneModal(true)}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition shadow-sm shrink-0 active:scale-95 cursor-pointer"
+          >
+            Add Phone Number
+          </button>
+        </div>
+      )}
 
       {/* ── Wallet card ───────────────────────────────────────────── */}
       <div
@@ -1361,13 +1464,41 @@ function DashboardOverview({
                         ))}
                       </div>
                     </div>
+
+                    {/* ITEM 1: FEE BREAKDOWN */}
+                    {(() => {
+                      const num = Number(opayAmount) || 0;
+                      if (num < 100) return null;
+                      const feeBreakdown = calculateFundingFee(num);
+                      return (
+                        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2 text-xs">
+                          <div className="flex justify-between text-gray-600">
+                            <span>Amount</span>
+                            <span className="font-semibold">₦{feeBreakdown.amount.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-600">
+                            <span>NORODATA fee</span>
+                            <span className="font-semibold">₦{feeBreakdown.norodataFee.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-600">
+                            <span>Gateway fee</span>
+                            <span className="font-semibold">₦{feeBreakdown.gatewayFee.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between text-sm font-black text-gray-900 border-t pt-2 border-gray-200">
+                            <span>Total</span>
+                            <span style={{ color: '#3B7A3B' }}>₦{feeBreakdown.totalCharged.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <button
                       type="submit"
                       disabled={fwLoading || !opayAmount || Number(opayAmount) < 100}
                       className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
-                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${Number(opayAmount || 0).toLocaleString()} via Bachs.io`}
+                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${(Number(opayAmount) >= 100 ? calculateFundingFee(Number(opayAmount)).totalCharged : Number(opayAmount || 0)).toLocaleString()} via Bachs.io`}
                     </button>
                   </form>
                 )}
@@ -1411,7 +1542,7 @@ function DashboardOverview({
         )}
       </AnimatePresence>
 
-      {/* ── Transfer Modal ────────────────────────────────────────── */}
+      {/* ── Transfer Modal (ITEM 3) ────────────────────────────────── */}
       <AnimatePresence>
         {showTransferModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1427,7 +1558,7 @@ function DashboardOverview({
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-black text-gray-900 text-xl">Send Money</h4>
-                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer via Transfer ID</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer by phone number</p>
                 </div>
                 <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
                   <X size={16} />
@@ -1436,56 +1567,35 @@ function DashboardOverview({
 
               {transferStep === 'input' && (
                 <div className="space-y-5">
-                  {/* Transfer ID field — primary / most prominent */}
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-black text-gray-900 uppercase tracking-wider">Recipient Transfer ID</label>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E8F0E8', color: '#3B7A3B' }}>
-                        same as referral code
-                      </span>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={transferUid}
-                        onChange={(e) => setTransferUid(e.target.value)}
-                        placeholder="e.g. NORODATA-AB12C"
-                        className="w-full bg-gray-50 border-2 rounded-xl px-4 py-4 font-mono font-black text-gray-900 text-lg focus:outline-none transition-all uppercase tracking-wider placeholder:normal-case placeholder:font-normal placeholder:text-sm placeholder:tracking-normal"
-                        style={{ borderColor: transferUid ? '#3B7A3B' : '#E5E7EB' }}
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400 mt-2 leading-relaxed">
-                      Ask the recipient to share their Transfer ID. They can find it on their dashboard under <strong>Refer & earn</strong> — it looks like <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-xs">NORODATA-XXXXX</span>.
+                    <label className="text-xs font-black text-gray-900 uppercase tracking-wider block mb-1.5">Recipient Phone Number</label>
+                    <input
+                      type="tel"
+                      value={transferUid}
+                      onChange={(e) => setTransferUid(e.target.value)}
+                      placeholder="e.g. 08012345678 or +234..."
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3.5 font-bold text-gray-900 focus:outline-none focus:border-green-500 transition-all placeholder:font-normal placeholder:text-sm"
+                    />
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      Enter the recipient's registered Nigerian phone number.
                     </p>
                   </div>
-
-                  {/* Your own Transfer ID for easy sharing */}
-                  {user.referralCode && (
-                    <div className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: '#F0F5F0', border: '1px solid #D0E4D0' }}>
-                      <div>
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Your Transfer ID</p>
-                        <p className="font-mono font-black text-gray-900 mt-0.5">{user.referralCode}</p>
-                      </div>
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(user.referralCode); toast.success('Your Transfer ID copied!'); }}
-                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all"
-                        style={{ backgroundColor: '#3B7A3B', color: '#fff' }}
-                      >
-                        <Copy size={12} /> Copy mine
-                      </button>
-                    </div>
-                  )}
 
                   {/* Amount */}
                   <div>
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Amount (₦)</label>
                     <input
                       type="number"
+                      min={100}
                       value={transferAmount}
                       onChange={(e) => setTransferAmount(e.target.value)}
-                      placeholder="0.00"
+                      placeholder="Min ₦100"
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 text-lg focus:outline-none focus:border-green-500 transition-all"
                     />
+                    <div className="flex justify-between items-center mt-1.5 text-xs text-gray-500">
+                      <span>Minimum transfer: ₦100</span>
+                      <span className="font-semibold text-gray-700">Fee: ₦10</span>
+                    </div>
                   </div>
 
                   {/* Note */}
@@ -1502,11 +1612,11 @@ function DashboardOverview({
 
                   <button
                     onClick={handleLookupRecipient}
-                    disabled={transferLoading || !transferUid || !transferAmount}
-                    className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all"
+                    disabled={transferLoading || !transferUid || !transferAmount || Number(transferAmount) < 100}
+                    className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer"
                     style={{ backgroundColor: '#3B7A3B' }}
                   >
-                    {transferLoading ? 'Looking up recipient…' : 'Find recipient & continue →'}
+                    {transferLoading ? 'Verifying recipient…' : 'Verify'}
                   </button>
                 </div>
               )}
@@ -1514,25 +1624,84 @@ function DashboardOverview({
               {transferStep === 'confirm' && transferRecipient && (
                 <div className="space-y-4">
                   <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Sending to</p>
-                    <p className="font-black text-gray-900">{transferRecipient.full_name || transferRecipient.username || transferRecipient.email}</p>
-                    <p className="text-sm text-gray-500">{transferRecipient.phone_number || transferRecipient.email}</p>
+                    <p className="text-xs text-gray-400 font-bold uppercase">Send to:</p>
+                    <p className="font-black text-gray-900 text-xl">{transferRecipient.display_name}</p>
                     {transferNote && <p className="text-sm text-gray-600 italic">"{transferNote}"</p>}
-                    <div className="pt-3 border-t border-gray-200 flex justify-between items-center">
-                      <span className="text-xs text-gray-400 font-bold uppercase">Amount</span>
-                      <span className="text-xl font-black" style={{ color: '#3B7A3B' }}>₦{Number(transferAmount).toLocaleString()}</span>
+                    <div className="pt-3 border-t border-gray-200 space-y-2 text-sm">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Transfer Amount</span>
+                        <span className="font-semibold">₦{Number(transferAmount).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Transfer Fee</span>
+                        <span className="font-semibold">₦10</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200 text-base font-black">
+                        <span className="text-gray-900">Total Debit</span>
+                        <span style={{ color: '#3B7A3B' }}>₦{(Number(transferAmount) + 10).toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all" style={{ backgroundColor: '#3B7A3B' }}>
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer" style={{ backgroundColor: '#3B7A3B' }}>
                       {transferLoading ? 'Sending…' : 'Confirm'}
                     </button>
                   </div>
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Add Phone Number Modal (ITEM 3) ── */}
+      <AnimatePresence>
+        {showAddPhoneModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowAddPhoneModal(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-4 z-10"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-gray-900 text-lg">Add Phone Number</h4>
+                  <p className="text-xs text-gray-400 mt-0.5">Required for peer-to-peer wallet transfers</p>
+                </div>
+                <button onClick={() => setShowAddPhoneModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePhoneNumber} className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Nigerian Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={newPhoneNumber}
+                    onChange={(e) => setNewPhoneNumber(e.target.value)}
+                    placeholder="e.g. 08012345678 or +234..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-bold text-gray-900 focus:outline-none focus:border-green-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Accepts 11 digits starting with 0 or +234</p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={savingPhone || !newPhoneNumber}
+                  className="w-full text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer"
+                  style={{ backgroundColor: '#3B7A3B' }}
+                >
+                  {savingPhone ? 'Saving...' : 'Save Phone Number'}
+                </button>
+              </form>
             </motion.div>
           </div>
         )}
