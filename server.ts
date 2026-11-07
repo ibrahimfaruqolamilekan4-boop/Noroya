@@ -5107,10 +5107,6 @@ if (Object.keys(updateData).length <= 1) {
         created_at: new Date().toISOString(),
       });
     }
-      description: desc,
-      metadata: opts.metadata || {},
-      created_at: new Date().toISOString(),
-    });
 
     return { status: "success", userId: profile.id };
   };
