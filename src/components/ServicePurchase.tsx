@@ -73,24 +73,68 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   const [showConfirmModal, setShowConfirmModal] = React.useState(false);
   const [purchaseStatus, setPurchaseStatus] = React.useState<'idle' | 'success' | 'failed'>('idle');
   const [createdTransaction, setCreatedTransaction] = React.useState<any>(null);
+  const [autoDetected, setAutoDetected] = React.useState(false);
+  const [recentBeneficiaries, setRecentBeneficiaries] = React.useState<string[]>([]);
+
+  // Load recent beneficiaries from localStorage
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem('norodata_recent_beneficiaries');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setRecentBeneficiaries(parsed.slice(0, 4));
+      }
+    } catch (_) {}
+  }, []);
+
+  const saveBeneficiary = React.useCallback((num: string) => {
+    try {
+      let cleaned = num.replace(/\D/g, '');
+      if (cleaned.startsWith('234') && cleaned.length >= 6) {
+        cleaned = '0' + cleaned.substring(3);
+      } else if (cleaned.length >= 3 && !cleaned.startsWith('0')) {
+        cleaned = '0' + cleaned;
+      }
+      if (cleaned.length >= 10) {
+        const stored = localStorage.getItem('norodata_recent_beneficiaries');
+        const list = stored ? JSON.parse(stored) : [];
+        const updated = [cleaned, ...list.filter((x: string) => x !== cleaned)].slice(0, 5);
+        localStorage.setItem('norodata_recent_beneficiaries', JSON.stringify(updated));
+        setRecentBeneficiaries(updated.slice(0, 4));
+      }
+    } catch (_) {}
+  }, []);
 
   // Dropdown open states
   const [networkOpen, setNetworkOpen] = React.useState(false);
   const [planTypeOpen, setPlanTypeOpen] = React.useState(false);
 
-  // Auto-detect network from phone prefix
+  // Auto-detect network from phone prefix (handles 080..., +234..., 234..., 80...)
   React.useEffect(() => {
-    const cleaned = phoneNumber.replace(/\D/g, '');
+    let cleaned = phoneNumber.replace(/\D/g, '');
+    if (cleaned.startsWith('234') && cleaned.length >= 6) {
+      cleaned = '0' + cleaned.substring(3);
+    } else if (cleaned.length >= 3 && !cleaned.startsWith('0')) {
+      cleaned = '0' + cleaned;
+    }
+
     if (cleaned.length >= 4) {
       const prefix = cleaned.substring(0, 4);
-      const mtnPrefixes = ['0803', '0806', '0810', '0813', '0814', '0816', '0903', '0906', '0913', '0916', '0703', '0706'];
-      const airtelPrefixes = ['0802', '0808', '0812', '0902', '0907', '0901', '0904', '0701', '0708'];
+      const mtnPrefixes = ['0803', '0806', '0810', '0813', '0814', '0816', '0903', '0906', '0913', '0916', '0703', '0706', '0704', '0702'];
+      const airtelPrefixes = ['0802', '0808', '0812', '0902', '0907', '0901', '0904', '0701', '0708', '0912', '0911'];
       const gloPrefixes = ['0805', '0807', '0811', '0815', '0905', '0915', '0705'];
       const ninePrefixes = ['0809', '0817', '0818', '0909', '0908'];
-      if (mtnPrefixes.includes(prefix) && network !== 'MTN') setNetwork('MTN');
-      else if (airtelPrefixes.includes(prefix) && network !== 'Airtel') setNetwork('Airtel');
-      else if (gloPrefixes.includes(prefix) && network !== 'Glo') setNetwork('Glo');
-      else if (ninePrefixes.includes(prefix) && network !== '9mobile') setNetwork('9mobile');
+
+      let detected: NetworkType | null = null;
+      if (mtnPrefixes.includes(prefix)) detected = 'MTN';
+      else if (airtelPrefixes.includes(prefix)) detected = 'Airtel';
+      else if (gloPrefixes.includes(prefix)) detected = 'Glo';
+      else if (ninePrefixes.includes(prefix)) detected = '9mobile';
+
+      if (detected && network !== detected) {
+        setNetwork(detected);
+        setAutoDetected(true);
+      }
     }
   }, [phoneNumber, network]);
 
@@ -206,6 +250,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         const response = await fetch('/api/v1/data/purchase', { method: 'POST', headers, body: JSON.stringify(payload) });
         const resData = await response.json();
         if (response.ok && resData.status === 'success') {
+          saveBeneficiary(phoneNumber);
           setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
           setPurchaseStatus('success');
           toast.success('Data purchase successful!');
@@ -218,6 +263,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         const response = await fetch('/api/buy-airtime', { method: 'POST', headers, body: JSON.stringify(payload) });
         const resData = await response.json();
         if (response.ok && (resData.status === 'success' || resData.success === true)) {
+          saveBeneficiary(phoneNumber);
           setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
           setPurchaseStatus('success');
           toast.success(`₦${airtimeAmount} airtime sent!`);
@@ -294,23 +340,80 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           </p>
         </div>
 
-        {/* Network + Plan Type row (dropdown style) */}
-        <div className={cn('grid gap-4', type === 'data' ? 'grid-cols-2' : 'grid-cols-1')}>
-          {/* Network dropdown */}
+        {/* ── Network Selection Bar with Official Brand Badges ── */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: '#8FB88F' }}>
+              SELECT NETWORK
+            </label>
+            {autoDetected && network && (
+              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-[#B5D430] text-[#132613] animate-pulse shadow-sm flex items-center gap-1">
+                <span>⚡</span>
+                <span>Auto-detected: {network}</span>
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { id: 'MTN', name: 'MTN', color: '#FFCC00', dot: '#FFCC00', textColor: '#000000' },
+              { id: 'Airtel', name: 'Airtel', color: '#FF0000', dot: '#FF0000', textColor: '#FFFFFF' },
+              { id: 'Glo', name: 'Glo', color: '#228B22', dot: '#228B22', textColor: '#FFFFFF' },
+              { id: '9mobile', name: '9mobile', color: '#005C29', dot: '#005C29', textColor: '#FFFFFF' },
+            ].map((net) => {
+              const isSelected = network === net.id;
+              return (
+                <button
+                  key={net.id}
+                  type="button"
+                  onClick={() => {
+                    setNetwork(net.id as NetworkType);
+                    setAutoDetected(false);
+                  }}
+                  className={cn(
+                    'flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-200 active:scale-95 cursor-pointer relative',
+                    isSelected
+                      ? 'border-[#B5D430] bg-[#1E3A1E] shadow-lg shadow-emerald-950/50'
+                      : 'border-white/10 bg-white/5 hover:bg-white/10 opacity-75 hover:opacity-100'
+                  )}
+                >
+                  <span
+                    className="w-3.5 h-3.5 rounded-full mb-1.5 shadow-sm border border-white/20"
+                    style={{ backgroundColor: net.color }}
+                  />
+                  <span className={cn('text-xs font-black', isSelected ? 'text-white' : 'text-white/80')}>
+                    {net.name}
+                  </span>
+                  {isSelected && (
+                    <motion.div
+                      layoutId="service-network-active"
+                      className="absolute -bottom-1 w-6 h-0.5 rounded-full bg-[#B5D430]"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Plan type dropdown — data only */}
+        {type === 'data' && (
           <div className="relative">
-            <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: '#8FB88F' }}>NETWORK</label>
+            <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: '#8FB88F' }}>
+              PLAN TYPE
+            </label>
             <button
               type="button"
-              onClick={() => { setNetworkOpen(!networkOpen); setPlanTypeOpen(false); }}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-white font-semibold text-sm transition-all"
+              onClick={() => { if (network && availableTabs.length > 0) { setPlanTypeOpen(!planTypeOpen); setNetworkOpen(false); } }}
+              disabled={!network || availableTabs.length === 0}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-white font-semibold text-sm transition-all disabled:opacity-40 cursor-pointer"
               style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}
             >
-              <span>{network || 'Select network'}</span>
-              <ChevronDown size={16} className={cn('transition-transform', networkOpen && 'rotate-180')} style={{ color: '#8FB88F' }} />
+              <span>{currentPlanTypeLabel}</span>
+              <ChevronDown size={16} className={cn('transition-transform', planTypeOpen && 'rotate-180')} style={{ color: '#8FB88F' }} />
             </button>
 
             <AnimatePresence>
-              {networkOpen && (
+              {planTypeOpen && (
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -318,83 +421,72 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   className="absolute top-full left-0 right-0 mt-2 rounded-2xl overflow-hidden z-20 shadow-2xl"
                   style={{ backgroundColor: '#1E3A1E' }}
                 >
-                  {(['MTN', 'Glo', 'Airtel', '9mobile'] as NetworkType[]).map((net, idx, arr) => (
+                  {availableTabs.map((tab, idx, arr) => (
                     <button
-                      key={net}
+                      key={tab.id}
                       type="button"
-                      onClick={() => { setNetwork(net); setNetworkOpen(false); }}
-                      className="w-full flex items-center justify-between px-5 py-4 text-white font-semibold text-base text-left transition-all hover:bg-white/5"
+                      onClick={() => { setPlanType(tab.id); setSelectedPlan(null); setPlanTypeOpen(false); }}
+                      className="w-full flex items-center justify-between px-5 py-4 text-white font-semibold text-base text-left transition-all hover:bg-white/5 cursor-pointer"
                       style={{ borderBottom: idx < arr.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}
                     >
-                      <span>{net}</span>
-                      {network === net && (
+                      <span>{tab.label}</span>
+                      {planType === tab.id ? (
                         <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: '#3B7A3B' }}>
                           <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#3B7A3B' }} />
                         </div>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2" style={{ borderColor: 'rgba(255,255,255,0.3)' }} />
                       )}
-                      {network !== net && <div className="w-5 h-5 rounded-full border-2" style={{ borderColor: 'rgba(255,255,255,0.3)' }} />}
                     </button>
                   ))}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
+        )}
 
-          {/* Plan type dropdown — data only */}
-          {type === 'data' && (
-            <div className="relative">
-              <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: '#8FB88F' }}>PLAN TYPE</label>
+        {/* ── Recipient Number & Quick Beneficiary Pills ── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: '#8FB88F' }}>
+              RECIPIENT NUMBER
+            </label>
+            {user?.phone_number && (
               <button
                 type="button"
-                onClick={() => { if (network && availableTabs.length > 0) { setPlanTypeOpen(!planTypeOpen); setNetworkOpen(false); } }}
-                disabled={!network || availableTabs.length === 0}
-                className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-white font-semibold text-sm transition-all disabled:opacity-40"
-                style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}
+                onClick={() => setPhoneNumber(user.phone_number)}
+                className="text-[11px] font-bold text-[#B5D430] hover:underline flex items-center gap-1 cursor-pointer"
               >
-                <span>{currentPlanTypeLabel}</span>
-                <ChevronDown size={16} className={cn('transition-transform', planTypeOpen && 'rotate-180')} style={{ color: '#8FB88F' }} />
+                <span>📱 Use My Number</span>
               </button>
+            )}
+          </div>
 
-              <AnimatePresence>
-                {planTypeOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    className="absolute top-full left-0 right-0 mt-2 rounded-2xl overflow-hidden z-20 shadow-2xl"
-                    style={{ backgroundColor: '#1E3A1E' }}
-                  >
-                    {availableTabs.map((tab, idx, arr) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => { setPlanType(tab.id); setSelectedPlan(null); setPlanTypeOpen(false); }}
-                        className="w-full flex items-center justify-between px-5 py-4 text-white font-semibold text-base text-left transition-all hover:bg-white/5"
-                        style={{ borderBottom: idx < arr.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}
-                      >
-                        <span>{tab.label}</span>
-                        {planType === tab.id ? (
-                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: '#3B7A3B' }}>
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#3B7A3B' }} />
-                          </div>
-                        ) : (
-                          <div className="w-5 h-5 rounded-full border-2" style={{ borderColor: 'rgba(255,255,255,0.3)' }} />
-                        )}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+          {/* Quick beneficiary pill shortcuts */}
+          {recentBeneficiaries.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <span className="text-[10px] text-white/50 font-bold uppercase tracking-wider shrink-0">Recent:</span>
+              {recentBeneficiaries.map((beneficiary) => (
+                <button
+                  key={beneficiary}
+                  type="button"
+                  onClick={() => setPhoneNumber(beneficiary)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg text-xs font-mono font-semibold transition-all shrink-0 cursor-pointer',
+                    phoneNumber === beneficiary
+                      ? 'bg-[#B5D430] text-[#132613] font-bold'
+                      : 'bg-white/10 hover:bg-white/20 text-white/80'
+                  )}
+                >
+                  {beneficiary}
+                </button>
+              ))}
             </div>
           )}
-        </div>
 
-        {/* Recipient number */}
-        <div>
-          <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: '#8FB88F' }}>RECIPIENT NUMBER</label>
           <input
             type="tel"
-            maxLength={11}
+            maxLength={14}
             placeholder="0803 123 4567"
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}

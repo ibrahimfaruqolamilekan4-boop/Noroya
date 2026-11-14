@@ -18,6 +18,7 @@
 export interface FundingFeeBreakdown {
   amount: number;
   margin: number;
+  norodataFee: number;
   gatewayFee: number;
   totalCharged: number;
   settlement: number;
@@ -36,6 +37,7 @@ export function calculateFundingFee(amount: number, rate: number = BACHS_GATEWAY
   return {
     amount: numericAmount,
     margin,
+    norodataFee: margin,
     gatewayFee,
     totalCharged,
     settlement,
