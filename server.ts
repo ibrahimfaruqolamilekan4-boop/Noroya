@@ -5607,10 +5607,11 @@ if (Object.keys(updateData).length <= 1) {
         ? req.rawBody
         : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
 
+      // Verify webhook signature (V2 / V1 per official docs). Reject invalid with 401.
       const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, webhookSecret);
       if (!isValidSig) {
         console.warn("[Bachs Webhook] Invalid X-Bachs-Signature / X-Bachs-Signature-V2.");
-        return res.status(400).json({ error: "Invalid webhook signature" });
+        return res.status(401).json({ error: "Invalid webhook signature" });
       }
 
       const eventPayload = req.body || {};
@@ -5619,6 +5620,28 @@ if (Object.keys(updateData).length <= 1) {
       const data = eventPayload.data || {};
 
       console.log(`[Bachs Webhook] Verified event received: id=${eventId}, type=${eventType}`);
+
+      // Handle pending or failed statuses (do NOT credit wallet, record in unmatched_payments for audit)
+      if (
+        eventType.includes("failed") || 
+        eventType.includes("pending") || 
+        data.status === "failed" || 
+        data.status === "pending" ||
+        data.charge?.status === "failed"
+      ) {
+        const ref = String(data.id || data.reference || data.charge_id || eventId).trim();
+        if (ref) {
+          await supabase.from("unmatched_payments").upsert({
+            reference: ref,
+            event_id: eventId || null,
+            amount: Number(data.amount || data.charge?.amount || 0),
+            raw_payload: eventPayload,
+            status: "ignored_status",
+            notes: `Ignored non-success event: ${eventType} (status: ${data.status || data.charge?.status || 'unknown'})`,
+          }, { onConflict: "reference" }).catch(() => {});
+        }
+        return res.status(200).json({ received: true, status: "ignored_status", eventType });
+      }
 
       // Handle `collection.succeeded` and `checkout.completed`
       if (eventType === "collection.succeeded" || eventType === "checkout.completed") {
@@ -5633,56 +5656,152 @@ if (Object.keys(updateData).length <= 1) {
 
         const chargeId = String(data.charge_id || data.charge?.id || "").trim();
         const checkoutId = String(data.checkout_id || "").trim();
-        const reference = String(data.reference || chargeId || checkoutId || eventId).trim();
+        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId).trim();
         const currency = String(data.currency || data.charge?.currency || "NGN").toUpperCase();
         let amount = Number(data.amount ?? data.charge?.amount ?? 0);
 
-        let customerEmail = String(
-          data.customer?.email ||
-            data.customer_details?.email ||
-            data.metadata?.email ||
-            ""
-        )
-          .toLowerCase()
-          .trim();
-        let userId = String(data.metadata?.user_id || "").trim();
-
-        // If this is a permanent Virtual Account deposit, also check narration for email/reference
-        const bankTransfer = data.payment_method_details?.bank_transfer;
-        if (!customerEmail && bankTransfer?.narration) {
-          const emailMatch = String(bankTransfer.narration).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-          if (emailMatch) customerEmail = emailMatch[0].toLowerCase();
+        if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
+          return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
         }
 
-        // Defense-in-depth: independently verify with Bachs API when secret key & chargeId/checkoutId exist
-        if (bachsSecretKey && (chargeId || checkoutId)) {
+        const bankTransfer = data.payment_method_details?.bank_transfer;
+        const accountNumber = String(bankTransfer?.virtual_account?.account_number || data.account_number || "").trim();
+        const senderName = String(bankTransfer?.sender_name || "").trim();
+        const senderBank = String(bankTransfer?.sender_bank || "").trim();
+        const senderAccountNumber = String(bankTransfer?.sender_account_number || "").trim();
+        const rawNarration = String(bankTransfer?.narration || "").trim();
+
+        // Multi-tiered Matching Engine
+        let matchedProfile: any = null;
+        let matchMethod = "";
+        let candidateProfile: any = null;
+        let candidateReason = "";
+
+        // Tier 1: Dedicated Virtual Account Match (profiles.virtual_account_number)
+        if (accountNumber) {
           try {
-            const baseUrl = resolveBachsBaseUrl(bachsSecretKey);
-            const cleanKey = bachsSecretKey.replace(/^Bearer\s+/i, '').trim();
-            const verifyUrl = chargeId
-              ? getBachsEndpoint(baseUrl, `/v1/payments/charges/${encodeURIComponent(chargeId)}`)
-              : getBachsEndpoint(baseUrl, `/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`);
-            const vResp = await fetch(verifyUrl, {
-              method: "GET",
-              headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
-            });
-            if (vResp.ok) {
-              const vData: any = await vResp.json();
-              const vStatus = String(vData?.status || vData?.payment_status || "").toLowerCase();
-              if (vStatus === "succeeded" || vStatus === "completed" || vStatus === "paid") {
-                if (vData?.amount) amount = Number(vData.amount);
-                if (!customerEmail && vData?.customer?.email) customerEmail = String(vData.customer.email).toLowerCase().trim();
-                if (!customerEmail && vData?.customer_details?.email) customerEmail = String(vData.customer_details.email).toLowerCase().trim();
-                if (!userId && vData?.metadata?.user_id) userId = String(vData.metadata.user_id).trim();
-              }
+            const { data: vaProfiles } = await supabase
+              .from("profiles")
+              .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+              .eq("virtual_account_number", accountNumber);
+
+            if (vaProfiles && vaProfiles.length === 1) {
+              matchedProfile = vaProfiles[0];
+              matchMethod = "virtual_account_number";
+            } else if (vaProfiles && vaProfiles.length > 1) {
+              candidateReason = `Ambiguous: ${vaProfiles.length} profiles have virtual_account_number ${accountNumber}`;
             }
-          } catch (vErr: any) {
-            console.warn("[Bachs Webhook] Independent verification warning:", vErr.message);
+          } catch (e: any) {
+            console.warn("[Bachs VA match error]:", e.message);
           }
         }
 
-        if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
-          return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
+        // Tier 2: Direct Customer Email or User ID in Webhook Metadata
+        if (!matchedProfile) {
+          const metaUserId = String(data.metadata?.user_id || "").trim();
+          const directEmail = String(
+            data.customer?.email ||
+            data.customer_details?.email ||
+            data.metadata?.email ||
+            ""
+          ).toLowerCase().trim();
+
+          if (metaUserId) {
+            try {
+              const { data: pById } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .eq("id", ensureUUID(metaUserId))
+                .maybeSingle();
+              if (pById) {
+                matchedProfile = pById;
+                matchMethod = "metadata_user_id";
+              }
+            } catch (_) {}
+          } else if (directEmail && directEmail.includes("@")) {
+            try {
+              const { data: pByEmail } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("email", directEmail);
+              if (pByEmail && pByEmail.length === 1) {
+                matchedProfile = pByEmail[0];
+                matchMethod = "payload_customer_email";
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Tier 3: Normalized Narration Match (Email and Nigerian Phone Number)
+        if (!matchedProfile && rawNarration) {
+          // Strip bank prefixes (TRF/, NIP/, OPAY/, KUDA/, PALMPAY/)
+          const cleanedNarration = rawNarration
+            .replace(/^(TRF|NIP|TRANSFER|DEP|FT|REF|OPAY|KUDA|PALMPAY)[\/\s:_-]+/i, "")
+            .trim();
+
+          // 3a. Normalized Email Extraction
+          const collapsedForEmail = cleanedNarration.replace(/\s*([@.])\s*/g, "$1");
+          const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+          const emailMatches = collapsedForEmail.match(emailRegex);
+
+          if (emailMatches && emailMatches.length === 1) {
+            const extractedEmail = emailMatches[0].toLowerCase().trim().replace(/^[<(\[]+|[>)\].,;]+$/g, "");
+            try {
+              const { data: emailProfiles } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("email", extractedEmail);
+
+              if (emailProfiles && emailProfiles.length === 1) {
+                matchedProfile = emailProfiles[0];
+                matchMethod = "narration_normalized_email";
+              } else if (emailProfiles && emailProfiles.length > 1) {
+                candidateReason = `Ambiguous: ${emailProfiles.length} profiles have email ${extractedEmail}`;
+              }
+            } catch (_) {}
+          }
+
+          // 3b. Phone Number in Narration (11-digit local or +234)
+          if (!matchedProfile) {
+            const phoneRegex = /(?:(?:\+?234)|0)([789][01]\d{8})/g;
+            const phoneMatches = [...cleanedNarration.matchAll(phoneRegex)];
+            if (phoneMatches.length === 1) {
+              const standardDigits = phoneMatches[0][1];
+              const localPhone = `0${standardDigits}`;
+              const intlPhone = `+234${standardDigits}`;
+              try {
+                const { data: phoneProfiles } = await supabase
+                  .from("profiles")
+                  .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                  .or(`phone_number.eq.${localPhone},phone_number.eq.${intlPhone},phone_number.ilike.%${standardDigits}%`);
+
+                if (phoneProfiles && phoneProfiles.length === 1) {
+                  matchedProfile = phoneProfiles[0];
+                  matchMethod = "narration_phone_number";
+                } else if (phoneProfiles && phoneProfiles.length > 1) {
+                  candidateReason = `Ambiguous: ${phoneProfiles.length} profiles match phone ${localPhone}`;
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
+        // Tier 4: Sender Name Match (Candidate for Admin Review)
+        if (!matchedProfile && senderName) {
+          const cleanSender = senderName.trim().toUpperCase();
+          const tokens = cleanSender.split(/\s+/).filter(t => t.length > 2);
+          if (tokens.length >= 2) {
+            try {
+              const { data: nameProfiles } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("full_name", `%${tokens[0]}%${tokens[1]}%`);
+              if (nameProfiles && nameProfiles.length === 1) {
+                candidateProfile = nameProfiles[0];
+                candidateReason = `Sender name match: "${senderName}" matches profile "${candidateProfile.full_name || candidateProfile.name}"`;
+              }
+            } catch (_) {}
+          }
         }
 
         // Read stored AMOUNT from funding transaction to ensure fees are never credited to the wallet
@@ -5698,34 +5817,128 @@ if (Object.keys(updateData).length <= 1) {
           }
         } catch (_) {}
 
-        const creditRes = await creditUserWalletAtomically({
-          reference,
-          email: customerEmail,
-          userId,
-          amount: webhookCreditAmount,
-          description: bankTransfer
-            ? `Wallet Deposit via Bachs Bank Transfer (${bankTransfer.sender_name || "Bank Transfer"})`
-            : `Wallet Top-Up via Bachs.io (₦${webhookCreditAmount.toLocaleString()})`,
-          metadata: {
-            event_id: eventId,
-            event_type: eventType,
-            charge_id: chargeId || null,
-            checkout_id: checkoutId || null,
-          },
-        });
+        // Execution: If matched unambiguously, credit wallet atomically via RPC
+        if (matchedProfile) {
+          try {
+            const { data: rpcRes, error: rpcErr } = await supabase.rpc("credit_virtual_account_deposit", {
+              p_reference: reference,
+              p_event_id: eventId || null,
+              p_user_id: matchedProfile.id,
+              p_amount: webhookCreditAmount,
+              p_account_number: accountNumber || null,
+              p_sender_name: senderName || null,
+              p_sender_bank: senderBank || null,
+              p_sender_account_number: senderAccountNumber || null,
+              p_narration: rawNarration || null,
+              p_raw_payload: eventPayload,
+            });
 
-        if (creditRes.status === "error") {
-          console.warn(`[Bachs Webhook] Unmatched or uncredited deposit (ref=${reference}, email=${customerEmail}):`, creditRes.message);
-          return res.status(200).json({ received: true, status: "unmatched", reason: creditRes.message });
+            if (!rpcErr && rpcRes) {
+              if (rpcRes.status === "already_processed") {
+                console.log(`[Bachs Webhook] Reference ${reference} already processed.`);
+                return res.status(200).json({ received: true, status: "already_processed", reference });
+              }
+              if (rpcRes.status === "success") {
+                console.log(`[Bachs Webhook] Credited ₦${webhookCreditAmount} to user ${matchedProfile.email} via ${matchMethod}.`);
+                return res.status(200).json({
+                  received: true,
+                  status: "credited",
+                  reference,
+                  userId: matchedProfile.id,
+                  method: matchMethod
+                });
+              }
+            }
+          } catch (rpcEx: any) {
+            console.warn("[credit_virtual_account_deposit RPC Exception]:", rpcEx.message);
+          }
+
+          // Fallback to creditUserWalletAtomically if RPC had an issue
+          const creditRes = await creditUserWalletAtomically({
+            reference,
+            email: matchedProfile.email,
+            userId: matchedProfile.id,
+            amount: webhookCreditAmount,
+            description: bankTransfer
+              ? `Wallet Deposit via Bachs Bank Transfer (${senderName || "Bank Transfer"})`
+              : `Wallet Top-Up via Bachs.io (₦${webhookCreditAmount.toLocaleString()})`,
+            metadata: {
+              event_id: eventId,
+              event_type: eventType,
+              charge_id: chargeId || null,
+              checkout_id: checkoutId || null,
+            },
+          });
+
+          if (creditRes.status === "success" || creditRes.status === "already_processed") {
+            await supabase.from("virtual_account_payments").insert({
+              reference,
+              event_id: eventId || null,
+              user_id: matchedProfile.id,
+              user_email: matchedProfile.email,
+              amount: webhookCreditAmount,
+              account_number: accountNumber || null,
+              sender_name: senderName || null,
+              sender_bank: senderBank || null,
+              sender_account_number: senderAccountNumber || null,
+              narration: rawNarration || null,
+              status: "completed",
+              raw_payload: eventPayload,
+            }).catch(() => {});
+
+            return res.status(200).json({ received: true, status: creditRes.status, reference });
+          }
+
+          // If even fallback failed, route to unmatched_payments
+          await supabase.from("unmatched_payments").upsert({
+            reference,
+            event_id: eventId || null,
+            amount: webhookCreditAmount,
+            account_number: accountNumber || null,
+            sender_name: senderName || null,
+            sender_bank: senderBank || null,
+            sender_account_number: senderAccountNumber || null,
+            narration: rawNarration || null,
+            raw_payload: eventPayload,
+            status: "pending",
+            candidate_user_id: matchedProfile.id,
+            candidate_reason: `Matched ${matchedProfile.email} but crediting failed: ${creditRes.message}`,
+          }, { onConflict: "reference" }).catch(() => {});
+
+          return res.status(200).json({ received: true, status: "unmatched_saved_for_review", reference });
         }
 
-        return res.status(200).json({ received: true, status: creditRes.status, reference });
+        // UNMATCHED DEPOSIT: Save to unmatched_payments (NEVER SILENTLY DROP MONEY!)
+        console.warn(`[Bachs Webhook] Deposit unmatched: ref=${reference}, amount=${amount}, sender="${senderName}", narration="${rawNarration}". Saving to unmatched_payments.`);
+        await supabase.from("unmatched_payments").upsert({
+          reference,
+          event_id: eventId || null,
+          amount: webhookCreditAmount,
+          account_number: accountNumber || null,
+          sender_name: senderName || null,
+          sender_bank: senderBank || null,
+          sender_account_number: senderAccountNumber || null,
+          narration: rawNarration || null,
+          raw_payload: eventPayload,
+          status: "pending",
+          candidate_user_id: candidateProfile?.id || null,
+          candidate_reason: candidateReason || null,
+        }, { onConflict: "reference" }).catch((e) => {
+          console.error("[Unmatched Payments Upsert Error]:", e.message);
+        });
+
+        return res.status(200).json({
+          received: true,
+          status: "unmatched_saved_for_review",
+          reference,
+          reason: candidateReason || "No matching user profile found from account number, email, or phone."
+        });
       }
 
       return res.status(200).json({ received: true, status: "ignored", type: eventType });
     } catch (err: any) {
       console.error("[Bachs Webhook Exception]:", err.message || err);
-      // Return 500 on unexpected DB/runtime failure so Bachs retries delivery per official docs
+      // Return 500 on unexpected runtime failure so Bachs retries delivery per official docs
       return res.status(500).json({ error: "Internal webhook processing error" });
     }
   };
@@ -5873,6 +6086,167 @@ if (Object.keys(updateData).length <= 1) {
       });
     } catch (err: any) {
       console.error("[Admin Revenue Audit Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Super Admin: Bachs.io Unmatched Deposits & Reconciliation ───
+  // 1. GET /api/admin/bachs/unmatched-payments (Super Admin only)
+  app.get("/api/admin/bachs/unmatched-payments", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { data, error } = await supabase
+        .from("unmatched_payments")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (error) throw error;
+      return res.json({ success: true, payments: data || [] });
+    } catch (err: any) {
+      console.error("[GET /api/admin/bachs/unmatched-payments Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 2. POST /api/admin/bachs/resolve-unmatched (1-Click Manual Credit)
+  app.post("/api/admin/bachs/resolve-unmatched", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { unmatchedId, targetUserId, notes } = req.body || {};
+      if (!unmatchedId || !targetUserId) {
+        return res.status(400).json({ error: "Missing unmatchedId or targetUserId." });
+      }
+
+      const adminEmail = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
+      const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+      let adminUserId: string | null = null;
+
+      if (token) {
+        try {
+          const { data: { user: authUser } } = await supabase.auth.getUser(token);
+          if (authUser?.id) adminUserId = authUser.id;
+        } catch (_) {}
+      }
+      if (!adminUserId && adminEmail) {
+        const { data: p } = await supabase.from("profiles").select("id").ilike("email", adminEmail).maybeSingle();
+        if (p?.id) adminUserId = p.id;
+      }
+      if (!adminUserId) {
+        adminUserId = targetUserId;
+      }
+
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc("resolve_unmatched_payment", {
+        p_unmatched_id: unmatchedId,
+        p_target_user_id: targetUserId,
+        p_admin_user_id: adminUserId,
+        p_notes: notes || null,
+      });
+
+      if (rpcErr) {
+        throw new Error(`RPC Error: ${rpcErr.message}`);
+      }
+
+      if (rpcRes?.status === "error") {
+        return res.status(400).json({ error: rpcRes.message || "Failed to resolve unmatched payment." });
+      }
+
+      return res.json(rpcRes || { success: true, message: "Payment credited successfully." });
+    } catch (err: any) {
+      console.error("[POST /api/admin/bachs/resolve-unmatched Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3. POST /api/admin/bachs/sync-deposits (Reconciliation: Last 30 Days)
+  app.post("/api/admin/bachs/sync-deposits", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({ error: "Bachs secret key not configured." });
+      }
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+
+      const paymentsUrl = getBachsEndpoint(baseUrl, "/v1/payments?limit=100");
+      const pResp = await fetch(paymentsUrl, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+      });
+
+      if (!pResp.ok) {
+        const errBody = await pResp.json().catch(() => ({}));
+        return res.status(pResp.status).json({
+          error: errBody?.detail || errBody?.message || `Bachs API returned status ${pResp.status}`
+        });
+      }
+
+      const pData: any = await pResp.json();
+      const items: any[] = Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : [];
+
+      let newlyAdded = 0;
+      let alreadyCredited = 0;
+
+      for (const item of items) {
+        const isSuccessful = item.status === "succeeded" || item.status === "completed" || item.payment_status === "paid";
+        if (!isSuccessful) continue;
+
+        const ref = String(item.reference || item.id || "").trim();
+        if (!ref) continue;
+
+        // Check if already credited in virtual_account_payments or processed_payments
+        const { data: existingVa } = await supabase
+          .from("virtual_account_payments")
+          .select("reference")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        const { data: existingProc } = await supabase
+          .from("processed_payments")
+          .select("reference")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        if (existingVa || existingProc) {
+          alreadyCredited++;
+          continue;
+        }
+
+        // Check if already in unmatched_payments
+        const { data: existingUnmatched } = await supabase
+          .from("unmatched_payments")
+          .select("id")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        if (!existingUnmatched) {
+          const bt = item.payment_method_details?.bank_transfer;
+          await supabase.from("unmatched_payments").insert({
+            reference: ref,
+            event_id: item.event_id || null,
+            amount: Number(item.amount || 0),
+            account_number: bt?.virtual_account?.account_number || null,
+            sender_name: bt?.sender_name || null,
+            sender_bank: bt?.sender_bank || null,
+            sender_account_number: bt?.sender_account_number || null,
+            narration: bt?.narration || null,
+            raw_payload: item,
+            status: "pending",
+          }).catch(() => {});
+          newlyAdded++;
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: `Reconciliation complete: ${items.length} payments analyzed. ${alreadyCredited} already credited, ${newlyAdded} new unmatched deposits added to review queue.`,
+        totalFetched: items.length,
+        alreadyCredited,
+        newlyAdded,
+      });
+    } catch (err: any) {
+      console.error("[POST /api/admin/bachs/sync-deposits Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });

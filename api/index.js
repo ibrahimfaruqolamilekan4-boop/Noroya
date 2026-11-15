@@ -476,34 +476,29 @@ var ensureUUID = (strId) => {
   return `${part1}-${part2}-${part3}-${part4}-${part5}`;
 };
 var providerSecretsCache = /* @__PURE__ */ new Map();
-var sanitizeSecretValue = (raw = "") => {
-  return String(raw || "").trim().replace(/^[A-Za-z0-9_]+\s*=\s*/, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer\s+/i, "").replace(/["'`\r\n\s]/g, "").trim();
-};
 var resolveProviderSecret = async (identifier, envKeys) => {
   if (providerSecretsCache.has(identifier)) {
-    const cached = sanitizeSecretValue(providerSecretsCache.get(identifier) || "");
+    const cached = providerSecretsCache.get(identifier);
     if (cached && !cached.includes("PASTE_YOUR") && !cached.includes("dummy") && cached.length > 5) return cached;
   }
   try {
     const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", identifier).maybeSingle();
-    const dbVal = sanitizeSecretValue(data?.secret || "");
-    if (dbVal && !dbVal.includes("PASTE_YOUR") && !dbVal.includes("dummy") && dbVal.length > 5) {
-      providerSecretsCache.set(identifier, dbVal);
-      return dbVal;
+    if (data?.secret && !data.secret.includes("PASTE_YOUR") && !data.secret.includes("dummy") && data.secret.trim().length > 5) {
+      providerSecretsCache.set(identifier, data.secret.trim());
+      return data.secret.trim();
     }
   } catch (_) {
   }
   try {
     const { data: legacy } = await supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`).maybeSingle();
-    const legVal = sanitizeSecretValue(legacy?.item_name || "");
-    if (legVal && !legVal.includes("PASTE_YOUR") && !legVal.includes("dummy") && legVal.length > 5) {
-      providerSecretsCache.set(identifier, legVal);
-      return legVal;
+    if (legacy?.item_name && !legacy.item_name.includes("PASTE_YOUR") && !legacy.item_name.includes("dummy") && legacy.item_name.trim().length > 5) {
+      providerSecretsCache.set(identifier, legacy.item_name.trim());
+      return legacy.item_name.trim();
     }
   } catch (_) {
   }
   for (const envKey of envKeys) {
-    const val = sanitizeSecretValue(process.env[envKey] || "");
+    const val = (process.env[envKey] || "").trim();
     if (val && !val.includes("PASTE_YOUR") && !val.includes("dummy") && !val.includes("connect_030660") && val.length > 5) {
       return val;
     }
@@ -511,7 +506,7 @@ var resolveProviderSecret = async (identifier, envKeys) => {
   return "";
 };
 var setProviderSecret = async (identifier, secretValue) => {
-  const clean = sanitizeSecretValue(secretValue);
+  const clean = secretValue.trim();
   providerSecretsCache.set(identifier, clean);
   try {
     await supabase.from("provider_secrets").upsert({ identifier, secret: clean, updated_at: (/* @__PURE__ */ new Date()).toISOString() });
@@ -560,34 +555,34 @@ var logVtuFailure = async (opts) => {
 };
 var resolveMozosubzApiKey = async () => resolveProviderSecret("mozosubz_api_key", ["MOZOSUBS_CONNECT_KEY", "MOZOSUBZ_CONNECT_KEY", "MOZOSUBZ_API_KEY", "MOZOSUBS_API_KEY"]);
 var resolveNifexApiKey = async () => resolveProviderSecret("nifex_api_key", ["NIFEX_API_KEY", "NIFEXDATA_API_KEY", "NIFEX_TOKEN"]);
-var resolveBachsSecretKey = async () => resolveProviderSecret("bachs_secret_key", ["BACHS_SECRET_KEY", "BACHS_API_KEY", "BACHS_LIVE_SECRET_KEY", "BACHS_SANDBOX_SECRET_KEY"]);
-var resolveBachsWebhookSecret = async () => resolveProviderSecret("bachs_webhook_secret", ["BACHS_WEBHOOK_SECRET", "BACHS_SIGNING_SECRET"]);
+var sanitizeConfigValue = (val) => {
+  if (!val) return "";
+  let str = String(val).trim();
+  return str.replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
+};
+var resolveBachsSecretKey = async () => {
+  const raw = await resolveProviderSecret("bachs_secret_key", ["BACHS_SECRET_KEY", "BACHS_API_KEY", "BACHS_LIVE_SECRET_KEY", "BACHS_SANDBOX_SECRET_KEY"]);
+  return sanitizeConfigValue(raw).replace(/^Bearer\s+/i, "").trim();
+};
+var resolveBachsWebhookSecret = async () => {
+  const raw = await resolveProviderSecret("bachs_webhook_secret", ["BACHS_WEBHOOK_SECRET", "BACHS_SIGNING_SECRET"]);
+  return sanitizeConfigValue(raw);
+};
 var resolveBachsBaseUrl = (secretKey = "") => {
-  const cleanKey = sanitizeSecretValue(secretKey);
+  const explicitUrl = sanitizeConfigValue(process.env.BACHS_BASE_URL);
+  if (explicitUrl) {
+    return explicitUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "").replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
+  }
+  const cleanKey = sanitizeConfigValue(secretKey).replace(/^Bearer\s+/i, "").trim();
   if (cleanKey.startsWith("sk_sandbox_") || cleanKey.startsWith("sk_test_")) {
     return "https://sandbox-api.bachs.io";
-  }
-  if (cleanKey.startsWith("sk_live_")) {
-    return "https://api.bachs.io";
-  }
-  const rawUrl = sanitizeSecretValue(process.env.BACHS_BASE_URL || "");
-  if (rawUrl) {
-    const stripped = rawUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
-    try {
-      const parsed = new URL(stripped.startsWith("http") ? stripped : `https://${stripped}`);
-      return parsed.origin;
-    } catch (_) {
-      if (stripped.toLowerCase().includes("sandbox")) return "https://sandbox-api.bachs.io";
-    }
   }
   return "https://api.bachs.io";
 };
 var getBachsEndpoint = (baseUrl, subPath) => {
-  let cleanBase = sanitizeSecretValue(baseUrl || "").replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
-  try {
-    const parsed = new URL(cleanBase.startsWith("http") ? cleanBase : `https://${cleanBase}`);
-    cleanBase = parsed.origin;
-  } catch (_) {
+  let cleanBase = sanitizeConfigValue(baseUrl);
+  cleanBase = cleanBase.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "").replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
+  if (!cleanBase || cleanBase.toLowerCase() === "undefined" || cleanBase.toLowerCase() === "null") {
     cleanBase = "https://api.bachs.io";
   }
   const cleanPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
@@ -758,12 +753,8 @@ async function startServer() {
       res.status(401).json({ error: "Unauthorized: no valid session token." });
       return false;
     }
-    const FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS = [
-      "jeffholland299@gmail.com",
-      "triumphanttosin@gmail.com"
-    ];
-    if (FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS.includes(userEmail)) {
-      res.status(403).json({ error: "Forbidden: Foreign Number & eSIM agent access only. No general administrative control." });
+    if (userEmail === "jeffholland299@gmail.com") {
+      res.status(403).json({ error: "Forbidden: eSIM agent access only. No administrative control." });
       return false;
     }
     const ALLOWED_ADMINS = [
@@ -782,15 +773,10 @@ async function startServer() {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
     let userEmail = "";
-    let isRoleAdmin = false;
     if (token) {
       try {
         const { data: { user } } = await supabase.auth.getUser(token);
         if (user?.email) userEmail = user.email.toLowerCase().trim();
-        if (user?.id) {
-          const { data: prof } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-          if (prof?.role === "admin") isRoleAdmin = true;
-        }
       } catch (_) {
       }
     }
@@ -798,13 +784,11 @@ async function startServer() {
       userEmail = adminEmailHeader;
     }
     const ALLOWED_ESIM_ADMINS = [
-      ADMIN_EMAIL.toLowerCase().trim(),
-      "ibrahimfaruqolamilekan4@gmail.com",
+      ADMIN_EMAIL.toLowerCase(),
       "adewaleogunkeye200@gmail.com",
-      "jeffholland299@gmail.com",
-      "triumphanttosin@gmail.com"
-    ].filter(Boolean);
-    if ((!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) && !isRoleAdmin) {
+      "jeffholland299@gmail.com"
+    ];
+    if (!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) {
       res.status(403).json({ error: "Forbidden: unauthorized eSIM admin access." });
       return false;
     }
@@ -3978,30 +3962,12 @@ AI:`;
       }
       const reference = `NRY-BACHS-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const rawOrigin = sanitizeSecretValue(String(redirectUrl || "")) || sanitizeSecretValue(String(req.headers.origin || "")) || sanitizeSecretValue(String(process.env.APP_URL || "")) || `${req.protocol}://${req.get("host")}`;
-      let cleanOrigin = rawOrigin.replace(/\/+$/, "");
-      try {
-        cleanOrigin = new URL(cleanOrigin.startsWith("http") ? cleanOrigin : `https://${cleanOrigin}`).origin;
-      } catch (_) {
-        cleanOrigin = "https://noroya.vercel.app";
-      }
+      const appOrigin = String(redirectUrl || "").trim() || String(req.headers.origin || "").trim() || String(process.env.APP_URL || "").trim() || `${req.protocol}://${req.get("host")}`;
+      const cleanOrigin = appOrigin.replace(/\/+$/, "");
       const amountDecimalString = numericAmount.toFixed(2);
       const customerPayload = { email: customerEmail };
-      if (name && String(name).trim()) {
-        customerPayload.name = String(name).trim();
-      }
-      if (phone && String(phone).trim()) {
-        const digits = String(phone).replace(/[^\d+]/g, "");
-        let e164 = digits;
-        if (/^0[789][01]\d{8}$/.test(digits)) {
-          e164 = `+234${digits.slice(1)}`;
-        } else if (/^234[789][01]\d{8}$/.test(digits)) {
-          e164 = `+${digits}`;
-        }
-        if (/^\+[1-9]\d{7,14}$/.test(e164)) {
-          customerPayload.phone_number = e164;
-        }
-      }
+      if (name && String(name).trim()) customerPayload.name = String(name).trim();
+      if (phone && String(phone).trim()) customerPayload.phone_number = String(phone).trim();
       const checkoutPayload = {
         customer: customerPayload,
         pricing: {
@@ -4020,33 +3986,44 @@ AI:`;
           purpose: "wallet_funding"
         }
       };
-      const cleanKey = sanitizeSecretValue(secretKey);
+      const cleanKey = sanitizeConfigValue(secretKey).replace(/^Bearer\s+/i, "").trim();
       const checkoutEndpoint = getBachsEndpoint(baseUrl, "/v1/checkout-sessions");
-      const resp = await fetch(checkoutEndpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cleanKey}`,
-          "Content-Type": "application/json",
-          "Idempotency-Key": reference
-        },
-        body: JSON.stringify(checkoutPayload)
-      });
-      const respData = await resp.json().catch(() => ({}));
-      if (!resp.ok || !respData?.checkout_url) {
-        let errDetail = respData?.detail || respData?.message || respData?.error || `Bachs API returned HTTP ${resp.status}`;
-        if (resp.status === 404) {
-          errDetail = `Bachs API endpoint not found (HTTP 404). Ensure BACHS_BASE_URL is https://api.bachs.io (without /v1). Detail: ${respData?.detail || "Not Found"}`;
-        }
-        console.error("[Bachs Checkout Error]:", resp.status, respData);
-        return res.status(resp.status >= 400 && resp.status < 600 ? resp.status : 502).json({
-          error: errDetail,
+      let respData = null;
+      let respStatus = 200;
+      try {
+        const resp = await axios.post(checkoutEndpoint, checkoutPayload, {
+          headers: {
+            Authorization: `Bearer ${cleanKey}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": reference,
+            Accept: "application/json"
+          },
+          timeout: 15000
+        });
+        respData = resp.data;
+        respStatus = resp.status;
+      } catch (axiosErr) {
+        respData = axiosErr.response?.data;
+        respStatus = axiosErr.response?.status || 500;
+        const errDetail = respData?.detail || respData?.message || respData?.error || axiosErr.message || `Bachs API returned HTTP ${respStatus}`;
+        console.error("[Bachs Checkout Error]:", respStatus, errDetail, respData);
+        return res.status(respStatus >= 400 && respStatus < 600 ? respStatus : 502).json({
+          error: typeof errDetail === "string" ? errDetail : JSON.stringify(errDetail),
           error_code: respData?.error_code || null
+        });
+      }
+      const checkoutUrl = respData?.checkout_url || respData?.url;
+      if (!checkoutUrl) {
+        console.error("[Bachs Checkout] Missing checkout_url in response:", respData);
+        return res.status(502).json({
+          error: "Bachs payment gateway did not return a checkout URL.",
+          details: respData
         });
       }
       return res.status(201).json({
         success: true,
-        checkout_id: respData.checkout_id,
-        checkout_url: respData.checkout_url,
+        checkout_id: respData.checkout_id || respData.id,
+        checkout_url: checkoutUrl,
         reference: respData.reference || reference,
         status: respData.status || "open",
         expires_at: respData.expires_at
@@ -4321,21 +4298,53 @@ AI:`;
     try {
       const webhookSecret = await resolveBachsWebhookSecret();
       const bachsSecretKey = await resolveBachsSecretKey();
+
       if (!webhookSecret) {
         console.error("[Bachs Webhook] BACHS_WEBHOOK_SECRET is not configured. Rejecting delivery.");
         return res.status(503).json({ error: "Bachs webhook signing secret not configured." });
       }
-      const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
+
+      const rawBody = Buffer.isBuffer(req.rawBody)
+        ? req.rawBody
+        : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
+
+      // Verify webhook signature (V2 / V1 per official docs). Reject invalid with 401.
       const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, webhookSecret);
       if (!isValidSig) {
         console.warn("[Bachs Webhook] Invalid X-Bachs-Signature / X-Bachs-Signature-V2.");
-        return res.status(400).json({ error: "Invalid webhook signature" });
+        return res.status(401).json({ error: "Invalid webhook signature" });
       }
+
       const eventPayload = req.body || {};
       const eventId = String(eventPayload.id || "").trim();
       const eventType = String(eventPayload.type || "").toLowerCase().trim();
       const data = eventPayload.data || {};
+
       console.log(`[Bachs Webhook] Verified event received: id=${eventId}, type=${eventType}`);
+
+      // Handle pending or failed statuses (do NOT credit wallet, record in unmatched_payments for audit)
+      if (
+        eventType.includes("failed") || 
+        eventType.includes("pending") || 
+        data.status === "failed" || 
+        data.status === "pending" ||
+        data.charge?.status === "failed"
+      ) {
+        const ref = String(data.id || data.reference || data.charge_id || eventId).trim();
+        if (ref) {
+          await supabase.from("unmatched_payments").upsert({
+            reference: ref,
+            event_id: eventId || null,
+            amount: Number(data.amount || data.charge?.amount || 0),
+            raw_payload: eventPayload,
+            status: "ignored_status",
+            notes: `Ignored non-success event: ${eventType} (status: ${data.status || data.charge?.status || 'unknown'})`,
+          }, { onConflict: "reference" }).catch(() => {});
+        }
+        return res.status(200).json({ received: true, status: "ignored_status", eventType });
+      }
+
+      // Handle `collection.succeeded` and `checkout.completed`
       if (eventType === "collection.succeeded" || eventType === "checkout.completed") {
         if (eventType === "checkout.completed") {
           const payStatus = String(data.payment_status || "").toLowerCase();
@@ -4344,65 +4353,287 @@ AI:`;
             return res.status(200).json({ received: true, status: "ignored_no_payment" });
           }
         }
+
         const chargeId = String(data.charge_id || data.charge?.id || "").trim();
         const checkoutId = String(data.checkout_id || "").trim();
-        const reference = String(data.reference || chargeId || checkoutId || eventId).trim();
+        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId).trim();
         const currency = String(data.currency || data.charge?.currency || "NGN").toUpperCase();
         let amount = Number(data.amount ?? data.charge?.amount ?? 0);
-        let customerEmail = String(
-          data.customer?.email || data.customer_details?.email || data.metadata?.email || ""
-        ).toLowerCase().trim();
-        let userId = String(data.metadata?.user_id || "").trim();
-        const bankTransfer = data.payment_method_details?.bank_transfer;
-        if (!customerEmail && bankTransfer?.narration) {
-          const emailMatch = String(bankTransfer.narration).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-          if (emailMatch) customerEmail = emailMatch[0].toLowerCase();
-        }
-        if (bachsSecretKey && (chargeId || checkoutId)) {
-          try {
-            const baseUrl = resolveBachsBaseUrl(bachsSecretKey);
-            const cleanKey = bachsSecretKey.replace(/^Bearer\s+/i, "").trim();
-            const verifyUrl = chargeId ? getBachsEndpoint(baseUrl, `/v1/payments/charges/${encodeURIComponent(chargeId)}`) : getBachsEndpoint(baseUrl, `/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`);
-            const vResp = await fetch(verifyUrl, {
-              method: "GET",
-              headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" }
-            });
-            if (vResp.ok) {
-              const vData = await vResp.json();
-              const vStatus = String(vData?.status || vData?.payment_status || "").toLowerCase();
-              if (vStatus === "succeeded" || vStatus === "completed" || vStatus === "paid") {
-                if (vData?.amount) amount = Number(vData.amount);
-                if (!customerEmail && vData?.customer?.email) customerEmail = String(vData.customer.email).toLowerCase().trim();
-                if (!customerEmail && vData?.customer_details?.email) customerEmail = String(vData.customer_details.email).toLowerCase().trim();
-                if (!userId && vData?.metadata?.user_id) userId = String(vData.metadata.user_id).trim();
-              }
-            }
-          } catch (vErr) {
-            console.warn("[Bachs Webhook] Independent verification warning:", vErr.message);
-          }
-        }
+
         if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
           return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
         }
-        const creditRes = await creditUserWalletAtomically({
-          reference,
-          email: customerEmail,
-          userId,
-          amount,
-          description: bankTransfer ? `Wallet Deposit via Bachs Bank Transfer (${bankTransfer.sender_name || "Bank Transfer"})` : `Wallet Top-Up via Bachs.io (\u20A6${amount.toLocaleString()})`,
-          metadata: {
-            event_id: eventId,
-            event_type: eventType,
-            charge_id: chargeId || null,
-            checkout_id: checkoutId || null
+
+        const bankTransfer = data.payment_method_details?.bank_transfer;
+        const accountNumber = String(bankTransfer?.virtual_account?.account_number || data.account_number || "").trim();
+        const senderName = String(bankTransfer?.sender_name || "").trim();
+        const senderBank = String(bankTransfer?.sender_bank || "").trim();
+        const senderAccountNumber = String(bankTransfer?.sender_account_number || "").trim();
+        const rawNarration = String(bankTransfer?.narration || "").trim();
+
+        // Multi-tiered Matching Engine
+        let matchedProfile = null;
+        let matchMethod = "";
+        let candidateProfile = null;
+        let candidateReason = "";
+
+        // Tier 1: Dedicated Virtual Account Match (profiles.virtual_account_number)
+        if (accountNumber) {
+          try {
+            const { data: vaProfiles } = await supabase
+              .from("profiles")
+              .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+              .eq("virtual_account_number", accountNumber);
+
+            if (vaProfiles && vaProfiles.length === 1) {
+              matchedProfile = vaProfiles[0];
+              matchMethod = "virtual_account_number";
+            } else if (vaProfiles && vaProfiles.length > 1) {
+              candidateReason = `Ambiguous: ${vaProfiles.length} profiles have virtual_account_number ${accountNumber}`;
+            }
+          } catch (e) {
+            console.warn("[Bachs VA match error]:", e.message);
           }
-        });
-        if (creditRes.status === "error") {
-          console.warn(`[Bachs Webhook] Unmatched or uncredited deposit (ref=${reference}, email=${customerEmail}):`, creditRes.message);
-          return res.status(200).json({ received: true, status: "unmatched", reason: creditRes.message });
         }
-        return res.status(200).json({ received: true, status: creditRes.status, reference });
+
+        // Tier 2: Direct Customer Email or User ID in Webhook Metadata
+        if (!matchedProfile) {
+          const metaUserId = String(data.metadata?.user_id || "").trim();
+          const directEmail = String(
+            data.customer?.email ||
+            data.customer_details?.email ||
+            data.metadata?.email ||
+            ""
+          ).toLowerCase().trim();
+
+          if (metaUserId) {
+            try {
+              const { data: pById } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .eq("id", ensureUUID(metaUserId))
+                .maybeSingle();
+              if (pById) {
+                matchedProfile = pById;
+                matchMethod = "metadata_user_id";
+              }
+            } catch (_) {}
+          } else if (directEmail && directEmail.includes("@")) {
+            try {
+              const { data: pByEmail } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("email", directEmail);
+              if (pByEmail && pByEmail.length === 1) {
+                matchedProfile = pByEmail[0];
+                matchMethod = "payload_customer_email";
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Tier 3: Normalized Narration Match (Email and Nigerian Phone Number)
+        if (!matchedProfile && rawNarration) {
+          const cleanedNarration = rawNarration
+            .replace(/^(TRF|NIP|TRANSFER|DEP|FT|REF|OPAY|KUDA|PALMPAY)[\/\s:_-]+/i, "")
+            .trim();
+
+          // 3a. Normalized Email Extraction
+          const collapsedForEmail = cleanedNarration.replace(/\s*([@.])\s*/g, "$1");
+          const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+          const emailMatches = collapsedForEmail.match(emailRegex);
+
+          if (emailMatches && emailMatches.length === 1) {
+            const extractedEmail = emailMatches[0].toLowerCase().trim().replace(/^[<(\[]+|[>)\].,;]+$/g, "");
+            try {
+              const { data: emailProfiles } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("email", extractedEmail);
+
+              if (emailProfiles && emailProfiles.length === 1) {
+                matchedProfile = emailProfiles[0];
+                matchMethod = "narration_normalized_email";
+              } else if (emailProfiles && emailProfiles.length > 1) {
+                candidateReason = `Ambiguous: ${emailProfiles.length} profiles have email ${extractedEmail}`;
+              }
+            } catch (_) {}
+          }
+
+          // 3b. Phone Number in Narration (11-digit local or +234)
+          if (!matchedProfile) {
+            const phoneRegex = /(?:(?:\+?234)|0)([789][01]\d{8})/g;
+            const phoneMatches = [...cleanedNarration.matchAll(phoneRegex)];
+            if (phoneMatches.length === 1) {
+              const standardDigits = phoneMatches[0][1];
+              const localPhone = `0${standardDigits}`;
+              const intlPhone = `+234${standardDigits}`;
+              try {
+                const { data: phoneProfiles } = await supabase
+                  .from("profiles")
+                  .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                  .or(`phone_number.eq.${localPhone},phone_number.eq.${intlPhone},phone_number.ilike.%${standardDigits}%`);
+
+                if (phoneProfiles && phoneProfiles.length === 1) {
+                  matchedProfile = phoneProfiles[0];
+                  matchMethod = "narration_phone_number";
+                } else if (phoneProfiles && phoneProfiles.length > 1) {
+                  candidateReason = `Ambiguous: ${phoneProfiles.length} profiles match phone ${localPhone}`;
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
+        // Tier 4: Sender Name Match (Candidate for Admin Review)
+        if (!matchedProfile && senderName) {
+          const cleanSender = senderName.trim().toUpperCase();
+          const tokens = cleanSender.split(/\s+/).filter(t => t.length > 2);
+          if (tokens.length >= 2) {
+            try {
+              const { data: nameProfiles } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("full_name", `%${tokens[0]}%${tokens[1]}%`);
+              if (nameProfiles && nameProfiles.length === 1) {
+                candidateProfile = nameProfiles[0];
+                candidateReason = `Sender name match: "${senderName}" matches profile "${candidateProfile.full_name || candidateProfile.name}"`;
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Read stored AMOUNT from funding transaction to ensure fees are never credited to the wallet
+        let webhookCreditAmount = amount;
+        try {
+          const { data: storedTx } = await supabase
+            .from("transactions")
+            .select("amount, norodata_fee, gateway_fee, total_charged")
+            .eq("reference", reference)
+            .maybeSingle();
+          if (storedTx && Number(storedTx.amount) > 0) {
+            webhookCreditAmount = Number(storedTx.amount);
+          }
+        } catch (_) {}
+
+        // Execution: If matched unambiguously, credit wallet atomically via RPC
+        if (matchedProfile) {
+          try {
+            const { data: rpcRes, error: rpcErr } = await supabase.rpc("credit_virtual_account_deposit", {
+              p_reference: reference,
+              p_event_id: eventId || null,
+              p_user_id: matchedProfile.id,
+              p_amount: webhookCreditAmount,
+              p_account_number: accountNumber || null,
+              p_sender_name: senderName || null,
+              p_sender_bank: senderBank || null,
+              p_sender_account_number: senderAccountNumber || null,
+              p_narration: rawNarration || null,
+              p_raw_payload: eventPayload,
+            });
+
+            if (!rpcErr && rpcRes) {
+              if (rpcRes.status === "already_processed") {
+                console.log(`[Bachs Webhook] Reference ${reference} already processed.`);
+                return res.status(200).json({ received: true, status: "already_processed", reference });
+              }
+              if (rpcRes.status === "success") {
+                console.log(`[Bachs Webhook] Credited ₦${webhookCreditAmount} to user ${matchedProfile.email} via ${matchMethod}.`);
+                return res.status(200).json({
+                  received: true,
+                  status: "credited",
+                  reference,
+                  userId: matchedProfile.id,
+                  method: matchMethod
+                });
+              }
+            }
+          } catch (rpcEx) {
+            console.warn("[credit_virtual_account_deposit RPC Exception]:", rpcEx.message);
+          }
+
+          // Fallback to creditUserWalletAtomically if RPC had an issue
+          const creditRes = await creditUserWalletAtomically({
+            reference,
+            email: matchedProfile.email,
+            userId: matchedProfile.id,
+            amount: webhookCreditAmount,
+            description: bankTransfer
+              ? `Wallet Deposit via Bachs Bank Transfer (${senderName || "Bank Transfer"})`
+              : `Wallet Top-Up via Bachs.io (₦${webhookCreditAmount.toLocaleString()})`,
+            metadata: {
+              event_id: eventId,
+              event_type: eventType,
+              charge_id: chargeId || null,
+              checkout_id: checkoutId || null,
+            },
+          });
+
+          if (creditRes.status === "success" || creditRes.status === "already_processed") {
+            await supabase.from("virtual_account_payments").insert({
+              reference,
+              event_id: eventId || null,
+              user_id: matchedProfile.id,
+              user_email: matchedProfile.email,
+              amount: webhookCreditAmount,
+              account_number: accountNumber || null,
+              sender_name: senderName || null,
+              sender_bank: senderBank || null,
+              sender_account_number: senderAccountNumber || null,
+              narration: rawNarration || null,
+              status: "completed",
+              raw_payload: eventPayload,
+            }).catch(() => {});
+
+            return res.status(200).json({ received: true, status: creditRes.status, reference });
+          }
+
+          // If even fallback failed, route to unmatched_payments
+          await supabase.from("unmatched_payments").upsert({
+            reference,
+            event_id: eventId || null,
+            amount: webhookCreditAmount,
+            account_number: accountNumber || null,
+            sender_name: senderName || null,
+            sender_bank: senderBank || null,
+            sender_account_number: senderAccountNumber || null,
+            narration: rawNarration || null,
+            raw_payload: eventPayload,
+            status: "pending",
+            candidate_user_id: matchedProfile.id,
+            candidate_reason: `Matched ${matchedProfile.email} but crediting failed: ${creditRes.message}`,
+          }, { onConflict: "reference" }).catch(() => {});
+
+          return res.status(200).json({ received: true, status: "unmatched_saved_for_review", reference });
+        }
+
+        // UNMATCHED DEPOSIT: Save to unmatched_payments (NEVER SILENTLY DROP MONEY!)
+        console.warn(`[Bachs Webhook] Deposit unmatched: ref=${reference}, amount=${amount}, sender="${senderName}", narration="${rawNarration}". Saving to unmatched_payments.`);
+        await supabase.from("unmatched_payments").upsert({
+          reference,
+          event_id: eventId || null,
+          amount: webhookCreditAmount,
+          account_number: accountNumber || null,
+          sender_name: senderName || null,
+          sender_bank: senderBank || null,
+          sender_account_number: senderAccountNumber || null,
+          narration: rawNarration || null,
+          raw_payload: eventPayload,
+          status: "pending",
+          candidate_user_id: candidateProfile?.id || null,
+          candidate_reason: candidateReason || null,
+        }, { onConflict: "reference" }).catch((e) => {
+          console.error("[Unmatched Payments Upsert Error]:", e.message);
+        });
+
+        return res.status(200).json({
+          received: true,
+          status: "unmatched_saved_for_review",
+          reference,
+          reason: candidateReason || "No matching user profile found from account number, email, or phone."
+        });
       }
+
       return res.status(200).json({ received: true, status: "ignored", type: eventType });
     } catch (err) {
       console.error("[Bachs Webhook Exception]:", err.message || err);
@@ -4521,22 +4752,169 @@ AI:`;
       return res.status(500).json({ error: err.message });
     }
   });
+
+  // ─── Super Admin: Bachs.io Unmatched Deposits & Reconciliation ───
+  app.get("/api/admin/bachs/unmatched-payments", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { data, error } = await supabase
+        .from("unmatched_payments")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (error) throw error;
+      return res.json({ success: true, payments: data || [] });
+    } catch (err) {
+      console.error("[GET /api/admin/bachs/unmatched-payments Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/bachs/resolve-unmatched", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { unmatchedId, targetUserId, notes } = req.body || {};
+      if (!unmatchedId || !targetUserId) {
+        return res.status(400).json({ error: "Missing unmatchedId or targetUserId." });
+      }
+
+      const adminEmail = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
+      const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
+      let adminUserId = null;
+
+      if (token) {
+        try {
+          const { data: { user: authUser } } = await supabase.auth.getUser(token);
+          if (authUser?.id) adminUserId = authUser.id;
+        } catch (_) {}
+      }
+      if (!adminUserId && adminEmail) {
+        const { data: p } = await supabase.from("profiles").select("id").ilike("email", adminEmail).maybeSingle();
+        if (p?.id) adminUserId = p.id;
+      }
+      if (!adminUserId) {
+        adminUserId = targetUserId;
+      }
+
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc("resolve_unmatched_payment", {
+        p_unmatched_id: unmatchedId,
+        p_target_user_id: targetUserId,
+        p_admin_user_id: adminUserId,
+        p_notes: notes || null,
+      });
+
+      if (rpcErr) {
+        throw new Error(`RPC Error: ${rpcErr.message}`);
+      }
+
+      if (rpcRes?.status === "error") {
+        return res.status(400).json({ error: rpcRes.message || "Failed to resolve unmatched payment." });
+      }
+
+      return res.json(rpcRes || { success: true, message: "Payment credited successfully." });
+    } catch (err) {
+      console.error("[POST /api/admin/bachs/resolve-unmatched Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/bachs/sync-deposits", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      if (!secretKey) {
+        return res.status(503).json({ error: "Bachs secret key not configured." });
+      }
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+
+      const paymentsUrl = getBachsEndpoint(baseUrl, "/v1/payments?limit=100");
+      const pResp = await fetch(paymentsUrl, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+      });
+
+      if (!pResp.ok) {
+        const errBody = await pResp.json().catch(() => ({}));
+        return res.status(pResp.status).json({
+          error: errBody?.detail || errBody?.message || `Bachs API returned status ${pResp.status}`
+        });
+      }
+
+      const pData = await pResp.json();
+      const items = Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : [];
+
+      let newlyAdded = 0;
+      let alreadyCredited = 0;
+
+      for (const item of items) {
+        const isSuccessful = item.status === "succeeded" || item.status === "completed" || item.payment_status === "paid";
+        if (!isSuccessful) continue;
+
+        const ref = String(item.reference || item.id || "").trim();
+        if (!ref) continue;
+
+        const { data: existingVa } = await supabase
+          .from("virtual_account_payments")
+          .select("reference")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        const { data: existingProc } = await supabase
+          .from("processed_payments")
+          .select("reference")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        if (existingVa || existingProc) {
+          alreadyCredited++;
+          continue;
+        }
+
+        const { data: existingUnmatched } = await supabase
+          .from("unmatched_payments")
+          .select("id")
+          .eq("reference", ref)
+          .maybeSingle();
+
+        if (!existingUnmatched) {
+          const bt = item.payment_method_details?.bank_transfer;
+          await supabase.from("unmatched_payments").insert({
+            reference: ref,
+            event_id: item.event_id || null,
+            amount: Number(item.amount || 0),
+            account_number: bt?.virtual_account?.account_number || null,
+            sender_name: bt?.sender_name || null,
+            sender_bank: bt?.sender_bank || null,
+            sender_account_number: bt?.sender_account_number || null,
+            narration: bt?.narration || null,
+            raw_payload: item,
+            status: "pending",
+          }).catch(() => {});
+          newlyAdded++;
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: `Reconciliation complete: ${items.length} payments analyzed. ${alreadyCredited} already credited, ${newlyAdded} new unmatched deposits added to review queue.`,
+        totalFetched: items.length,
+        alreadyCredited,
+        newlyAdded,
+      });
+    } catch (err) {
+      console.error("[POST /api/admin/bachs/sync-deposits Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
   app.get("/api/wallet/snapshot", async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
       const userId = authUser.id;
-      const { data: profile, error: profErr } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, referral_code, wallet_balance, balance, available_balance, updated_at").eq("id", userId).maybeSingle();
+      const { data: profile, error: profErr } = await supabase.from("profiles").select("id, wallet_balance, balance, available_balance, updated_at").eq("id", userId).maybeSingle();
       if (profErr) throw new Error(profErr.message);
-      if (profile && !profile.referral_code) {
-        const generatedCode = `NORODATA-${String(userId).replace(/-/g, "").substring(0, 6).toUpperCase()}`;
-        try {
-          await supabase.from("profiles").update({ referral_code: generatedCode }).eq("id", userId);
-          profile.referral_code = generatedCode;
-        } catch (_) {
-          profile.referral_code = generatedCode;
-        }
-      }
       const { data: recent, error: txErr } = await supabase.from("transactions").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       if (txErr) console.warn("[Wallet Snapshot] transactions warning:", txErr.message);
       return res.json({
@@ -4561,195 +4939,6 @@ AI:`;
     } catch (err) {
       console.error("[Wallet Transactions Error]:", err.message);
       return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/wallet/lookup-recipient", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const rawQuery = String(req.body?.query || "").trim();
-      if (!rawQuery) {
-        return res.status(400).json({ error: "Please enter recipient Transfer ID, email, or phone number." });
-      }
-      const safeQ = pgSafeFilter(rawQuery);
-      const upperQ = pgSafeFilter(rawQuery.toUpperCase());
-      const lowerQ = pgSafeFilter(rawQuery.toLowerCase());
-      const digitsOnly = rawQuery.replace(/[^0-9]/g, "");
-      const phoneVariants = /* @__PURE__ */ new Set([safeQ]);
-      if (digitsOnly.length >= 10) {
-        if (digitsOnly.startsWith("0") && digitsOnly.length === 11) {
-          phoneVariants.add(digitsOnly);
-          phoneVariants.add(`234${digitsOnly.slice(1)}`);
-          phoneVariants.add(`+234${digitsOnly.slice(1)}`);
-        } else if (digitsOnly.startsWith("234") && digitsOnly.length === 13) {
-          phoneVariants.add(`0${digitsOnly.slice(3)}`);
-          phoneVariants.add(digitsOnly);
-          phoneVariants.add(`+${digitsOnly}`);
-        }
-      }
-      const orParts = [
-        `email.ilike.${lowerQ}`,
-        `referral_code.ilike.${upperQ}`,
-        ...Array.from(phoneVariants).map((p) => `phone_number.eq.${pgSafeFilter(p)}`)
-      ];
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawQuery)) {
-        orParts.push(`id.eq.${rawQuery}`);
-      }
-      let recipient = null;
-      const { data: matchedRows, error: lookupErr } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, referral_code").or(orParts.join(",")).limit(5);
-      if (!lookupErr && matchedRows && matchedRows.length > 0) {
-        recipient = matchedRows[0];
-      }
-      if (!recipient && (rawQuery.toUpperCase().startsWith("NORODATA-") || /^[A-Z0-9]{5,10}$/i.test(rawQuery))) {
-        const codePart = rawQuery.toUpperCase().replace(/^NORODATA-/, "").trim();
-        if (codePart.length >= 4) {
-          const { data: allProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, referral_code").limit(500);
-          if (allProfiles) {
-            recipient = allProfiles.find((p) => {
-              const pCode = String(p.referral_code || "").toUpperCase();
-              const idHex = String(p.id || "").replace(/-/g, "").toUpperCase();
-              return pCode === rawQuery.toUpperCase() || pCode === `NORODATA-${codePart}` || idHex.startsWith(codePart);
-            });
-          }
-        }
-      }
-      if (!recipient) {
-        return res.status(404).json({ error: "Recipient not found. Check the Transfer ID, email, or phone number." });
-      }
-      if (String(recipient.id) === String(authUser.id)) {
-        return res.status(400).json({ error: "You cannot transfer money to your own wallet." });
-      }
-      const displayCode = recipient.referral_code || `NORODATA-${String(recipient.id).replace(/-/g, "").substring(0, 6).toUpperCase()}`;
-      return res.json({
-        recipient: {
-          id: recipient.id,
-          full_name: recipient.full_name || recipient.name || (recipient.email ? recipient.email.split("@")[0] : "NORODATA User"),
-          email: recipient.email || "",
-          phone_number: recipient.phone_number || "",
-          referral_code: displayCode
-        }
-      });
-    } catch (err) {
-      console.error("[Wallet Lookup Recipient Error]:", err.message);
-      return res.status(500).json({ error: err.message || "Failed to look up recipient." });
-    }
-  });
-  app.post("/api/wallet/transfer", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const senderId = authUser.id;
-      const recipientId = String(req.body?.recipientId || req.body?.recipient_uid || "").trim();
-      const rawAmount = Number(req.body?.amount ?? req.body?.p_amount ?? 0);
-      const note = String(req.body?.note ?? req.body?.p_note ?? "").trim();
-      if (!recipientId) {
-        return res.status(400).json({ status: "error", error: "Recipient ID is required." });
-      }
-      if (recipientId === senderId) {
-        return res.status(400).json({ status: "error", error: "You cannot transfer money to yourself." });
-      }
-      if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
-        return res.status(400).json({ status: "error", error: "Please enter a valid transfer amount greater than \u20A60." });
-      }
-      const amount = Number(rawAmount.toFixed(2));
-      const [{ data: senderProfile, error: sErr }, { data: recipientProfile, error: rErr }] = await Promise.all([
-        supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", senderId).maybeSingle(),
-        supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", recipientId).maybeSingle()
-      ]);
-      if (sErr || !senderProfile) {
-        return res.status(404).json({ status: "error", error: "Sender wallet profile not found." });
-      }
-      if (rErr || !recipientProfile) {
-        return res.status(404).json({ status: "error", error: "Recipient wallet profile not found." });
-      }
-      const senderBalance = Number(senderProfile.wallet_balance ?? senderProfile.balance ?? 0);
-      if (senderBalance < amount) {
-        return res.status(400).json({
-          status: "insufficient_funds",
-          error: `Insufficient wallet balance. Available: \u20A6${senderBalance.toLocaleString()}, Required: \u20A6${amount.toLocaleString()}.`,
-          balance: senderBalance,
-          required: amount
-        });
-      }
-      const recipientBalance = Number(recipientProfile.wallet_balance ?? recipientProfile.balance ?? 0);
-      const newSenderBalance = Number((senderBalance - amount).toFixed(2));
-      const newRecipientBalance = Number((recipientBalance + amount).toFixed(2));
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const { error: deductErr } = await supabase.from("profiles").update({
-        wallet_balance: newSenderBalance,
-        balance: newSenderBalance,
-        available_balance: newSenderBalance,
-        updated_at: nowIso
-      }).eq("id", senderId);
-      if (deductErr) {
-        throw new Error(`Failed to debit sender wallet: ${deductErr.message}`);
-      }
-      const { error: creditErr } = await supabase.from("profiles").update({
-        wallet_balance: newRecipientBalance,
-        balance: newRecipientBalance,
-        available_balance: newRecipientBalance,
-        updated_at: nowIso
-      }).eq("id", recipientId);
-      if (creditErr) {
-        await supabase.from("profiles").update({
-          wallet_balance: senderBalance,
-          balance: senderBalance,
-          available_balance: senderBalance,
-          updated_at: nowIso
-        }).eq("id", senderId);
-        throw new Error(`Failed to credit recipient wallet: ${creditErr.message}`);
-      }
-      try {
-        await Promise.all([
-          supabase.from("users").update({ wallet_balance: newSenderBalance }).eq("id", senderId),
-          supabase.from("users").update({ wallet_balance: newRecipientBalance }).eq("id", recipientId)
-        ]);
-      } catch (_) {
-      }
-      const baseRef = `NOR-TXF-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const senderName = senderProfile.full_name || senderProfile.name || senderProfile.email || "NORODATA User";
-      const recipientName = recipientProfile.full_name || recipientProfile.name || recipientProfile.email || "NORODATA User";
-      try {
-        await supabase.from("transactions").insert([
-          {
-            user_id: String(senderId),
-            user_email: senderProfile.email || authUser.email || null,
-            type: "transfer_out",
-            amount,
-            status: "completed",
-            reference: `${baseRef}-OUT`,
-            description: note ? `Wallet transfer to ${recipientName} (${note})` : `Wallet transfer sent to ${recipientName}`,
-            gateway: "wallet_transfer",
-            created_at: nowIso
-          },
-          {
-            user_id: String(recipientId),
-            user_email: recipientProfile.email || null,
-            type: "funding",
-            amount,
-            status: "completed",
-            reference: `${baseRef}-IN`,
-            description: note ? `Wallet transfer from ${senderName} (${note})` : `Wallet transfer received from ${senderName}`,
-            gateway: "wallet_transfer",
-            created_at: nowIso
-          }
-        ]);
-      } catch (txLogErr) {
-        console.warn("[Wallet Transfer] Transaction log warning:", txLogErr.message);
-      }
-      return res.json({
-        status: "success",
-        amount,
-        newBalance: newSenderBalance,
-        reference: baseRef,
-        recipient: {
-          id: recipientId,
-          name: recipientName
-        }
-      });
-    } catch (err) {
-      console.error("[Wallet Transfer Error]:", err.message);
-      return res.status(500).json({ status: "error", error: err.message || "Transfer failed." });
     }
   });
   app.get("/api/admin/users", async (req, res) => {
@@ -5390,161 +5579,17 @@ AI:`;
     }
   } catch (_) {
   }
-  const loadEsimInquiriesStore = async () => {
-    try {
-      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_inquiries_store_v2").maybeSingle();
-      if (data?.secret) {
-        const parsed = JSON.parse(data.secret);
-        if (Array.isArray(parsed)) {
-          serverEsimInquiries = parsed;
-          return serverEsimInquiries;
-        }
-      }
-    } catch (_) {
-    }
-    return serverEsimInquiries;
-  };
-  const saveEsimInquiries = async (inquiriesToSave) => {
-    if (Array.isArray(inquiriesToSave)) {
-      serverEsimInquiries = inquiriesToSave;
-    }
+  const saveEsimInquiries = () => {
     try {
       const dataDir = path.join(process.cwd(), ".data");
       if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
       fs.writeFileSync(path.join(dataDir, "esim_inquiries.json"), JSON.stringify(serverEsimInquiries, null, 2));
     } catch (_) {
     }
-    try {
-      await supabase.from("provider_secrets").upsert({
-        identifier: "esim_inquiries_store_v2",
-        secret: JSON.stringify(serverEsimInquiries),
-        updated_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
-    } catch (err) {
-      console.warn("[saveEsimInquiries Supabase warning]:", err?.message || err);
-    }
   };
-  let serverEsimPlans = [];
-  try {
-    const dataDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    const plansFile = path.join(dataDir, "esim_plans.json");
-    if (fs.existsSync(plansFile)) {
-      serverEsimPlans = JSON.parse(fs.readFileSync(plansFile, "utf-8"));
-    }
-  } catch (_) {
-  }
-  const loadEsimPlansStore = async () => {
-    try {
-      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_plans_store_v1").maybeSingle();
-      if (data?.secret) {
-        const parsed = JSON.parse(data.secret);
-        if (Array.isArray(parsed)) {
-          serverEsimPlans = parsed.filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
-          return serverEsimPlans;
-        }
-      }
-    } catch (_) {
-    }
-    serverEsimPlans = (serverEsimPlans || []).filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
-    return serverEsimPlans;
-  };
-  const saveEsimPlans = async (plansToSave) => {
-    serverEsimPlans = plansToSave;
-    try {
-      const dataDir = path.join(process.cwd(), ".data");
-      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(path.join(dataDir, "esim_plans.json"), JSON.stringify(serverEsimPlans, null, 2));
-    } catch (_) {
-    }
-    try {
-      await supabase.from("provider_secrets").upsert({
-        identifier: "esim_plans_store_v1",
-        secret: JSON.stringify(serverEsimPlans),
-        updated_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
-    } catch (err) {
-      console.warn("[saveEsimPlans warning]:", err?.message || err);
-    }
-  };
-  app.get("/api/esim/plans", async (_req, res) => {
-    try {
-      const plans = await loadEsimPlansStore();
-      return res.json({ plans });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/esim/plans", async (req, res) => {
-    if (!await requireEsimAdmin(req, res)) return;
-    try {
-      const {
-        title,
-        country = "International",
-        flag = "\u{1F310}",
-        data_amount = "5GB",
-        duration = "30 Days",
-        numericPrice,
-        price,
-        carrier = "Standard Network",
-        desc = "Instant QR Activation"
-      } = req.body || {};
-      if (!title || !numericPrice || Number(numericPrice) <= 0) {
-        return res.status(400).json({ error: "Title and a positive numeric price are required." });
-      }
-      const numPrice = Number(numericPrice);
-      const formattedPrice = price || `\u20A6${numPrice.toLocaleString()}`;
-      const plans = await loadEsimPlansStore();
-      const newPlan = {
-        id: `esim-plan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        title: String(title).trim(),
-        country: String(country).trim(),
-        flag: String(flag || "\u{1F310}").trim(),
-        data_amount: String(data_amount).trim(),
-        duration: String(duration).trim(),
-        numericPrice: numPrice,
-        price: formattedPrice,
-        carrier: String(carrier).trim(),
-        desc: String(desc).trim(),
-        status: "available",
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      plans.unshift(newPlan);
-      await saveEsimPlans(plans);
-      return res.json({ success: true, plan: newPlan });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.delete("/api/esim/plans/:id", async (req, res) => {
-    if (!await requireEsimAdmin(req, res)) return;
-    try {
-      const { id } = req.params;
-      const plans = await loadEsimPlansStore();
-      const filtered = plans.filter((p) => p.id !== id);
-      await saveEsimPlans(filtered);
-      return res.json({ success: true, plans: filtered });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
   app.get("/api/esim/inquiries", async (req, res) => {
     if (!await requireEsimAdmin(req, res)) return;
-    const inquiries = await loadEsimInquiriesStore();
-    return res.json({ inquiries });
-  });
-  app.get("/api/esim/inquiries/my", async (req, res) => {
-    try {
-      const userId = String(req.query.userId || "").trim();
-      const email = String(req.query.email || "").toLowerCase().trim();
-      const inquiries = await loadEsimInquiriesStore();
-      const mine = inquiries.filter(
-        (i) => email && String(i.user_email || "").toLowerCase().trim() === email || userId && userId !== "visitor" && String(i.user_id) === userId
-      );
-      return res.json({ inquiries: mine });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
+    return res.json({ inquiries: serverEsimInquiries });
   });
   app.post("/api/esim/inquiries", async (req, res) => {
     try {
@@ -5553,52 +5598,31 @@ AI:`;
         user_name = "Customer",
         user_email = "",
         user_phone = "",
-        package_id = "custom",
-        package_label = "International eSIM Request",
-        package_price = "\u20A60",
-        destination_country = "International",
+        package_id = "us-5gb",
+        package_label = "USA 5GB eSIM",
+        package_price = "\u20A68,500",
+        destination_country = "United States",
         device_model = "Smartphone",
-        message = "",
-        check_balance = false
+        message = ""
       } = req.body;
-      const inquiries = await loadEsimInquiriesStore();
-      const numericPrice = Number(String(package_price || "").replace(/[^\d.]/g, "")) || 0;
-      let buyerBalance = 0;
-      if (user_id && user_id !== "visitor") {
-        const { data: prof } = await supabase.from("profiles").select("wallet_balance, balance").eq("id", user_id).maybeSingle();
-        buyerBalance = Number(prof?.wallet_balance ?? prof?.balance ?? 0);
-      }
-      const existingIdx = inquiries.findIndex(
-        (i) => user_email && String(i.user_email || "").toLowerCase().trim() === String(user_email).toLowerCase().trim() || user_id !== "visitor" && i.user_id === user_id
-      );
-      if (check_balance && numericPrice > 0 && buyerBalance < numericPrice) {
-        return res.status(400).json({
-          error: `Insufficient Balance! This eSIM (${package_label}) costs \u20A6${numericPrice.toLocaleString()}, but your wallet balance is \u20A6${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy.`,
-          code: "INSUFFICIENT_BALANCE",
-          required: numericPrice,
-          balance: buyerBalance
-        });
-      }
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const newMsg = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: `msg-${Date.now()}`,
         sender: "user",
-        sender_name: user_name || "Customer",
-        sender_email: user_email || "",
         text: String(message || "Inquiry initiated").trim(),
-        created_at: nowIso
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
       };
+      const existingIdx = serverEsimInquiries.findIndex(
+        (i) => user_email && i.user_email === user_email || user_id !== "visitor" && i.user_id === user_id
+      );
       let inquiryObj;
       if (existingIdx >= 0) {
-        if (!Array.isArray(inquiries[existingIdx].messages)) inquiries[existingIdx].messages = [];
-        inquiries[existingIdx].messages.push(newMsg);
-        inquiries[existingIdx].last_message = newMsg.text;
-        inquiries[existingIdx].last_message_at = newMsg.created_at;
-        inquiries[existingIdx].updated_at = nowIso;
-        if (device_model) inquiries[existingIdx].device_model = device_model;
-        if (package_label) inquiries[existingIdx].package_label = package_label;
-        if (package_price) inquiries[existingIdx].package_price = package_price;
-        inquiryObj = inquiries[existingIdx];
+        serverEsimInquiries[existingIdx].messages.push(newMsg);
+        serverEsimInquiries[existingIdx].last_message = newMsg.text;
+        serverEsimInquiries[existingIdx].last_message_at = newMsg.created_at;
+        serverEsimInquiries[existingIdx].updated_at = (/* @__PURE__ */ new Date()).toISOString();
+        if (device_model) serverEsimInquiries[existingIdx].device_model = device_model;
+        if (package_label) serverEsimInquiries[existingIdx].package_label = package_label;
+        inquiryObj = serverEsimInquiries[existingIdx];
       } else {
         inquiryObj = {
           id: `inq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -5612,15 +5636,15 @@ AI:`;
           destination_country,
           device_model,
           status: "pending",
-          created_at: nowIso,
-          updated_at: nowIso,
+          created_at: (/* @__PURE__ */ new Date()).toISOString(),
+          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
           last_message: newMsg.text,
           last_message_at: newMsg.created_at,
           messages: [newMsg]
         };
-        inquiries.unshift(inquiryObj);
+        serverEsimInquiries.unshift(inquiryObj);
       }
-      await saveEsimInquiries(inquiries);
+      saveEsimInquiries();
       return res.json({ success: true, inquiry: inquiryObj });
     } catch (err) {
       console.error("[POST /api/esim/inquiries Error]:", err);
@@ -5631,32 +5655,29 @@ AI:`;
     try {
       const { id } = req.params;
       const { text, sender = "admin", sender_name = "eSIM Desk", sender_email = "jeffholland299@gmail.com", activation_code } = req.body;
-      const inquiries = await loadEsimInquiriesStore();
-      const inquiry = inquiries.find((i) => i.id === id);
+      const inquiry = serverEsimInquiries.find((i) => i.id === id);
       if (!inquiry) {
         return res.status(404).json({ error: "eSIM inquiry not found" });
       }
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const msg = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: `msg-${Date.now()}`,
         sender,
         sender_name,
         sender_email,
         text: String(text || "").trim(),
         activation_code: activation_code || void 0,
         has_qr: Boolean(activation_code),
-        created_at: nowIso
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
       inquiry.messages.push(msg);
       inquiry.last_message = msg.text;
       inquiry.last_message_at = msg.created_at;
-      inquiry.updated_at = nowIso;
+      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
       if (activation_code) inquiry.activation_code = activation_code;
       if (sender === "admin" && inquiry.status === "pending") {
         inquiry.status = "in_progress";
       }
-      await saveEsimInquiries(inquiries);
+      saveEsimInquiries();
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -5667,978 +5688,14 @@ AI:`;
     try {
       const { id } = req.params;
       const { status } = req.body;
-      const inquiries = await loadEsimInquiriesStore();
-      const inquiry = inquiries.find((i) => i.id === id);
+      const inquiry = serverEsimInquiries.find((i) => i.id === id);
       if (!inquiry) return res.status(404).json({ error: "eSIM inquiry not found" });
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const numericPrice = Number(String(inquiry.package_price || "").replace(/[^\d.]/g, "")) || 0;
-      if (status === "completed" && !inquiry.payment_debited && numericPrice > 0 && inquiry.user_id && inquiry.user_id !== "visitor") {
-        const { data: buyerProf } = await supabase.from("profiles").select("id, email, wallet_balance, balance").eq("id", inquiry.user_id).maybeSingle();
-        const currentBal = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
-        if (currentBal < numericPrice) {
-          return res.status(400).json({
-            error: `Insufficient Balance! Customer wallet has \u20A6${currentBal.toLocaleString()}, required \u20A6${numericPrice.toLocaleString()}.`,
-            code: "INSUFFICIENT_BALANCE"
-          });
-        }
-        const newBal = Number((currentBal - numericPrice).toFixed(2));
-        const paymentRef = `ESIM-DEAL-${Date.now()}`;
-        await supabase.from("profiles").update({
-          wallet_balance: newBal,
-          balance: newBal,
-          available_balance: newBal,
-          updated_at: nowIso
-        }).eq("id", inquiry.user_id);
-        try {
-          await supabase.from("transactions").insert({
-            user_id: String(inquiry.user_id),
-            user_email: buyerProf?.email || inquiry.user_email || null,
-            type: "esim",
-            amount: numericPrice,
-            status: "completed",
-            reference: paymentRef,
-            description: `eSIM Purchase: ${inquiry.package_label || "International eSIM"}`,
-            gateway: "wallet_auto_debit",
-            created_at: nowIso
-          });
-        } catch (_) {
-        }
-        inquiry.payment_debited = true;
-        inquiry.payment_reference = paymentRef;
-        if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
-        inquiry.messages.push({
-          id: `msg-${Date.now()}-done`,
-          sender: "admin",
-          sender_name: "NORODATA eSIM Desk",
-          text: `\u{1F389} eSIM DEAL COMPLETED! \u20A6${numericPrice.toLocaleString()} has been automatically debited from your wallet (Ref: ${paymentRef}).`,
-          created_at: nowIso
-        });
-      }
       inquiry.status = status;
-      inquiry.updated_at = nowIso;
-      await saveEsimInquiries(inquiries);
+      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      saveEsimInquiries();
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
-    }
-  });
-  const MARKETPLACE_CATEGORIES = [
-    { id: "cat-us-phone", name: "US Phone Numbers", description: "American phone numbers for verification and calls", icon: "\u{1F1FA}\u{1F1F8}", type: "foreign_number" },
-    { id: "cat-uk-phone", name: "UK Phone Numbers", description: "British phone numbers for verification and calls", icon: "\u{1F1EC}\u{1F1E7}", type: "foreign_number" },
-    { id: "cat-ca-phone", name: "Canada Phone Numbers", description: "Canadian phone numbers for verification and calls", icon: "\u{1F1E8}\u{1F1E6}", type: "foreign_number" },
-    { id: "cat-ig-acc", name: "Instagram Accounts", description: "Verified Instagram accounts with active followers", icon: "\u{1F4F7}", type: "social_account" },
-    { id: "cat-tt-acc", name: "TikTok Accounts", description: "TikTok accounts with active followers and high engagement", icon: "\u{1F3B5}", type: "social_account" },
-    { id: "cat-x-acc", name: "Twitter/X Accounts", description: "Twitter/X verified accounts and pages", icon: "\u{1D54F}", type: "social_account" },
-    { id: "cat-snap-acc", name: "Snapchat Accounts", description: "Snapchat accounts with high score and active contacts", icon: "\u{1F47B}", type: "social_account" },
-    { id: "cat-fb-acc", name: "Facebook Accounts", description: "Facebook pages, groups, and aged accounts", icon: "\u{1F44D}", type: "social_account" }
-  ];
-  const SEEDED_FOREIGN_NUMBER_LISTINGS = [];
-  const CORE_MARKETPLACE_ADMIN_EMAILS = [
-    ADMIN_EMAIL.toLowerCase().trim(),
-    "ibrahimfaruqolamilekan4@gmail.com",
-    "adewaleogunkeye200@gmail.com",
-    "jeffholland299@gmail.com",
-    "triumphanttosin@gmail.com"
-  ].filter(Boolean);
-  const RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS = [
-    "jeffholland299@gmail.com",
-    "triumphanttosin@gmail.com"
-  ];
-  let memoryMarketplaceAdmins = [...new Set(CORE_MARKETPLACE_ADMIN_EMAILS)];
-  const loadMarketplaceAdmins = async () => {
-    try {
-      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "marketplace_admins_store_v2").maybeSingle();
-      if (data?.secret) {
-        const parsed = JSON.parse(data.secret);
-        if (Array.isArray(parsed)) {
-          memoryMarketplaceAdmins = Array.from(/* @__PURE__ */ new Set([
-            ...CORE_MARKETPLACE_ADMIN_EMAILS,
-            ...parsed.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
-          ]));
-        }
-      }
-    } catch (_) {
-    }
-    return memoryMarketplaceAdmins;
-  };
-  const saveMarketplaceAdmins = async (emails) => {
-    const normalized = Array.from(/* @__PURE__ */ new Set([
-      ...CORE_MARKETPLACE_ADMIN_EMAILS,
-      ...emails.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
-    ]));
-    memoryMarketplaceAdmins = normalized;
-    try {
-      await supabase.from("provider_secrets").upsert({
-        identifier: "marketplace_admins_store_v2",
-        secret: JSON.stringify(normalized),
-        updated_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
-    } catch (_) {
-    }
-    for (const email of normalized) {
-      try {
-        await supabase.from("profiles").update({ role: "admin" }).ilike("email", email);
-      } catch (_) {
-      }
-    }
-    return normalized;
-  };
-  saveMarketplaceAdmins(CORE_MARKETPLACE_ADMIN_EMAILS).catch(() => {
-  });
-  const isCallerAdminUser = async (req, authUser) => {
-    const allowedAdmins = await loadMarketplaceAdmins();
-    const headerEmail = String(req.headers["x-admin-email"] || "").toLowerCase().trim();
-    const userEmail = String(authUser?.email || headerEmail || "").toLowerCase().trim();
-    if (userEmail && allowedAdmins.includes(userEmail)) return true;
-    if (authUser?.user_metadata?.role === "admin") return true;
-    if (authUser?.id) {
-      try {
-        const { data: prof } = await supabase.from("profiles").select("role, email").eq("id", authUser.id).maybeSingle();
-        if (prof?.role === "admin") return true;
-        if (prof?.email && allowedAdmins.includes(String(prof.email).toLowerCase().trim())) return true;
-      } catch (_) {
-      }
-    }
-    return false;
-  };
-  app.get("/api/marketplace/admins", async (req, res) => {
-    try {
-      let authUser = null;
-      const authHeader = String(req.headers.authorization || "");
-      if (authHeader.startsWith("Bearer ")) {
-        const token = authHeader.slice(7).trim();
-        const { data } = await supabase.auth.getUser(token);
-        authUser = data?.user || null;
-      }
-      const admins = await loadMarketplaceAdmins();
-      const isCallerAdmin = await isCallerAdminUser(req, authUser);
-      return res.json({ admins, isCallerAdmin });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/marketplace/admins/promote", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
-        return res.status(403).json({ error: "Only the platform Super Admin can promote new Admin emails." });
-      }
-      const emailToPromote = String(req.body?.email || "").toLowerCase().trim();
-      if (!emailToPromote || !emailToPromote.includes("@")) {
-        return res.status(400).json({ error: "Please enter a valid email address to promote." });
-      }
-      const currentAdmins = await loadMarketplaceAdmins();
-      const updatedAdmins = await saveMarketplaceAdmins([...currentAdmins, emailToPromote]);
-      return res.json({
-        success: true,
-        email: emailToPromote,
-        admins: updatedAdmins,
-        message: `${emailToPromote} has been promoted to Foreign Number & Marketplace Admin!`
-      });
-    } catch (err) {
-      return res.status(500).json({ error: err.message || "Failed to promote email." });
-    }
-  });
-  app.delete("/api/marketplace/admins/:email", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
-        return res.status(403).json({ error: "Forbidden." });
-      }
-      const targetEmail = decodeURIComponent(String(req.params.email || "")).toLowerCase().trim();
-      if (CORE_MARKETPLACE_ADMIN_EMAILS.includes(targetEmail)) {
-        return res.status(400).json({ error: "Core platform admin email cannot be demoted." });
-      }
-      const currentAdmins = await loadMarketplaceAdmins();
-      const filtered = currentAdmins.filter((e) => e !== targetEmail);
-      const updatedAdmins = await saveMarketplaceAdmins(filtered);
-      try {
-        await supabase.from("profiles").update({ role: "user" }).ilike("email", targetEmail);
-      } catch (_) {
-      }
-      return res.json({ success: true, admins: updatedAdmins });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  let memoryMarketplaceListings = null;
-  let memoryMarketplaceOrders = null;
-  try {
-    const dataDir = path.join(process.cwd(), ".data");
-    const mpFile = path.join(dataDir, "marketplace_store.json");
-    if (fs.existsSync(mpFile)) {
-      const parsed = JSON.parse(fs.readFileSync(mpFile, "utf-8"));
-      if (Array.isArray(parsed?.listings)) memoryMarketplaceListings = parsed.listings;
-      if (Array.isArray(parsed?.orders)) memoryMarketplaceOrders = parsed.orders;
-    }
-  } catch (_) {
-  }
-  const loadMarketplaceStore = async () => {
-    try {
-      const { data: rows } = await supabase.from("provider_secrets").select("identifier, secret").in("identifier", ["marketplace_listings_store_v2", "marketplace_orders_store_v2"]);
-      let listings = null;
-      let orders = null;
-      if (rows && rows.length > 0) {
-        for (const r of rows) {
-          if (r.identifier === "marketplace_listings_store_v2" && r.secret) {
-            try {
-              listings = JSON.parse(r.secret);
-            } catch (_) {
-            }
-          }
-          if (r.identifier === "marketplace_orders_store_v2" && r.secret) {
-            try {
-              orders = JSON.parse(r.secret);
-            } catch (_) {
-            }
-          }
-        }
-      }
-      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
-      if (Array.isArray(listings)) {
-        listings = listings.filter((l) => !legacyIds.has(String(l?.id)));
-      } else {
-        listings = [];
-      }
-      if (Array.isArray(memoryMarketplaceListings)) {
-        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
-      }
-      if (!Array.isArray(orders)) {
-        orders = memoryMarketplaceOrders || [];
-      }
-      memoryMarketplaceListings = listings;
-      memoryMarketplaceOrders = orders;
-      return { listings, orders };
-    } catch (_) {
-      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
-      if (Array.isArray(memoryMarketplaceListings)) {
-        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
-      } else {
-        memoryMarketplaceListings = [];
-      }
-      if (!memoryMarketplaceOrders) memoryMarketplaceOrders = [];
-      return { listings: memoryMarketplaceListings, orders: memoryMarketplaceOrders };
-    }
-  };
-  const saveMarketplaceStore = async (listings, orders) => {
-    memoryMarketplaceListings = listings;
-    memoryMarketplaceOrders = orders;
-    try {
-      const dataDir = path.join(process.cwd(), ".data");
-      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dataDir, "marketplace_store.json"),
-        JSON.stringify({ listings, orders, updated_at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)
-      );
-    } catch (_) {
-    }
-    try {
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      await supabase.from("provider_secrets").upsert([
-        {
-          identifier: "marketplace_listings_store_v2",
-          secret: JSON.stringify(listings),
-          updated_at: nowIso
-        },
-        {
-          identifier: "marketplace_orders_store_v2",
-          secret: JSON.stringify(orders),
-          updated_at: nowIso
-        }
-      ]);
-    } catch (err) {
-      console.warn("[Marketplace Store Save Warning]:", err.message);
-    }
-  };
-  app.get("/api/marketplace/categories", async (_req, res) => {
-    return res.json({ categories: MARKETPLACE_CATEGORIES });
-  });
-  app.get("/api/marketplace/listings", async (req, res) => {
-    try {
-      const { listings } = await loadMarketplaceStore();
-      const category = String(req.query.category || "all").trim();
-      const type = String(req.query.type || "all").trim();
-      const search = String(req.query.search || "").trim().toLowerCase();
-      const includeSold = req.query.includeSold === "true";
-      let result = listings.filter((item) => includeSold || item.status === "available");
-      if (category && category !== "all") {
-        result = result.filter((item) => item.category_id === category);
-      }
-      if (type && type !== "all") {
-        result = result.filter((item) => item.marketplace_categories?.type === type);
-      }
-      if (search) {
-        result = result.filter(
-          (item) => String(item.title || "").toLowerCase().includes(search) || String(item.description || "").toLowerCase().includes(search) || String(item.product_details?.phone_number || item.product_details?.item_identifier || "").toLowerCase().includes(search)
-        );
-      }
-      return res.json({ listings: result });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/marketplace/listings", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { categoryId, title, description, price, productDetails, imageUrl } = req.body || {};
-      const cat = MARKETPLACE_CATEGORIES.find((c) => c.id === categoryId) || MARKETPLACE_CATEGORIES[0];
-      const isForeignNumber = cat.type === "foreign_number";
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      if (isForeignNumber && !isAdmin) {
-        return res.status(403).json({
-          error: "Only the platform Admin can post foreign numbers for sale."
-        });
-      }
-      const numPrice = Number(price);
-      if (!title || !Number.isFinite(numPrice) || numPrice <= 0) {
-        return res.status(400).json({ error: "Valid title and selling price are required." });
-      }
-      const { data: sellerProf } = await supabase.from("profiles").select("full_name, name, email").eq("id", authUser.id).maybeSingle();
-      const sellerDisplayName = isForeignNumber ? "NORODATA Official Admin" : sellerProf?.full_name || sellerProf?.name || authUser.email?.split("@")[0] || "Verified Seller";
-      const newListing = {
-        id: `lst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        seller_id: isForeignNumber ? "admin" : authUser.id,
-        created_by_id: authUser.id,
-        created_by_email: authUser.email || sellerProf?.email || "",
-        category_id: cat.id,
-        title: String(title).trim(),
-        description: String(description || "").trim(),
-        price: numPrice,
-        product_details: productDetails || {},
-        image_url: imageUrl || null,
-        status: "available",
-        views: 1,
-        is_admin_listing: isForeignNumber || isAdmin,
-        created_at: (/* @__PURE__ */ new Date()).toISOString(),
-        marketplace_categories: {
-          name: cat.name,
-          icon: cat.icon,
-          type: cat.type
-        },
-        profiles: {
-          full_name: sellerDisplayName,
-          name: sellerDisplayName,
-          marketplace_seller_rating: 5,
-          marketplace_seller_reviews: 100
-        }
-      };
-      const { listings, orders } = await loadMarketplaceStore();
-      listings.unshift(newListing);
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ listing: newListing });
-    } catch (err) {
-      console.error("[POST /api/marketplace/listings Error]:", err.message);
-      return res.status(500).json({ error: err.message || "Failed to create listing." });
-    }
-  });
-  app.delete("/api/marketplace/listings/:id", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { listings, orders } = await loadMarketplaceStore();
-      const idx = listings.findIndex((l) => l.id === id);
-      if (idx === -1) return res.status(404).json({ error: "Listing not found." });
-      const target = listings[idx];
-      if (!isAdmin && target.seller_id !== authUser.id && target.created_by_id !== authUser.id) {
-        return res.status(403).json({ error: "Forbidden: you can only delete your own listings." });
-      }
-      listings.splice(idx, 1);
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ success: true });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/marketplace/orders/initiate", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const buyerId = authUser.id;
-      const { listingId, listingSnapshot } = req.body || {};
-      if (!listingId) return res.status(400).json({ error: "listingId is required." });
-      const { listings, orders } = await loadMarketplaceStore();
-      let listing = listings.find((l) => l.id === listingId) || listingSnapshot;
-      if (!listing) {
-        return res.status(404).json({ error: "Listing not found." });
-      }
-      const isForeignNumber = listing.marketplace_categories?.type === "foreign_number" || String(listing.category_id || "").includes("phone") || listing.is_admin_listing;
-      const { data: buyerProf } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", buyerId).maybeSingle();
-      const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split("@")[0] || "Buyer";
-      const buyerEmail = buyerProf?.email || authUser.email || "";
-      const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
-      const requiredPrice = Number(listing.price || 0);
-      const existingOrder = orders.find(
-        (o) => o.listing_id === listing.id && o.buyer_id === buyerId
-      );
-      if (existingOrder) {
-        existingOrder.buyer = {
-          ...existingOrder.buyer,
-          id: buyerId,
-          full_name: buyerName,
-          email: buyerEmail,
-          phone_number: buyerProf?.phone_number || "",
-          wallet_balance: buyerBalance
-        };
-        return res.json({ order: existingOrder });
-      }
-      const phonePreview = listing.product_details?.phone_number || listing.product_details?.item_identifier || listing.title || "";
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      const initialMessages = [
-        {
-          id: `msg-${Date.now()}-1`,
-          order_id: orderId,
-          sender_id: buyerId,
-          sender_name: buyerName,
-          sender_email: buyerEmail,
-          sender_role: "buyer",
-          message_type: "text",
-          body: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
-          content: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
-          created_at: nowIso
-        }
-      ];
-      const newOrder = {
-        id: orderId,
-        listing_id: listing.id,
-        buyer_id: buyerId,
-        seller_id: "admin",
-        clicked_number: phonePreview,
-        phone_number: phonePreview,
-        price: requiredPrice,
-        status: "open",
-        is_foreign_number: isForeignNumber,
-        created_at: nowIso,
-        updated_at: nowIso,
-        marketplace_listings: {
-          id: listing.id,
-          title: listing.title,
-          price: requiredPrice,
-          description: listing.description,
-          product_details: {
-            ...listing.product_details || {},
-            phone_number: phonePreview,
-            item_identifier: phonePreview
-          },
-          image_url: listing.image_url || null,
-          marketplace_categories: listing.marketplace_categories || { name: "Foreign Number", icon: "\u{1F4F1}", type: "foreign_number" }
-        },
-        seller: {
-          id: "admin",
-          full_name: "NORODATA Official Admin",
-          name: "NORODATA Official Admin",
-          marketplace_seller_rating: 5
-        },
-        buyer: {
-          id: buyerId,
-          full_name: buyerName,
-          name: buyerName,
-          email: buyerEmail,
-          phone_number: buyerProf?.phone_number || "",
-          wallet_balance: buyerBalance
-        },
-        messages: initialMessages
-      };
-      orders.unshift(newOrder);
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ order: newOrder });
-    } catch (err) {
-      console.error("[POST /api/marketplace/orders/initiate Error]:", err.message);
-      return res.status(500).json({ error: err.message || "Failed to initiate order chat." });
-    }
-  });
-  app.get("/api/marketplace/orders", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const role = String(req.query.role || "buyer").trim();
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { orders } = await loadMarketplaceStore();
-      let filtered = [];
-      if (role === "admin" && isAdmin) {
-        filtered = orders;
-      } else if (role === "seller") {
-        filtered = orders.filter(
-          (o) => o.seller_id === authUser.id || isAdmin && (o.seller_id === "admin" || o.is_foreign_number)
-        );
-      } else {
-        filtered = orders.filter((o) => o.buyer_id === authUser.id);
-      }
-      if (isAdmin && filtered.length > 0) {
-        const buyerIds = Array.from(new Set(filtered.map((o) => o.buyer_id).filter(Boolean)));
-        if (buyerIds.length > 0) {
-          const { data: buyerProfiles } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").in("id", buyerIds);
-          const map = {};
-          (buyerProfiles || []).forEach((p) => {
-            map[p.id] = p;
-          });
-          filtered = filtered.map((o) => {
-            const bp = map[o.buyer_id];
-            if (!bp) return o;
-            return {
-              ...o,
-              buyer: {
-                ...o.buyer,
-                id: bp.id,
-                full_name: bp.full_name || bp.name || o.buyer?.full_name || "Buyer",
-                email: bp.email || o.buyer?.email || "",
-                phone_number: bp.phone_number || o.buyer?.phone_number || "",
-                wallet_balance: Number(bp.wallet_balance ?? bp.balance ?? 0)
-              }
-            };
-          });
-        }
-      }
-      return res.json({ orders: filtered });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.get("/api/marketplace/orders/:id", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) return res.status(404).json({ error: "Order not found." });
-      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
-        return res.status(403).json({ error: "Forbidden." });
-      }
-      let buyerBalance = Number(order.buyer?.wallet_balance ?? 0);
-      if (order.buyer_id) {
-        const { data: bp } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", order.buyer_id).maybeSingle();
-        if (bp) {
-          buyerBalance = Number(bp.wallet_balance ?? bp.balance ?? 0);
-          order.buyer = {
-            ...order.buyer,
-            id: bp.id,
-            full_name: bp.full_name || bp.name || order.buyer?.full_name || "Buyer",
-            email: bp.email || order.buyer?.email || "",
-            phone_number: bp.phone_number || order.buyer?.phone_number || "",
-            wallet_balance: buyerBalance
-          };
-        }
-      }
-      return res.json({
-        order,
-        messages: order.messages || [],
-        buyerBalance,
-        isAdmin
-      });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/marketplace/orders/:id/messages", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const content = String(req.body?.content || "").trim();
-      if (!content) return res.status(400).json({ error: "Message content is required." });
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { listings, orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) return res.status(404).json({ error: "Order not found." });
-      const senderIsBuyer = authUser.id === order.buyer_id && (!isAdmin || req.body?.asRole === "buyer");
-      const senderId = senderIsBuyer ? authUser.id : isAdmin ? "admin" : authUser.id;
-      const senderRole = senderIsBuyer ? "buyer" : "admin";
-      const senderName = senderRole === "admin" ? `Admin (${authUser.email || "Official Desk"})` : order.buyer?.full_name || order.buyer?.name || authUser.email || "Buyer";
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const msg = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        order_id: id,
-        sender_id: senderId,
-        sender_name: senderName,
-        sender_email: authUser.email || "",
-        sender_role: senderRole,
-        message_type: "text",
-        content,
-        created_at: nowIso
-      };
-      if (!Array.isArray(order.messages)) order.messages = [];
-      order.messages.push(msg);
-      order.last_message = content;
-      order.last_message_at = nowIso;
-      order.updated_at = nowIso;
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ message: msg, order });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  app.post("/api/marketplace/orders/:id/request-code", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const { listings, orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) return res.status(404).json({ error: "Order not found." });
-      const { data: bp } = await supabase.from("profiles").select("wallet_balance, balance").eq("id", order.buyer_id).maybeSingle();
-      const buyerBalance = Number(bp?.wallet_balance ?? bp?.balance ?? 0);
-      const requiredPrice = Number(order.price || 0);
-      if (buyerBalance < requiredPrice && order.status !== "paid") {
-        return res.status(400).json({
-          error: `Insufficient Balance! Your wallet balance is \u20A6${buyerBalance.toLocaleString()}, but this number requires \u20A6${requiredPrice.toLocaleString()}. Please fund your wallet before requesting the login code.`,
-          code: "INSUFFICIENT_BALANCE",
-          required: requiredPrice,
-          balance: buyerBalance
-        });
-      }
-      const phonePreview = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || order.marketplace_listings?.title || "this number";
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const msg = {
-        id: `msg-${Date.now()}-req`,
-        order_id: id,
-        sender_id: order.buyer_id,
-        sender_name: order.buyer?.full_name || authUser.email || "Buyer",
-        sender_email: authUser.email || order.buyer?.email || "",
-        sender_role: "buyer",
-        message_type: "text",
-        content: `\u{1F514} LOGIN CODE REQUEST: Admin, I have entered the number ${phonePreview} to login. Please send me the verification OTP code now! (Wallet balance \u20A6${buyerBalance.toLocaleString()} verified \u2014 \u20A6${requiredPrice.toLocaleString()} will be auto-debited once done).`,
-        created_at: nowIso
-      };
-      if (!Array.isArray(order.messages)) order.messages = [];
-      order.messages.push(msg);
-      order.code_requested = true;
-      order.status = order.status === "pending" ? "code_requested" : order.status;
-      order.last_message = msg.content;
-      order.last_message_at = nowIso;
-      order.updated_at = nowIso;
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ order, message: msg });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-  const executeOrderDealCompletion = async (order, listings, orders, verificationCode) => {
-    if (order.status === "completed") {
-      return { order, alreadyCompleted: true };
-    }
-    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-    const price = Number(order.price || 0);
-    let paymentRef = order.payment_reference || `NUM-DEAL-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    let newBuyerBalance = 0;
-    if (order.status !== "paid" && !order.payment_reference && price > 0) {
-      const { data: buyerProf, error: bErr } = await supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", order.buyer_id).maybeSingle();
-      if (bErr || !buyerProf) {
-        throw new Error("Buyer wallet profile not found.");
-      }
-      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
-      if (currentBalance < price) {
-        throw new Error(`Insufficient Balance! Buyer wallet balance is \u20A6${currentBalance.toLocaleString()}, but \u20A6${price.toLocaleString()} is required to complete the deal.`);
-      }
-      newBuyerBalance = Number((currentBalance - price).toFixed(2));
-      const { error: deductErr } = await supabase.from("profiles").update({
-        wallet_balance: newBuyerBalance,
-        balance: newBuyerBalance,
-        available_balance: newBuyerBalance,
-        updated_at: nowIso
-      }).eq("id", order.buyer_id);
-      if (deductErr) {
-        throw new Error(`Failed to auto-debit buyer wallet: ${deductErr.message}`);
-      }
-      try {
-        await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
-      } catch (_) {
-      }
-      const phoneNum = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "";
-      try {
-        await supabase.from("transactions").insert({
-          user_id: String(order.buyer_id),
-          user_email: buyerProf.email || null,
-          type: "marketplace",
-          amount: price,
-          status: "completed",
-          reference: paymentRef,
-          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
-          gateway: "wallet_auto_debit",
-          created_at: nowIso
-        });
-      } catch (_) {
-      }
-      if (order.seller_id && order.seller_id !== "admin" && /^[0-9a-f-]{36}$/i.test(order.seller_id)) {
-        try {
-          const sellerPayout = Math.floor(price * 0.98);
-          const { data: sellerProf } = await supabase.from("profiles").select("id, email, wallet_balance, balance").eq("id", order.seller_id).maybeSingle();
-          if (sellerProf) {
-            const sBal = Number(sellerProf.wallet_balance ?? sellerProf.balance ?? 0);
-            const newSBal = Number((sBal + sellerPayout).toFixed(2));
-            await supabase.from("profiles").update({
-              wallet_balance: newSBal,
-              balance: newSBal,
-              available_balance: newSBal,
-              updated_at: nowIso
-            }).eq("id", order.seller_id);
-            await supabase.from("transactions").insert({
-              user_id: String(order.seller_id),
-              user_email: sellerProf.email || null,
-              type: "funding",
-              amount: sellerPayout,
-              status: "completed",
-              reference: `${paymentRef}-PAYOUT`,
-              description: `Marketplace sale payout: ${order.marketplace_listings?.title || "Listing"}`,
-              gateway: "marketplace_escrow",
-              created_at: nowIso
-            });
-          }
-        } catch (_) {
-        }
-      }
-    }
-    order.status = "completed";
-    order.paid_at = order.paid_at || nowIso;
-    order.completed_at = nowIso;
-    order.verified_at = nowIso;
-    order.payment_reference = paymentRef;
-    if (verificationCode) {
-      order.verification_code = verificationCode;
-    }
-    if (order.buyer) {
-      order.buyer.wallet_balance = newBuyerBalance;
-    }
-    const listingObj = listings.find((l) => l.id === order.listing_id);
-    if (listingObj) {
-      listingObj.status = "sold";
-    }
-    const doneContent = `\u{1F389} DEAL COMPLETED! \u20A6${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Login code delivered and permanently recorded in chat history.`;
-    if (!Array.isArray(order.messages)) order.messages = [];
-    order.messages.push({
-      id: `msg-${Date.now()}-done`,
-      order_id: order.id,
-      sender_id: "admin",
-      sender_name: "NORODATA Official Admin",
-      sender_role: "admin",
-      message_type: "text",
-      content: doneContent,
-      created_at: nowIso
-    });
-    order.last_message = doneContent;
-    order.last_message_at = nowIso;
-    order.updated_at = nowIso;
-    await saveMarketplaceStore(listings, orders);
-    return { order, newBuyerBalance, reference: paymentRef };
-  };
-  app.post("/api/marketplace/orders/:id/send-code-and-complete", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const code = String(req.body?.code || "").trim();
-      if (!code) {
-        return res.status(400).json({ error: "Verification code is required." });
-      }
-      let callerRole = "user";
-      try {
-        const { data: callerProf } = await supabase.from("profiles").select("id, role, email").eq("id", authUser.id).maybeSingle();
-        callerRole = callerProf?.role || "user";
-      } catch (_) {
-      }
-      const callerEmail = String(authUser.email || "").toLowerCase().trim();
-      const isAllowedAdminOrOperator = callerRole === "admin" || callerRole === "operator" || ["ibrahimfaruqolamilekan4@gmail.com", "adewaleogunkeye200@gmail.com", "jeffholland299@gmail.com", "triumphanttosin@gmail.com"].includes(callerEmail);
-      if (!isAllowedAdminOrOperator) {
-        return res.status(403).json({ error: "Forbidden: Admin or operator role required." });
-      }
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (uuidRegex.test(id) && uuidRegex.test(authUser.id)) {
-        try {
-          const { data: rpcData, error: rpcErr } = await supabase.rpc("complete_marketplace_order", {
-            p_order_id: id,
-            p_caller_id: authUser.id,
-            p_code_value: code
-          });
-          if (!rpcErr && rpcData) {
-            if (rpcData.success) {
-              return res.json({
-                success: true,
-                newBuyerBalance: rpcData.new_balance,
-                reference: rpcData.reference,
-                completed_at: rpcData.completed_at
-              });
-            } else {
-              return res.status(400).json({ error: rpcData.error || "Failed to complete order." });
-            }
-          }
-        } catch (_) {
-        }
-      }
-      const { listings, orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) {
-        return res.status(404).json({ error: "Order not found." });
-      }
-      if (order.status === "completed" || order.completed_at) {
-        return res.status(400).json({ error: "Already completed" });
-      }
-      const price = Number(order.price || 0);
-      const { data: buyerProf, error: bErr } = await supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", order.buyer_id).maybeSingle();
-      if (bErr || !buyerProf) {
-        return res.status(404).json({ error: "Buyer wallet profile not found." });
-      }
-      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
-      if (currentBalance < price) {
-        return res.status(400).json({
-          error: "Buyer balance too low",
-          balance: currentBalance,
-          price,
-          short_by: Number((price - currentBalance).toFixed(2))
-        });
-      }
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const newBuyerBalance = Number((currentBalance - price).toFixed(2));
-      const { error: deductErr } = await supabase.from("profiles").update({
-        wallet_balance: newBuyerBalance,
-        balance: newBuyerBalance,
-        available_balance: newBuyerBalance,
-        updated_at: nowIso
-      }).eq("id", order.buyer_id);
-      if (deductErr) {
-        return res.status(500).json({ error: `Failed to debit wallet: ${deductErr.message}` });
-      }
-      try {
-        await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
-      } catch (_) {
-      }
-      const codeMsg = {
-        id: `msg-${Date.now()}-code`,
-        order_id: id,
-        sender_id: authUser.id,
-        sender_role: "admin",
-        sender_name: `Admin Desk (${authUser.email || "Official"})`,
-        sender_email: authUser.email || "",
-        message_type: "verification_code",
-        body: "Here is your login verification code:",
-        content: `Here is your login verification code for ${order.phone_number || order.clicked_number || "your foreign number"}:`,
-        code_value: code,
-        created_at: nowIso
-      };
-      if (!Array.isArray(order.messages)) order.messages = [];
-      order.messages.push(codeMsg);
-      order.status = "completed";
-      order.completed_at = nowIso;
-      order.paid_at = nowIso;
-      order.verified_at = nowIso;
-      order.verification_code = code;
-      const paymentRef = `NUM-DEBIT-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-      order.payment_reference = paymentRef;
-      if (order.buyer) {
-        order.buyer.wallet_balance = newBuyerBalance;
-      }
-      order.last_message = `Login Verification Code Sent: ${code}`;
-      order.last_message_at = nowIso;
-      order.updated_at = nowIso;
-      const phoneNum = order.phone_number || order.clicked_number || "";
-      try {
-        await supabase.from("transactions").insert({
-          user_id: String(order.buyer_id),
-          user_email: buyerProf.email || null,
-          type: "debit",
-          amount: price,
-          status: "completed",
-          reference: paymentRef,
-          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
-          phone: phoneNum || null,
-          gateway: "wallet_auto_debit",
-          created_at: nowIso
-        });
-      } catch (txErr) {
-        console.warn("[Transactions insert warning]:", txErr?.message || txErr);
-      }
-      await saveMarketplaceStore(listings, orders);
-      return res.json({
-        success: true,
-        order,
-        message: codeMsg,
-        newBuyerBalance,
-        reference: paymentRef
-      });
-    } catch (err) {
-      console.error("[send-code-and-complete Error]:", err.message);
-      return res.status(500).json({ error: err.message || "Failed to complete deal." });
-    }
-  });
-  app.post("/api/marketplace/orders/:id/send-code", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const code = String(req.body?.code || "").trim();
-      const autoCompleteDeal = Boolean(req.body?.autoCompleteDeal);
-      if (!code) return res.status(400).json({ error: "Verification code is required." });
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { listings, orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) return res.status(404).json({ error: "Order not found." });
-      if (!isAdmin && order.seller_id !== authUser.id) {
-        return res.status(403).json({ error: "Only Admin or the seller can send verification codes." });
-      }
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const msg = {
-        id: `msg-${Date.now()}-code`,
-        order_id: id,
-        sender_id: isAdmin ? "admin" : authUser.id,
-        sender_name: `Admin (${authUser.email || "Official Desk"})`,
-        sender_email: authUser.email || "",
-        sender_role: "admin",
-        message_type: "verification_code",
-        content: `Here is your login verification code for ${order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "your number"}:`,
-        code_value: code,
-        created_at: nowIso
-      };
-      if (!Array.isArray(order.messages)) order.messages = [];
-      order.messages.push(msg);
-      order.verification_code = code;
-      order.status = order.status === "open" || order.status === "pending" || order.status === "code_requested" ? "code_sent" : order.status;
-      order.last_message = `Login Verification Code Sent: ${code}`;
-      order.last_message_at = nowIso;
-      order.updated_at = nowIso;
-      if (autoCompleteDeal) {
-        const result = await executeOrderDealCompletion(order, listings, orders, code);
-        return res.json({ success: true, order: result.order, message: msg, dealCompleted: true, newBuyerBalance: result.newBuyerBalance });
-      }
-      await saveMarketplaceStore(listings, orders);
-      return res.json({ success: true, order, message: msg, dealCompleted: false });
-    } catch (err) {
-      return res.status(400).json({ error: err.message || "Failed to send code." });
-    }
-  });
-  app.post("/api/marketplace/orders/:id/complete-deal", async (req, res) => {
-    const authUser = await requireUser(req, res);
-    if (!authUser) return;
-    try {
-      const { id } = req.params;
-      const submittedCode = String(req.body?.code || "").trim();
-      const isAdmin = await isCallerAdminUser(req, authUser);
-      const { listings, orders } = await loadMarketplaceStore();
-      const order = orders.find((o) => o.id === id);
-      if (!order) return res.status(404).json({ error: "Order not found." });
-      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
-        return res.status(403).json({ error: "Forbidden." });
-      }
-      const latestCodeMsg = [...order.messages || []].reverse().find((m) => m.message_type === "verification_code");
-      const finalCode = submittedCode || latestCodeMsg?.code_value || order.verification_code || "VERIFIED";
-      const result = await executeOrderDealCompletion(order, listings, orders, finalCode);
-      return res.json({
-        success: true,
-        order: result.order,
-        newBuyerBalance: result.newBuyerBalance,
-        reference: result.reference
-      });
-    } catch (err) {
-      console.error("[POST /api/marketplace/orders/:id/complete-deal Error]:", err.message);
-      return res.status(400).json({ error: err.message || "Failed to complete deal." });
     }
   });
   if (process.env.NODE_ENV !== "production") {
