@@ -1073,8 +1073,8 @@ function DashboardOverview({
         body: JSON.stringify({
           amount: amt,
           email: user.email,
-          name: user.fullName || 'Customer',
-          phone: (user as any).phone_number || user.phoneNumber || '',
+          name: user.full_name || (user as any).fullName || user.name || 'Customer',
+          phone: (user as any).phone_number || (user as any).phoneNumber || '',
           userId: (user as any).id || user.uid,
           redirectUrl: window.location.origin,
         }),
@@ -1348,9 +1348,11 @@ function DashboardOverview({
               </div>
             </div>
 
-            <p className="text-[11px] text-white/60">
-              Transfer to this dedicated account from Kuda, OPay, Palmpay, GTBank, Zenith or any banking app. Your wallet balance updates automatically with zero delay.
-            </p>
+            <div className="bg-white/10 rounded-xl p-2.5 border border-white/15 space-y-1">
+              <p className="text-[11px] text-emerald-100 font-semibold leading-relaxed">
+                💡 <strong>Transfer Tip:</strong> Include your email (<code>{user.email}</code>) or registered phone in the transfer narration for 100% automated instant wallet credit.
+              </p>
+            </div>
           </div>
         </div>
       ) : (
@@ -1572,9 +1574,14 @@ function DashboardOverview({
                             Copy
                           </button>
                         </div>
-                        <p className="text-[11px] text-emerald-200/90">
-                          Include your email ({user.email}) in the transfer narration for automatic instant wallet credit.
-                        </p>
+                        <div className="bg-emerald-950/70 rounded-xl p-2.5 border border-emerald-500/30 space-y-1">
+                          <p className="text-[11px] text-emerald-100 font-semibold leading-relaxed">
+                            💡 <strong>Auto-Credit Instructions:</strong> Transfer from OPay, PalmPay, Kuda, or any bank app. Include your registered email (<code>{user.email}</code>) or phone (<code>{(user as any)?.phone_number || (user as any)?.phoneNumber || user.email}</code>) in the transfer narration/remark for instant credit.
+                          </p>
+                          <p className="text-[10px] text-emerald-300/80">
+                            ⚡ Funds are credited automatically in &lt; 60 seconds with zero manual approval.
+                          </p>
+                        </div>
                       </div>
                     )}
 
@@ -1604,27 +1611,34 @@ function DashboardOverview({
                     {(() => {
                       const num = Number(opayAmount) || 0;
                       if (num < 100) return null;
-                      const feeBreakdown = calculateFundingFee(num);
-                      return (
-                        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2 text-xs">
-                          <div className="flex justify-between text-gray-600">
-                            <span>Amount</span>
-                            <span className="font-semibold">₦{feeBreakdown.amount.toLocaleString()}</span>
+                      try {
+                        const feeBreakdown = calculateFundingFee(num);
+                        const noroMargin = Number(feeBreakdown.norodataFee ?? feeBreakdown.margin ?? (num >= 5000 ? 50 : 30));
+                        const gwFee = Number(feeBreakdown.gatewayFee ?? 0);
+                        const tot = Number(feeBreakdown.totalCharged ?? (num + noroMargin + gwFee));
+                        return (
+                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2 text-xs">
+                            <div className="flex justify-between text-gray-600">
+                              <span>Amount</span>
+                              <span className="font-semibold">₦{Number(feeBreakdown.amount || num).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-600">
+                              <span>NORODATA fee</span>
+                              <span className="font-semibold">₦{noroMargin.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-600">
+                              <span>Gateway fee</span>
+                              <span className="font-semibold">₦{gwFee.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm font-black text-gray-900 border-t pt-2 border-gray-200">
+                              <span>Total</span>
+                              <span style={{ color: '#3B7A3B' }}>₦{tot.toLocaleString()}</span>
+                            </div>
                           </div>
-                          <div className="flex justify-between text-gray-600">
-                            <span>NORODATA fee</span>
-                            <span className="font-semibold">₦{feeBreakdown.norodataFee.toLocaleString()}</span>
-                          </div>
-                          <div className="flex justify-between text-gray-600">
-                            <span>Gateway fee</span>
-                            <span className="font-semibold">₦{feeBreakdown.gatewayFee.toLocaleString()}</span>
-                          </div>
-                          <div className="flex justify-between text-sm font-black text-gray-900 border-t pt-2 border-gray-200">
-                            <span>Total</span>
-                            <span style={{ color: '#3B7A3B' }}>₦{feeBreakdown.totalCharged.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      );
+                        );
+                      } catch (_) {
+                        return null;
+                      }
                     })()}
 
                     <button
@@ -1633,7 +1647,9 @@ function DashboardOverview({
                       className="w-full text-white font-bold rounded-xl py-3.5 transition-all disabled:opacity-50 cursor-pointer"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
-                      {fwLoading ? 'Initializing Bachs.io Checkout…' : `Pay ₦${(Number(opayAmount) >= 100 ? calculateFundingFee(Number(opayAmount)).totalCharged : Number(opayAmount || 0)).toLocaleString()} via Bachs.io`}
+                      {fwLoading
+                        ? 'Initializing Bachs.io Checkout…'
+                        : `Pay ₦${(Number(opayAmount) >= 100 ? (calculateFundingFee(Number(opayAmount)).totalCharged || Number(opayAmount)) : Number(opayAmount || 0)).toLocaleString()} via Bachs.io`}
                     </button>
                   </form>
                 )}

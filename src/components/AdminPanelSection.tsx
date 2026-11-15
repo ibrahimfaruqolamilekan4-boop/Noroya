@@ -1,4 +1,5 @@
 import { AdminEsimMessages } from './AdminEsimMessages';
+import { AdminUnmatchedDepositsTab } from './AdminUnmatchedDepositsTab';
 import { MessageSquare } from 'lucide-react';
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -122,7 +123,7 @@ export default function AdminPanelSection() {
   const [isUpdatingService, setIsUpdatingService] = React.useState<string | null>(null);
 
   // Plans list filtering state
-  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status' | 'esim-messages'>(isEsimAdmin ? 'esim-messages' : isAccountantAdmin ? 'transactions' : 'dashboard');
+  const [adminSubTab, setAdminSubTab] = React.useState<'service-plans' | 'opay-receipts' | 'unmatched-deposits' | 'pricing-manager' | 'dashboard' | 'transactions' | 'user-mgmt' | 'provider-status' | 'esim-messages'>(isEsimAdmin ? 'esim-messages' : isAccountantAdmin ? 'transactions' : 'dashboard');
 
   // Add Service Form State
   const [newServiceType, setNewServiceType] = React.useState<'data' | 'airtime' | 'cable' | 'electricity' | 'exam_pin'>('data');
@@ -991,6 +992,19 @@ export default function AdminPanelSection() {
               Bank Deposits Audit
             </button>
             <button
+              type="button"
+              onClick={() => setAdminSubTab('unmatched-deposits')}
+              className={cn(
+                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans flex items-center gap-1.5",
+                adminSubTab === 'unmatched-deposits'
+                  ? "bg-emerald-600 text-white shadow-md font-extrabold"
+                  : "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 font-bold"
+              )}
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>⚡ Unmatched Deposits</span>
+            </button>
+            <button
               onClick={() => setAdminSubTab('pricing-manager')}
               className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
                 adminSubTab === 'pricing-manager'
@@ -1056,6 +1070,7 @@ export default function AdminPanelSection() {
       {!isEsimAdmin && adminSubTab === 'transactions' && <TransactionsTab />}
       {!isEsimAdmin && adminSubTab === 'user-mgmt' && <UserManagementTab />}
       {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'provider-status' && <ProviderStatusTab />}
+      {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'unmatched-deposits' && <AdminUnmatchedDepositsTab />}
 
       {!isEsimAdmin && !isRestrictedAdmin && adminSubTab === 'service-plans' && (
         /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
