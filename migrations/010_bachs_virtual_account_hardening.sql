@@ -81,7 +81,7 @@ CREATE POLICY "unmatched_payments_admin_read" ON public.unmatched_payments
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND (role = 'admin' OR is_super_admin = true)
+            WHERE id = auth.uid() AND role = 'admin'
         )
     );
 
