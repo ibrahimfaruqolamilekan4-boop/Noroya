@@ -5494,68 +5494,117 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  // 4. Bachs.io Webhook Signature Verification (V2 & V1 per official docs)
+  // 4. Bachs.io Webhook Signature Verification (V2, V1, compound & direct HMAC)
   const verifyBachsWebhookSignature = (
     rawBodyBuffer: Buffer,
     headers: Record<string, any>,
-    secret: string,
-    toleranceSeconds = 300
+    secrets: string | string[],
+    toleranceSeconds = 600
   ): boolean => {
-    const cleanSecret = String(secret || "").trim();
-    if (!cleanSecret) return false;
+    const secretList = (Array.isArray(secrets) ? secrets : [secrets])
+      .map((s) => String(s || "").trim())
+      .filter(Boolean);
+
+    if (secretList.length === 0) return false;
 
     const rawBodyStr = rawBodyBuffer.toString("utf8");
-    const v2Header = String(headers["x-bachs-signature-v2"] || "").trim();
-    const v1Signature = String(headers["x-bachs-signature"] || "").trim();
-    const v1Timestamp = String(headers["x-bachs-timestamp"] || "").trim();
 
-    // Prefer X-Bachs-Signature-V2 (`t={timestamp},v1={sig1},v1={sig2}`)
-    if (v2Header) {
-      const parts = v2Header.split(",").map((p) => p.trim()).filter(Boolean);
-      let timestampStr = "";
-      const signatures: string[] = [];
+    // Standardize all possible incoming signature header variations
+    const headerCandidates = [
+      headers["x-bachs-signature-v2"],
+      headers["x-bachs-signature"],
+      headers["x-signature"],
+      headers["signature"],
+      headers["bachs-signature"],
+      headers["x-bachs-webhook-signature"]
+    ].filter(Boolean).map((h) => String(h).trim());
 
-      for (const part of parts) {
-        const eqIdx = part.indexOf("=");
-        if (eqIdx === -1) continue;
-        const k = part.slice(0, eqIdx).trim();
-        const v = part.slice(eqIdx + 1).trim();
-        if (k === "t") timestampStr = v;
-        if (k === "v1" && v) signatures.push(v);
-      }
+    const timestampCandidate = String(
+      headers["x-bachs-timestamp"] ||
+      headers["x-timestamp"] ||
+      headers["timestamp"] ||
+      ""
+    ).trim();
 
-      const ts = parseInt(timestampStr, 10);
-      if (isNaN(ts) || signatures.length === 0) return false;
-      if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
+    for (const secret of secretList) {
+      for (const sigHeader of headerCandidates) {
+        // Case 1: Stripe/Bachs-style compound header (`t={timestamp},v1={sig}`)
+        if (sigHeader.includes("t=") && (sigHeader.includes("v1=") || sigHeader.includes("v2="))) {
+          const parts = sigHeader.split(",").map((p) => p.trim()).filter(Boolean);
+          let timestampStr = "";
+          const signatures: string[] = [];
 
-      const expected = crypto
-        .createHmac("sha256", cleanSecret)
-        .update(`${ts}.${rawBodyStr}`, "utf8")
-        .digest("hex");
-      const expectedBuf = Buffer.from(expected, "utf8");
+          for (const part of parts) {
+            const eqIdx = part.indexOf("=");
+            if (eqIdx === -1) continue;
+            const k = part.slice(0, eqIdx).trim();
+            const v = part.slice(eqIdx + 1).trim();
+            if (k === "t") timestampStr = v;
+            if ((k === "v1" || k === "v2") && v) signatures.push(v);
+          }
 
-      for (const sig of signatures) {
-        const sigBuf = Buffer.from(sig, "utf8");
-        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf)) {
+          const ts = parseInt(timestampStr, 10);
+          if (!isNaN(ts) && signatures.length > 0) {
+            if (toleranceSeconds <= 0 || Math.abs(Date.now() / 1000 - ts) <= toleranceSeconds) {
+              const expected = crypto
+                .createHmac("sha256", secret)
+                .update(`${ts}.${rawBodyStr}`, "utf8")
+                .digest("hex");
+              const expectedBuf = Buffer.from(expected, "utf8");
+
+              for (const sig of signatures) {
+                const sigBuf = Buffer.from(sig, "utf8");
+                if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf)) {
+                  return true;
+                }
+              }
+            }
+          }
+        }
+
+        // Case 2: Separate timestamp header + signature header
+        if (timestampCandidate) {
+          const ts = parseInt(timestampCandidate, 10);
+          if (!isNaN(ts) && (toleranceSeconds <= 0 || Math.abs(Date.now() / 1000 - ts) <= toleranceSeconds)) {
+            const expected = crypto
+              .createHmac("sha256", secret)
+              .update(`${ts}.${rawBodyStr}`, "utf8")
+              .digest("hex");
+            const expectedBuf = Buffer.from(expected, "utf8");
+            const sigBuf = Buffer.from(sigHeader, "utf8");
+            if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf)) {
+              return true;
+            }
+          }
+        }
+
+        // Case 3: Direct raw body HMAC-SHA256
+        const expDirect256 = crypto
+          .createHmac("sha256", secret)
+          .update(rawBodyBuffer)
+          .digest("hex");
+        const expDirectBuf256 = Buffer.from(expDirect256, "utf8");
+        const sigBuf = Buffer.from(sigHeader, "utf8");
+        if (sigBuf.length === expDirectBuf256.length && crypto.timingSafeEqual(expDirectBuf256, sigBuf)) {
+          return true;
+        }
+
+        // Case 4: Direct raw body HMAC-SHA512
+        const expDirect512 = crypto
+          .createHmac("sha512", secret)
+          .update(rawBodyBuffer)
+          .digest("hex");
+        const expDirectBuf512 = Buffer.from(expDirect512, "utf8");
+        if (sigBuf.length === expDirectBuf512.length && crypto.timingSafeEqual(expDirectBuf512, sigBuf)) {
+          return true;
+        }
+
+        // Case 5: Direct secret match (bearer/webhook token header)
+        const secretBuf = Buffer.from(secret, "utf8");
+        if (sigBuf.length === secretBuf.length && crypto.timingSafeEqual(secretBuf, sigBuf)) {
           return true;
         }
       }
-      return false;
-    }
-
-    // Fallback to X-Bachs-Signature + X-Bachs-Timestamp
-    if (v1Signature && v1Timestamp) {
-      const ts = parseInt(v1Timestamp, 10);
-      if (isNaN(ts)) return false;
-      if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
-
-      const expected = crypto
-        .createHmac("sha256", cleanSecret)
-        .update(`${ts}.${rawBodyStr}`, "utf8")
-        .digest("hex");
-      const expectedBuf = Buffer.from(expected, "utf8");
-      const sigBuf = Buffer.from(v1Signature, "utf8");
-      return sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf);
     }
 
     return false;
@@ -5597,9 +5646,10 @@ if (Object.keys(updateData).length <= 1) {
     try {
       const webhookSecret = await resolveBachsWebhookSecret();
       const bachsSecretKey = await resolveBachsSecretKey();
+      const secretsToCheck = [webhookSecret, bachsSecretKey].filter(Boolean);
 
-      if (!webhookSecret) {
-        console.error("[Bachs Webhook] BACHS_WEBHOOK_SECRET is not configured. Rejecting delivery.");
+      if (secretsToCheck.length === 0) {
+        console.error("[Bachs Webhook] Neither BACHS_WEBHOOK_SECRET nor BACHS_SECRET_KEY is configured. Rejecting delivery.");
         return res.status(503).json({ error: "Bachs webhook signing secret not configured." });
       }
 
@@ -5607,17 +5657,31 @@ if (Object.keys(updateData).length <= 1) {
         ? req.rawBody
         : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
 
-      // Verify webhook signature (V2 / V1 per official docs). Reject invalid with 401.
-      const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, webhookSecret);
+      // Verify webhook signature (supports compound, timestamped, direct HMAC-256/512). Reject invalid with 401.
+      const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, secretsToCheck);
       if (!isValidSig) {
-        console.warn("[Bachs Webhook] Invalid X-Bachs-Signature / X-Bachs-Signature-V2.");
+        console.warn("[Bachs Webhook] Invalid webhook signature. Headers received:", {
+          hasV2: Boolean(req.headers['x-bachs-signature-v2']),
+          hasV1: Boolean(req.headers['x-bachs-signature']),
+          hasSig: Boolean(req.headers['x-signature']),
+          hasTs: Boolean(req.headers['x-bachs-timestamp']),
+          contentType: req.headers['content-type'],
+        });
         return res.status(401).json({ error: "Invalid webhook signature" });
       }
 
       const eventPayload = req.body || {};
-      const eventId = String(eventPayload.id || "").trim();
-      const eventType = String(eventPayload.type || "").toLowerCase().trim();
-      const data = eventPayload.data || {};
+      const data = (eventPayload.data && typeof eventPayload.data === "object") ? eventPayload.data : eventPayload;
+      const eventId = String(eventPayload.id || data.id || "").trim();
+      const eventType = String(
+        eventPayload.type ||
+        eventPayload.event ||
+        eventPayload.event_type ||
+        data.type ||
+        data.event ||
+        (data.status === "succeeded" || data.status === "completed" || data.payment_status === "paid" ? "collection.succeeded" : "") ||
+        ""
+      ).toLowerCase().trim();
 
       console.log(`[Bachs Webhook] Verified event received: id=${eventId}, type=${eventType}`);
 
@@ -5643,8 +5707,19 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(200).json({ received: true, status: "ignored_status", eventType });
       }
 
-      // Handle `collection.succeeded` and `checkout.completed`
-      if (eventType === "collection.succeeded" || eventType === "checkout.completed") {
+      // Handle successful collections, bank transfers and checkouts
+      const isSuccessEvent =
+        eventType === "collection.succeeded" ||
+        eventType === "checkout.completed" ||
+        eventType.includes("succeeded") ||
+        eventType.includes("completed") ||
+        eventType.includes("paid") ||
+        eventType.includes("successful") ||
+        data.status === "succeeded" ||
+        data.status === "completed" ||
+        data.payment_status === "paid";
+
+      if (isSuccessEvent) {
         // For checkout.completed, confirm a payment was actually collected
         if (eventType === "checkout.completed") {
           const payStatus = String(data.payment_status || "").toLowerCase();
@@ -5654,22 +5729,44 @@ if (Object.keys(updateData).length <= 1) {
           }
         }
 
-        const chargeId = String(data.charge_id || data.charge?.id || "").trim();
-        const checkoutId = String(data.checkout_id || "").trim();
-        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId).trim();
-        const currency = String(data.currency || data.charge?.currency || "NGN").toUpperCase();
-        let amount = Number(data.amount ?? data.charge?.amount ?? 0);
+        const chargeId = String(data.charge_id || data.charge?.id || eventPayload.charge_id || "").trim();
+        const checkoutId = String(data.checkout_id || eventPayload.checkout_id || "").trim();
+        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId || eventPayload.reference).trim();
+        const currency = String(data.currency || data.charge?.currency || eventPayload.currency || "NGN").toUpperCase();
+        let amount = Number(data.amount ?? data.charge?.amount ?? eventPayload.amount ?? 0);
 
         if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
           return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
         }
 
-        const bankTransfer = data.payment_method_details?.bank_transfer;
-        const accountNumber = String(bankTransfer?.virtual_account?.account_number || data.account_number || "").trim();
-        const senderName = String(bankTransfer?.sender_name || "").trim();
-        const senderBank = String(bankTransfer?.sender_bank || "").trim();
-        const senderAccountNumber = String(bankTransfer?.sender_account_number || "").trim();
-        const rawNarration = String(bankTransfer?.narration || "").trim();
+        const bankTransfer = data.payment_method_details?.bank_transfer ||
+                             eventPayload.payment_method_details?.bank_transfer ||
+                             data.bank_transfer ||
+                             data;
+        const accountNumber = String(
+          bankTransfer?.virtual_account?.account_number ||
+          bankTransfer?.account_number ||
+          data.account_number ||
+          eventPayload.account_number ||
+          ""
+        ).trim();
+        const senderName = String(
+          bankTransfer?.sender_name ||
+          data.sender_name ||
+          data.customer?.name ||
+          data.customer_details?.name ||
+          ""
+        ).trim();
+        const senderBank = String(bankTransfer?.sender_bank || data.sender_bank || "").trim();
+        const senderAccountNumber = String(bankTransfer?.sender_account_number || data.sender_account_number || "").trim();
+        const rawNarration = String(
+          bankTransfer?.narration ||
+          data.narration ||
+          data.description ||
+          eventPayload.narration ||
+          eventPayload.description ||
+          ""
+        ).trim();
 
         // Multi-tiered Matching Engine
         let matchedProfile: any = null;
