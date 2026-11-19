@@ -200,7 +200,7 @@ function buildPayload(row: PricingRow) {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export default function AdminPricingManager() {
+function AdminPricingManagerInner() {
   const [rows,            setRows]            = useState<PricingRow[]>([]);
   const [loading,         setLoading]         = useState(false);
   const [publishing,      setPublishing]      = useState(false);
@@ -388,8 +388,7 @@ export default function AdminPricingManager() {
 
   React.useEffect(() => {
     loadKeyStatus();
-    fetchPlans();
-  }, [loadKeyStatus, fetchPlans]);
+  }, [loadKeyStatus]);
 
   const handleDirectSaveKey = async (overrideKey?: string) => {
     const keyToSave = (overrideKey || apiKeyInput).trim();
@@ -514,23 +513,6 @@ export default function AdminPricingManager() {
   }, []);
 
   // ── Fetch live plans from selected provider ────────────────────────────────
-  // Step 2.3: Sync Plans from Provider handler
-  const handleSyncFromProvider = useCallback(async () => {
-    setIsSyncingFromProvider(true);
-    try {
-      const headers = await getAdminHeaders();
-      const res = await fetch('/api/admin/sync-vtu-plans', { method: 'POST', headers });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Failed to sync');
-      toast.success('Sync Complete! Added: ' + result.added + ', Updated: ' + result.updated + ', Deactivated: ' + result.deactivated, { duration: 6000 });
-      await fetchPlans();
-    } catch (err: any) {
-      toast.error('Sync error: ' + (err.message || err));
-    } finally {
-      setIsSyncingFromProvider(false);
-    }
-  }, []);
-
   const fetchPlans = useCallback(async () => {
     setLoading(true);
     try {
@@ -681,6 +663,28 @@ export default function AdminPricingManager() {
       setLoading(false);
     }
   }, [selectedProvider, globalMarkup, loadExistingPrices]);
+
+  // Step 2.3: Sync Plans from Provider handler
+  const handleSyncFromProvider = useCallback(async () => {
+    setIsSyncingFromProvider(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/sync-vtu-plans', { method: 'POST', headers });
+      const result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.error || 'Failed to sync');
+      toast.success('Sync Complete! Added: ' + result.added + ', Updated: ' + result.updated + ', Deactivated: ' + result.deactivated, { duration: 6000 });
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error('Sync error: ' + (err.message || err));
+    } finally {
+      setIsSyncingFromProvider(false);
+    }
+  }, [fetchPlans]);
+
+  // Automatically load plans when Pricing Manager opens or when provider changes
+  React.useEffect(() => {
+    fetchPlans();
+  }, [fetchPlans]);
 
   // ── Row mutations ──────────────────────────────────────────────────────────
   const updateMarkup = useCallback((planId: string, pct: number) => {
@@ -1890,5 +1894,57 @@ export default function AdminPricingManager() {
           {showFailureLogs && <AdminFailureLog />}
         </div>
     </div>
+  );
+}
+
+// ── Error Boundary to prevent blank screens ──────────────────────────────────
+class PricingErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[PricingManager ErrorBoundary caught]:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-3xl bg-slate-900 border border-slate-800 p-8 text-center space-y-4 my-4 max-w-lg mx-auto">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center mx-auto">
+            <AlertTriangle size={24} />
+          </div>
+          <h3 className="text-lg font-bold text-white">Pricing Manager Display Issue</h3>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            {this.state.error?.message || "An issue occurred while loading the pricing manager view."}
+          </p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+            }}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/20 transition cursor-pointer"
+          >
+            Retry Loading Pricing Manager
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function AdminPricingManager() {
+  return (
+    <PricingErrorBoundary>
+      <AdminPricingManagerInner />
+    </PricingErrorBoundary>
   );
 }
