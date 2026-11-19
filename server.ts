@@ -1329,7 +1329,7 @@ async function startServer() {
          return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
       }
 
-      const chosenProvider = planConfig?.provider || 'mozosubz';
+      const chosenProvider = vtuPlan?.provider || planConfig?.provider || 'mozosubz';
       const provider = getProvider(chosenProvider);
 
       let apiSuccess = false;
@@ -1400,8 +1400,8 @@ async function startServer() {
           network:          finalNetwork,
           phone:            finalPhone,
           amount:           finalAmount,
-          planId:           resolvedPlanCode,
-          providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
+          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
           mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
           apiKey:           providerApiKey,
         });
@@ -1971,7 +1971,7 @@ async function startServer() {
     }
   });
 
-  // Step 2.3: Admin Sync Plans From Provider API
+  // Step 2.3: Admin Sync Plans From Provider API (Unified Source of Truth: vtu_plans)
   app.post("/api/admin/sync-vtu-plans", async (req, res) => {
     try {
       let mozoKey = process.env.MOZOSUBZ_API_KEY || "";
@@ -1988,49 +1988,73 @@ async function startServer() {
 
       const livePlans: any[] = [];
       const nowIso = new Date().toISOString();
+      const serviceCounts: Record<string, number> = {};
 
       if (mozoKey && mozoKey.length > 5) {
         const MOZO_SERVICES = [
-          { id: "mtn_sme", network: "MTN" },
-          { id: "mtn_cg", network: "MTN" },
-          { id: "mtn_gifting", network: "MTN" },
-          { id: "mtn_datashare", network: "MTN" },
-          { id: "mtn_awoof", network: "MTN" },
-          { id: "mtn_awoof2", network: "MTN" },
-          { id: "mtn_coupon", network: "MTN" },
-          { id: "glo_sme", network: "GLO" },
-          { id: "glo_cg", network: "GLO" },
-          { id: "glo_data", network: "GLO" },
-          { id: "airtel_sme", network: "AIRTEL" },
-          { id: "airtel_cg", network: "AIRTEL" },
-          { id: "airtel_gifting", network: "AIRTEL" },
-          { id: "etisalat_sme", network: "9MOBILE" },
-          { id: "etisalat_data", network: "9MOBILE" }
+          { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+          { id: "mtn_cg", network: "MTN", plan_type: "CG" },
+          { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
+          { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
+          { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
+          { id: "glo_sme", network: "GLO", plan_type: "SME" },
+          { id: "glo_cg", network: "GLO", plan_type: "CG" },
+          { id: "glo_data", network: "GLO", plan_type: "DATA" },
+          { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+          { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
+          { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+          { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
+          { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
         ];
+
         for (const svc of MOZO_SERVICES) {
           try {
-            const resp = await fetch(`https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}`, {
-              headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" }
-            });
-            const d: any = await resp.json().catch(() => ({}));
-            if (d && d.success && Array.isArray(d.plans)) {
-              for (const p of d.plans) {
-                const cost = Number(p.price || 0);
-                livePlans.push({
-                  network: svc.network,
-                  plan_name: p.name || (svc.network + " Plan"),
-                  provider_plan_id: String(p.id),
-                  provider_price: cost,
-                  price_to_user: Math.ceil(cost * 1.10),
-                  is_active: true,
-                  last_synced_at: nowIso,
-                  provider: "mozosubz",
-                  service: svc.id,
-                  validity: "30 Days"
-                });
+            let page = 1;
+            let hasMore = true;
+
+            while (hasMore) {
+              const url = page === 1
+                ? `https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}`
+                : `https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}&page=${page}`;
+
+              const resp = await fetch(url, {
+                headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(12000),
+              });
+              const d: any = await resp.json().catch(() => ({}));
+              if (d && d.success && Array.isArray(d.plans)) {
+                serviceCounts[svc.id] = (serviceCounts[svc.id] || 0) + d.plans.length;
+                for (const p of d.plans) {
+                  const cost = Number(p.price || 0);
+                  const pId = String(p.id).trim();
+                  livePlans.push({
+                    network: svc.network,
+                    plan_name: p.name || (`${svc.network} ${p.plan_type || "Data"}`),
+                    provider_plan_id: pId,
+                    provider_price: cost,
+                    price_to_user: Math.ceil(cost * 1.10),
+                    is_active: true,
+                    last_synced_at: nowIso,
+                    provider: "mozosubz",
+                    service: svc.id,
+                    validity: "30 Days",
+                    margin_percent: 10,
+                  });
+                }
+                if (d.next || (d.total_pages && page < d.total_pages)) {
+                  page++;
+                } else {
+                  hasMore = false;
+                }
+              } else {
+                hasMore = false;
               }
             }
-          } catch (_) {}
+          } catch (svcErr) {
+            console.warn(`[sync-vtu-plans] Fetch error for ${svc.id}:`, svcErr);
+          }
         }
       }
 
@@ -2038,7 +2062,8 @@ async function startServer() {
         try {
           const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
           const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
-            headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" }
+            headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(15000),
           });
           const d: any = await resp.json().catch(() => ({}));
           let list: any[] = [];
@@ -2051,6 +2076,8 @@ async function startServer() {
               if (Array.isArray(d[k])) list.push(...d[k]);
             }
           }
+
+          serviceCounts["nifex"] = list.length;
 
           for (const p of list) {
             const rawNet = String(p.network || p.network_name || "MTN").toUpperCase();
@@ -2068,17 +2095,23 @@ async function startServer() {
               last_synced_at: nowIso,
               provider: "nifex",
               service: p.type || "DATA",
-              validity: p.validity || "30 Days"
+              validity: p.validity || "30 Days",
+              margin_percent: 10,
             });
           }
-        } catch (_) {}
+        } catch (nErr) {
+          console.warn("[sync-vtu-plans] Nifex fetch error:", nErr);
+        }
       }
 
       if (livePlans.length === 0) {
         return res.status(400).json({ success: false, error: "No plans retrieved from providers. Please verify credentials." });
       }
 
-      const { data: existingRows } = await supabase.from("vtu_plans").select("provider_plan_id, price_to_user, is_active");
+      const { data: existingRows } = await supabase
+        .from("vtu_plans")
+        .select("provider_plan_id, price_to_user, provider_price, manual_price_override, margin_percent, is_active");
+
       const existingMap = new Map();
       if (existingRows) {
         for (const row of existingRows) existingMap.set(String(row.provider_plan_id).trim(), row);
@@ -2086,29 +2119,59 @@ async function startServer() {
 
       let added = 0;
       let updated = 0;
-      // Deduplicate strictly by provider_plan_id to prevent ON CONFLICT DO UPDATE cannot affect row a second time
+      const priceChanges: any[] = [];
       const uniquePlanMap = new Map<string, any>();
+
       for (const p of livePlans) {
         const key = String(p.provider_plan_id).trim();
         if (!key) continue;
         const ext = existingMap.get(key);
+
+        const margin = ext?.margin_percent ? Number(ext.margin_percent) : 10;
+        const manualOverride = ext?.manual_price_override;
+        const computedPrice = (manualOverride !== undefined && manualOverride !== null && Number(manualOverride) > 0)
+          ? Math.ceil(Number(manualOverride))
+          : Math.ceil(p.provider_price * (1 + margin / 100));
+
+        if (ext) {
+          updated++;
+          if (Math.abs(Number(ext.provider_price) - p.provider_price) > 0.01 ||
+              Math.abs(Number(ext.price_to_user) - computedPrice) > 0.01) {
+            priceChanges.push({
+              provider_plan_id: key,
+              plan_name: p.plan_name,
+              old_provider_price: Number(ext.provider_price || 0),
+              new_provider_price: p.provider_price,
+              old_customer_price: Number(ext.price_to_user || 0),
+              new_customer_price: computedPrice,
+            });
+          }
+        } else {
+          added++;
+        }
+
         const row = {
           ...p,
           provider_plan_id: key,
-          price_to_user: ext && ext.price_to_user > 0 ? ext.price_to_user : p.price_to_user
+          provider_price: p.provider_price,
+          price_to_user: computedPrice, // ALWAYS updates customer price unless manual_price_override is active
+          manual_price_override: manualOverride ?? null,
+          margin_percent: margin,
+          is_active: true,
+          last_synced_at: nowIso,
         };
-        if (ext) updated++; else added++;
+
         uniquePlanMap.set(key, row);
       }
       const upsertRows = Array.from(uniquePlanMap.values());
 
       const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
       if (upsertErr) return res.status(500).json({ error: upsertErr.message });
-      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
 
+      // Only deactivate if a comprehensive set (>= 20 plans) was returned
       const liveSet = new Set(livePlans.map(p => p.provider_plan_id));
       let deactivated = 0;
-      if (existingRows) {
+      if (existingRows && livePlans.length >= 20) {
         const missing = existingRows.filter(r => r.is_active && !liveSet.has(r.provider_plan_id)).map(r => r.provider_plan_id);
         if (missing.length > 0) {
           const { error: deactErr } = await supabase.from("vtu_plans").update({ is_active: false, last_synced_at: nowIso }).in("provider_plan_id", missing);
@@ -2116,7 +2179,17 @@ async function startServer() {
         }
       }
 
-      return res.json({ success: true, added, updated, deactivated, total: livePlans.length });
+      return res.json({
+        success: true,
+        added,
+        updated,
+        deactivated,
+        total: livePlans.length,
+        service_counts: serviceCounts,
+        price_changes_count: priceChanges.length,
+        price_changes: priceChanges.slice(0, 50),
+        timestamp: nowIso
+      });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -2558,9 +2631,72 @@ async function startServer() {
     }
   });
 
-  // 1.5 Clean GET route specifically for active Data Plans
+  // 1.5 Unified GET route for active Data Plans (single source of truth: vtu_plans)
   app.get("/api/services/data", async (req, res) => {
     try {
+      // Primary source: unified vtu_plans table
+      const { data: vtuPlans, error: vtuErr } = await supabase
+        .from('vtu_plans')
+        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, last_synced_at, provider, service, validity')
+        .eq('is_active', true)
+        .order('network', { ascending: true })
+        .order('price_to_user', { ascending: true });
+
+      if (!vtuErr && vtuPlans && vtuPlans.length > 0) {
+        const formatted = vtuPlans.map((item: any) => {
+          const rawName = String(item.plan_name || '');
+          const pPrice = Number(item.price_to_user || 0);
+          const pId = String(item.provider_plan_id || item.id).trim();
+
+          let planCategory = "GIFTING";
+          const pNameUpper = rawName.toUpperCase();
+          if (pNameUpper.includes("SME")) {
+            planCategory = "SME";
+          } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
+            planCategory = "CG";
+          } else if (pNameUpper.includes("AWOOF")) {
+            planCategory = "AWOOF";
+          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("GIFT")) {
+            planCategory = "GIFTING";
+          } else if (pNameUpper.includes("DATA") || pNameUpper.includes("SHARE")) {
+            planCategory = "DATA";
+          }
+
+          return {
+            id: pId,
+            provider_plan_id: pId,
+            peyflex_variation_id: pId,
+            peyflex_id: pId,
+            apiPlanId: pId,
+            item_name: rawName,
+            plan_name: rawName,
+            name: rawName,
+            planName: rawName,
+            price: pPrice,
+            retail_price: pPrice,
+            selling_price: pPrice,
+            amount: pPrice,
+            network_type: String(item.network || 'MTN').toUpperCase(),
+            network: String(item.network || 'MTN').toUpperCase(),
+            type: 'data',
+            service_type: 'data',
+            provider: item.provider || 'mozosubz',
+            mozosubz_service: item.service || '',
+            service: item.service || '',
+            duration: item.validity || '30 Days',
+            validity_days: item.validity || '30 Days',
+            plan_category: planCategory,
+            planType: planCategory,
+            is_active: true,
+            last_synced_at: item.last_synced_at,
+          };
+        });
+
+        // Strip wholesale cost_price for customer privacy/security
+        return res.status(200).json(formatted);
+      }
+
+      // Fallback: load existing active data plans from services_config if vtu_plans not populated yet
       const { data: services, error: queryErr } = await supabase
         .from('services_config')
         .select('*')
@@ -2571,95 +2707,177 @@ async function startServer() {
 
       if (queryErr) {
         console.warn("[Supabase GET /api/services/data Warning]:", queryErr.message);
-        // Do not crash the entire app if the user has not run their Supabase grant script yet.
         return res.json([]);
       }
 
       const items = (services || []).filter((r: any) => !isProviderSecretRow(r));
-      const seenPlanKeys = new Set<string>();
-      const dedupedItems = items.filter((r: any) => {
-        const k = (r.bigisub_identifier_id || r.mozosubz_plan_id || r.id || `${r.provider_or_network}_${r.item_name}`).toLowerCase().trim();
-        if (seenPlanKeys.has(k)) return false;
-        seenPlanKeys.add(k);
-        return true;
-      });
-
-      // Format and map items to support both raw database fields and mapped frontend attributes cleanly
-      const formattedPlans = dedupedItems.map(item => {
-        const pPrice = Number(item.selling_price || 0);
-        const rawName = String(item.item_name || '');
-        
-        let planCategory = "GIFTING";
-        let planDays = item.validity_days || item.duration || '30 Days';
-        let displayName = rawName;
-
-        const parts = rawName.split(' - ');
-        if (parts.length >= 3) {
-          displayName = parts[0].trim();
-          planCategory = parts[1].trim().toUpperCase();
-          planDays = parts[2].trim();
-        } else {
-          const pNameUpper = rawName.toUpperCase();
-          if (pNameUpper.includes("SME")) {
-            planCategory = "SME";
-          } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-            planCategory = "CG";
-          } else if (pNameUpper.includes("AWOOF")) {
-            planCategory = "AWOOF";
-          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
-            planCategory = "GIFTING";
-          }
-          const match = rawName.match(/(\d+)\s*(Days|Day|Hours|Hour)/i);
-          if (match) {
-            planDays = `${match[1]} ${match[2]}`;
-          }
-        }
+      const formattedPlans = items.map(item => {
+        const pPrice = Number(item.selling_price || item.retail_price || 0);
+        const rawName = String(item.item_name || item.plan_name || item.name || '');
+        const pId = String(item.mozosubz_plan_id || item.mozosubs_plan_id || item.bigisub_identifier_id || item.id).trim();
 
         return {
-          id: item.id,
-          ...item,
-          item_name: displayName,
-          plan_name: displayName,
-          name: displayName,
-          planName: displayName,
+          id: pId,
+          provider_plan_id: pId,
+          peyflex_variation_id: pId,
+          peyflex_id: pId,
+          apiPlanId: pId,
+          item_name: rawName,
+          plan_name: rawName,
+          name: rawName,
           price: pPrice,
           retail_price: pPrice,
-          reseller_price: Number(item.cost_price || pPrice),
-          resellerPrice: Number(item.cost_price || pPrice),
+          selling_price: pPrice,
           amount: pPrice,
-          network_type: String(item.provider_or_network || 'MTN').toUpperCase(),
-          network: String(item.provider_or_network || 'MTN').toUpperCase(),
+          network_type: String(item.network || item.provider_or_network || 'MTN').toUpperCase(),
+          network: String(item.network || item.provider_or_network || 'MTN').toUpperCase(),
           type: 'data',
-          peyflex_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          peyflex_variation_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          apiPlanId: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          mozosubs_plan_id: item.mozosubs_plan_id || item.mozosubz_plan_id || '',
+          service_type: 'data',
+          provider: item.provider || 'mozosubz',
           mozosubz_service: item.mozosubz_service || '',
-          duration: planDays,
-          validity_days: planDays,
-          plan_category: planCategory,
-          planType: planCategory
+          service: item.mozosubz_service || '',
+          duration: item.validity_days || item.duration || '30 Days',
+          validity_days: item.validity_days || item.duration || '30 Days',
+          is_active: true,
+          last_synced_at: item.updated_at || item.created_at,
         };
       });
 
-      // SECURITY: wholesale cost_price is never exposed on public endpoints.
-      formattedPlans.forEach((p: any) => { delete p.cost_price; });
-
-      // Group outputs logically categorized cleanly by network
-      const categorized: Record<string, any[]> = {};
-      for (const plan of formattedPlans) {
-        const key = String(plan.network_type).toUpperCase().trim();
-        if (!categorized[key]) {
-          categorized[key] = [];
-        }
-        categorized[key].push(plan);
-      }
-
-      // Explicitly return a 200 OK with the array of items directly
       return res.status(200).json(formattedPlans);
     } catch (err: any) {
       console.error("[GET /api/services/data Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+
+  // Admin VTU Plans Inspection endpoint (direct read with total active count and no client-side cache)
+  app.get("/api/admin/vtu-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { data: plans, error } = await supabase
+        .from('vtu_plans')
+        .select('*')
+        .order('network', { ascending: true })
+        .order('price_to_user', { ascending: true });
+
+      if (error) return res.status(500).json({ error: error.message });
+
+      const totalCount = plans?.length || 0;
+      const activeCount = plans?.filter((p: any) => p.is_active).length || 0;
+
+      return res.json({
+        success: true,
+        total: totalCount,
+        active: activeCount,
+        plans: plans || [],
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin Manual Price Override endpoint
+  app.post("/api/admin/vtu-plans/override", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { provider_plan_id, manual_price_override, is_active } = req.body;
+      if (!provider_plan_id) {
+        return res.status(400).json({ error: "Missing provider_plan_id" });
+      }
+
+      const updateData: any = { updated_at: new Date().toISOString() };
+      if (manual_price_override !== undefined) {
+        const numOverride = manual_price_override === null || manual_price_override === '' ? null : Number(manual_price_override);
+        updateData.manual_price_override = numOverride;
+        if (numOverride && numOverride > 0) {
+          updateData.price_to_user = Math.ceil(numOverride);
+        }
+      }
+      if (is_active !== undefined) {
+        updateData.is_active = Boolean(is_active);
+      }
+
+      const { data, error } = await supabase
+        .from('vtu_plans')
+        .update(updateData)
+        .eq('provider_plan_id', String(provider_plan_id).trim())
+        .select()
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, plan: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Debug Provider Plans endpoint (calls upstream MozoSubz with server key and returns redacted raw JSON)
+  app.get("/api/debug-provider-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const CONNECT_KEY = await resolveMozosubzApiKey();
+      const MOZO_BASE = "https://mozosubz.xyz/api/v1";
+
+      const candidateServices = [
+        "mtn_sme", "mtn_cg", "mtn_gifting", "mtn_datashare", "mtn_awoof", "mtn_awoof2", "mtn_coupon",
+        "glo_sme", "glo_cg", "glo_data",
+        "airtel_sme", "airtel_cg", "airtel_gifting",
+        "etisalat_sme", "etisalat_data"
+      ];
+
+      const report: Record<string, any> = {};
+      let totalPlans = 0;
+      const allPlans: any[] = [];
+
+      for (const svc of candidateServices) {
+        try {
+          const resp = await fetch(`${MOZO_BASE}/data/plans?service=${svc}`, {
+            headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
+          });
+          const d: any = await resp.json().catch(() => ({}));
+          const plans = Array.isArray(d?.plans) ? d.plans : [];
+          totalPlans += plans.length;
+          report[svc] = {
+            status: resp.status,
+            success: d?.success ?? false,
+            count: plans.length,
+            sample: plans.slice(0, 2),
+            plans: plans.map((p: any) => ({
+              id: p.id,
+              id_type: typeof p.id,
+              name: p.name,
+              price: Number(p.price),
+              plan_type: p.plan_type
+            }))
+          };
+          for (const p of plans) {
+            allPlans.push({
+              service: svc,
+              id: p.id,
+              id_type: typeof p.id,
+              name: p.name,
+              price: Number(p.price)
+            });
+          }
+        } catch (e: any) {
+          report[svc] = { error: e?.message || String(e) };
+        }
+      }
+
+      const target1gbPlans = allPlans.filter(p =>
+        p.price === 399 || p.price === 494 || (p.price >= 390 && p.price <= 410) || String(p.name).toLowerCase().includes("1gb")
+      );
+
+      return res.json({
+        provider: "mozosubz",
+        endpoint: "GET /api/v1/data/plans?service={service}",
+        auth_header: "X-Connect-Key: ****",
+        total_plans_returned: totalPlans,
+        target_plans: target1gbPlans,
+        services: report
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -3385,6 +3603,27 @@ if (Object.keys(updateData).length <= 1) {
         if (insErr) throw new Error(insErr.message);
       }
 
+      // Synchronize with vtu_plans single source of truth for all data plans
+      if (rawType === 'data') {
+        try {
+          await supabase.from('vtu_plans').upsert({
+            provider_plan_id: planId,
+            plan_name: String(name || '').trim(),
+            network: finalNet,
+            provider_price: costPrice,
+            price_to_user: sellingPrice,
+            manual_price_override: sellingPrice,
+            provider: req.body.provider || 'mozosubz',
+            service: mozosubz_service || service || '',
+            validity: validity_days || duration || '30 Days',
+            is_active: req.body.is_active !== undefined ? Boolean(req.body.is_active) : true,
+            last_synced_at: new Date().toISOString(),
+          }, { onConflict: 'provider_plan_id' });
+        } catch (vtuErr: any) {
+          console.warn('[create-plan vtu_plans upsert warning]:', vtuErr.message);
+        }
+      }
+
       return res.json({ success: true, message: "Plan published successfully!" });
     } catch (err: any) {
       console.error("[POST /api/admin/create-plan Exception]:", err);
@@ -3837,7 +4076,7 @@ if (Object.keys(updateData).length <= 1) {
         } catch (_) { /* fall through with no config -- provider call will still attempt a best-effort guess */ }
       }
 
-      const chosenProvider = planConfig?.provider || 'mozosubz';
+      const chosenProvider = vtuPlan?.provider || planConfig?.provider || 'mozosubz';
       const provider = getProvider(chosenProvider);
       if (!provider) {
         return res.status(503).json({ error: `Unknown provider '${chosenProvider}'. Contact admin.` });
@@ -3919,8 +4158,8 @@ if (Object.keys(updateData).length <= 1) {
           network:          finalNetwork,
           phone:            finalPhone,
           amount:           finalAmount,
-          planId:           resolvedPlanCode,
-          providerPlanId:   planConfig?.bigisub_identifier_id || resolvedPlanCode,
+          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
           mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
           apiKey:           providerApiKey,
         });
