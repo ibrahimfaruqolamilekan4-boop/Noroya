@@ -105,6 +105,8 @@ interface PricingRow {
   provider:      ProviderSlug;
   bigisubPlanId: string;
   isActive:      boolean;
+  lastSyncedAt?: string;
+  manualOverride?: number | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -386,7 +388,8 @@ export default function AdminPricingManager() {
 
   React.useEffect(() => {
     loadKeyStatus();
-  }, [loadKeyStatus]);
+    fetchPlans();
+  }, [loadKeyStatus, fetchPlans]);
 
   const handleDirectSaveKey = async (overrideKey?: string) => {
     const keyToSave = (overrideKey || apiKeyInput).trim();
@@ -451,8 +454,36 @@ export default function AdminPricingManager() {
     }
   };
 
-  // ── Load existing DB prices ────────────────────────────────────────────────
+  // ── Load existing DB prices (reads vtu_plans single source of truth) ───────
   const loadExistingPrices = useCallback(async () => {
+    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; dbId: string; manualOverride?: number | null; lastSyncedAt?: string }> = {};
+
+    try {
+      const { data: vtuData, error: vtuErr } = await supabase
+        .from('vtu_plans')
+        .select('provider_plan_id, plan_name, provider_price, price_to_user, is_active, provider, service, manual_price_override, last_synced_at');
+
+      if (!vtuErr && vtuData && vtuData.length > 0) {
+        vtuData.forEach((r: any) => {
+          const key = String(r.provider_plan_id || '').trim();
+          if (key) {
+            map[key] = {
+              selling: Number(r.price_to_user || 0),
+              cost: Number(r.provider_price || 0),
+              active: r.is_active !== false,
+              provider: String(r.provider || 'mozosubz'),
+              bigisub_id: key,
+              dbId: key,
+              manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
+              lastSyncedAt: r.last_synced_at,
+            };
+          }
+        });
+        return map;
+      }
+    } catch (_) {}
+
+    // Fallback: legacy services_config
     const { data, error } = await supabase
       .from('services_config')
       .select('id, mozosubz_plan_id, mozosubs_plan_id, bigisub_identifier_id, selling_price, cost_price, is_active, provider, item_name')
@@ -460,7 +491,6 @@ export default function AdminPricingManager() {
 
     if (error) console.warn('[loadExistingPrices]', error.message);
 
-    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; dbId: string }> = {};
     (data || []).forEach((r: any) => {
       const keys = [
         String(r.mozosubz_plan_id || '').trim(),
@@ -505,6 +535,57 @@ export default function AdminPricingManager() {
     setLoading(true);
     try {
       const headers = await getAdminHeaders();
+
+      // 1. Fetch from unified vtu_plans table (single source of truth with total active count)
+      const vtuRes = await fetch('/api/admin/vtu-plans', { headers }).catch(() => null);
+      if (vtuRes && vtuRes.ok) {
+        const vtuJson = await vtuRes.json();
+        if (vtuJson.success && Array.isArray(vtuJson.plans) && vtuJson.plans.length > 0) {
+          const defaultMarkup = parseFloat(globalMarkup) || 10;
+          const mappedRows: PricingRow[] = vtuJson.plans.map((p: any) => {
+            const cost = Number(p.provider_price || 0);
+            const selling = Number(p.price_to_user || 0);
+            const markup = cost > 0 ? Math.round(((selling - cost) / cost) * 1000) / 10 : defaultMarkup;
+            const pId = String(p.provider_plan_id || p.id).trim();
+
+            const svc = SERVICE_MAP[p.service] || {
+              id: p.service || 'custom',
+              label: `${p.network} Data`,
+              network: p.network,
+              color: '#818CF8',
+              bg: 'rgba(129,140,248,0.10)',
+              border: 'rgba(129,140,248,0.30)',
+            };
+
+            return {
+              planId: pId,
+              serviceId: p.service as ServiceID,
+              network: p.network || svc.network,
+              name: String(p.plan_name || p.name),
+              costPrice: cost,
+              markupPct: markup,
+              sellingPrice: selling,
+              saved: true,
+              saving: false,
+              dirty: false,
+              provider: (p.provider || selectedProvider) as ProviderSlug,
+              bigisubPlanId: pId,
+              isActive: p.is_active !== false,
+              lastSyncedAt: p.last_synced_at,
+              manualOverride: p.manual_price_override ? Number(p.manual_price_override) : null,
+            };
+          });
+
+          setRows(mappedRows);
+          setFetched(true);
+          setLastFetched(new Date());
+          toast.success(`Loaded ${mappedRows.length} plans from vtu_plans (Active in DB: ${vtuJson.active || mappedRows.length})`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Fallback: fetch from upstream provider endpoint
       const endpoint = selectedProvider === 'nifex'
         ? '/api/admin/fetch-nifex-plans'
         : '/api/admin/fetch-mozosubz-plans';
@@ -847,6 +928,18 @@ export default function AdminPricingManager() {
     setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
     try {
       const headers = await getAdminHeaders();
+
+      // Persist manual price override to vtu_plans single source of truth
+      await fetch('/api/admin/vtu-plans/override', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          provider_plan_id: row.planId,
+          manual_price_override: row.sellingPrice,
+          is_active: row.isActive,
+        }),
+      }).catch(() => null);
+
       const res = await fetch('/api/admin/create-plan', {
         method: 'POST',
         headers,
@@ -1433,7 +1526,11 @@ export default function AdminPricingManager() {
                       {row.saved && !row.dirty && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold">LIVE</span>}
                     </div>
                     <p className="text-sm text-white font-medium truncate">{row.name}</p>
-                    <p className="text-[10px] text-slate-500">ID: {row.planId} · {parseValidity(row.name)}</p>
+                    <p className="text-[10px] text-slate-500">
+                      ID: {row.planId} · {parseValidity(row.name)}
+                      {row.lastSyncedAt ? ` · Synced: ${new Date(row.lastSyncedAt).toLocaleTimeString()}` : ''}
+                      {row.manualOverride ? ` · Override: ₦${row.manualOverride}` : ''}
+                    </p>
                   </div>
 
                   {/* Cost price */}

@@ -1,6 +1,8 @@
 // Supabase Edge Function: sync-vtu-plans
-// Fetches live plans from upstream providers (Mozosubz, Nifex), normalises them,
-// upserts into vtu_plans, and marks missing plans as is_active = false.
+// Fetches live plans from upstream providers (MozoSubz, Nifex), normalises them,
+// computes customer price (provider_price + margin or respects manual_price_override),
+// upserts into vtu_plans on EVERY run (updating existing prices),
+// and marks missing plans as inactive ONLY upon comprehensive successful fetches.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -20,9 +22,11 @@ interface NormalizedPlan {
   provider: string;
   service?: string;
   validity?: string;
+  margin_percent?: number;
 }
 
-const MOZO_SERVICES = [
+// All services supported across Nigerian telcos
+const KNOWN_MOZO_SERVICES = [
   { id: "mtn_sme", network: "MTN", plan_type: "SME" },
   { id: "mtn_cg", network: "MTN", plan_type: "CG" },
   { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
@@ -39,6 +43,21 @@ const MOZO_SERVICES = [
   { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
   { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" },
 ];
+
+/**
+ * Shared price calculation formula:
+ * If a manual override is active, use it.
+ * Otherwise compute provider_cost * (1 + margin/100) rounded up to nearest Naira.
+ */
+function calculateCustomerPrice(providerPrice: number, manualOverride: number | null | undefined, marginPct = 10): number {
+  if (manualOverride !== undefined && manualOverride !== null && Number(manualOverride) > 0) {
+    return Math.ceil(Number(manualOverride));
+  }
+  const cost = Number(providerPrice) || 0;
+  if (cost <= 0) return 0;
+  const factor = 1.0 + (marginPct / 100.0);
+  return Math.ceil(cost * factor);
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -75,42 +94,62 @@ Deno.serve(async (req: Request) => {
 
     const livePlans: NormalizedPlan[] = [];
     const nowIso = new Date().toISOString();
+    const serviceCounts: Record<string, number> = {};
 
-    // 2. Fetch Mozosubz Plans
+    // 2. Fetch MozoSubz Plans
     if (mozoKey && mozoKey.length > 5 && !mozoKey.includes("PASTE_YOUR")) {
       const mozoBase = "https://mozosubz.xyz/api/v1";
-      for (const svc of MOZO_SERVICES) {
+      for (const svc of KNOWN_MOZO_SERVICES) {
         try {
-          const res = await fetch(`${mozoBase}/data/plans?service=${svc.id}`, {
-            headers: {
-              "X-Connect-Key": mozoKey,
-              "Content-Type": "application/json",
-            },
-          });
-          const json = await res.json().catch(() => ({}));
-          if (json && json.success && Array.isArray(json.plans)) {
-            for (const p of json.plans) {
-              const cost = Number(p.price || 0);
-              const defaultMarkup = 1.10; // 10% standard margin
-              const selling = Math.ceil(cost * defaultMarkup);
-              const pId = String(p.id);
+          // Check for pagination if provider introduces pages
+          let page = 1;
+          let hasMore = true;
 
-              livePlans.push({
-                network: svc.network,
-                plan_name: p.name || `${svc.network} ${p.plan_type || "Data"}`,
-                provider_plan_id: pId,
-                provider_price: cost,
-                price_to_user: selling,
-                is_active: true,
-                last_synced_at: nowIso,
-                provider: "mozosubz",
-                service: svc.id,
-                validity: "30 Days",
-              });
+          while (hasMore) {
+            const url = page === 1
+              ? `${mozoBase}/data/plans?service=${svc.id}`
+              : `${mozoBase}/data/plans?service=${svc.id}&page=${page}`;
+
+            const res = await fetch(url, {
+              headers: {
+                "X-Connect-Key": mozoKey,
+                "Content-Type": "application/json",
+              },
+            });
+            const json = await res.json().catch(() => ({}));
+            if (json && json.success && Array.isArray(json.plans)) {
+              serviceCounts[svc.id] = (serviceCounts[svc.id] || 0) + json.plans.length;
+              for (const p of json.plans) {
+                const cost = Number(p.price || 0);
+                const pId = String(p.id);
+
+                livePlans.push({
+                  network: svc.network,
+                  plan_name: p.name || `${svc.network} ${p.plan_type || "Data"}`,
+                  provider_plan_id: pId,
+                  provider_price: cost,
+                  price_to_user: calculateCustomerPrice(cost, null, 10),
+                  is_active: true,
+                  last_synced_at: nowIso,
+                  provider: "mozosubz",
+                  service: svc.id,
+                  validity: "30 Days",
+                  margin_percent: 10,
+                });
+              }
+
+              // Check if pagination exists (next page or pagination object)
+              if (json.next || (json.total_pages && page < json.total_pages)) {
+                page++;
+              } else {
+                hasMore = false;
+              }
+            } else {
+              hasMore = false;
             }
           }
         } catch (fetchErr) {
-          console.warn(`Mozosubz fetch error for ${svc.id}:`, fetchErr);
+          console.warn(`MozoSubz fetch error for ${svc.id}:`, fetchErr);
         }
       }
     }
@@ -127,25 +166,27 @@ Deno.serve(async (req: Request) => {
         });
         const json = await res.json().catch(() => ({}));
         const plansList = Array.isArray(json.plans) ? json.plans : (Array.isArray(json) ? json : []);
+        serviceCounts["nifex"] = plansList.length;
+
         for (const p of plansList) {
           const rawNet = String(p.network || "MTN").toUpperCase();
           const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
           const cost = Number(p.price || 0);
-          const defaultMarkup = 1.10;
-          const selling = Math.ceil(cost * defaultMarkup);
-          const pId = String(p.plan_id ?? p.pId ?? p.id);
+          const rawId = String(p.plan_id ?? p.pId ?? p.id);
+          const pId = `nifex_${net.toLowerCase()}_${rawId}`;
 
           livePlans.push({
             network: net,
             plan_name: p.plan_name || `${net} Data`,
             provider_plan_id: pId,
             provider_price: cost,
-            price_to_user: selling,
+            price_to_user: calculateCustomerPrice(cost, null, 10),
             is_active: true,
             last_synced_at: nowIso,
             provider: "nifex",
             service: p.type || "DATA",
             validity: p.validity || "30 Days",
+            margin_percent: 10,
           });
         }
       } catch (nifexErr) {
@@ -163,33 +204,68 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 4. Fetch existing plans from vtu_plans to preserve custom price_to_user and track additions
+    // 4. Load existing plans from vtu_plans to check overrides and track price changes
     const { data: existingRows } = await supabase
       .from("vtu_plans")
-      .select("provider_plan_id, price_to_user, is_active");
+      .select("provider_plan_id, price_to_user, provider_price, manual_price_override, margin_percent, is_active");
 
     const existingMap = new Map<string, any>();
     if (existingRows) {
       for (const row of existingRows) {
-        existingMap.set(row.provider_plan_id, row);
+        existingMap.set(String(row.provider_plan_id).trim(), row);
       }
     }
 
     let addedCount = 0;
     let updatedCount = 0;
+    const priceChanges: Array<{
+      provider_plan_id: string;
+      plan_name: string;
+      old_provider_price: number;
+      new_provider_price: number;
+      old_customer_price: number;
+      new_customer_price: number;
+    }> = [];
 
-    // Deduplicate strictly by provider_plan_id to prevent ON CONFLICT DO UPDATE cannot affect row a second time
+    // Deduplicate strictly by provider_plan_id
     const uniquePlansMap = new Map<string, any>();
     for (const p of livePlans) {
       const key = String(p.provider_plan_id || "").trim();
       if (!key) continue;
       const existing = existingMap.get(key);
+
+      const margin = existing?.margin_percent ? Number(existing.margin_percent) : 10;
+      const manualOverride = existing?.manual_price_override;
+      const computedPrice = calculateCustomerPrice(p.provider_price, manualOverride, margin);
+
+      if (existing) {
+        updatedCount++;
+        if (Math.abs(Number(existing.provider_price) - p.provider_price) > 0.01 ||
+            Math.abs(Number(existing.price_to_user) - computedPrice) > 0.01) {
+          priceChanges.push({
+            provider_plan_id: key,
+            plan_name: p.plan_name,
+            old_provider_price: Number(existing.provider_price || 0),
+            new_provider_price: p.provider_price,
+            old_customer_price: Number(existing.price_to_user || 0),
+            new_customer_price: computedPrice,
+          });
+        }
+      } else {
+        addedCount++;
+      }
+
       const row = {
         ...p,
         provider_plan_id: key,
-        price_to_user: existing && existing.price_to_user > 0 ? existing.price_to_user : p.price_to_user,
+        provider_price: p.provider_price,
+        price_to_user: computedPrice, // ALWAYS updates customer price unless manual_price_override is set!
+        manual_price_override: manualOverride ?? null,
+        margin_percent: margin,
+        is_active: true,
+        last_synced_at: nowIso,
       };
-      if (existing) updatedCount++; else addedCount++;
+
       uniquePlansMap.set(key, row);
     }
     const upsertRows = Array.from(uniquePlansMap.values());
@@ -203,11 +279,11 @@ Deno.serve(async (req: Request) => {
       throw new Error(`Upsert error: ${upsertErr.message}`);
     }
 
-    // 6. Deactivate stale plans that are no longer returned by providers
+    // 6. Deactivate stale plans ONLY if livePlans returned a healthy, non-trivial set (>= 20 plans)
     const livePlanIdSet = new Set(livePlans.map((p) => p.provider_plan_id));
     let deactivatedCount = 0;
 
-    if (existingRows) {
+    if (existingRows && livePlans.length >= 20) {
       const missingPlanIds = existingRows
         .filter((r) => r.is_active && !livePlanIdSet.has(r.provider_plan_id))
         .map((r) => r.provider_plan_id);
@@ -230,9 +306,12 @@ Deno.serve(async (req: Request) => {
         added: addedCount,
         updated: updatedCount,
         deactivated: deactivatedCount,
-        total: livePlans.length,
+        total_live_fetched: livePlans.length,
+        service_counts: serviceCounts,
+        price_changes_count: priceChanges.length,
+        price_changes: priceChanges.slice(0, 50),
         timestamp: nowIso,
-      }),
+      }, null, 2),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   } catch (err: any) {
