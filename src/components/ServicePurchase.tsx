@@ -182,7 +182,8 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                 ...p, id: p.id, name: pName, plan_name: pName,
                 price: pPrice, retail_price: pPrice, reseller_price: rPrice,
                 network: finalNet, type: p.type || 'data',
-                peyflex_variation_id: p.peyflex_variation_id || p.peyflex_id || p.apiPlanId || p.id,
+                peyflex_variation_id: p.provider_plan_id || p.peyflex_variation_id || p.peyflex_id || p.apiPlanId || p.id,
+                provider_plan_id: p.provider_plan_id || p.id,
                 validity_days: p.validity_days || p.duration || p.validity || '30 days',
                 mozosubz_service,
               };
@@ -237,13 +238,16 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
 
       if (type === 'data') {
         const finalPrice = getPlanPriceForUser(selectedPlan, user);
+        const planId = String(selectedPlan?.provider_plan_id || selectedPlan?.peyflex_variation_id || selectedPlan?.id || '').trim();
         const payload = {
           userId: user?.uid,
           phone_number: phoneNumber,
           network: network.toUpperCase(),
-          peyflex_variation_id: selectedPlan?.peyflex_variation_id || selectedPlan?.mozosubs_plan_id,
-          mozosubz_service: (selectedPlan as any)?.mozosubz_service || planType,
-          service: (selectedPlan as any)?.mozosubz_service || planType,
+          planId: planId,
+          provider_plan_id: planId,
+          peyflex_variation_id: planId,
+          mozosubz_service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
+          service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
           retail_price: finalPrice,
           plan_name: selectedPlan?.name,
         };
