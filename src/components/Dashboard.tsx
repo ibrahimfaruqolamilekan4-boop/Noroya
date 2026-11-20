@@ -1574,12 +1574,28 @@ function DashboardOverview({
                             Copy
                           </button>
                         </div>
-                        <div className="bg-emerald-950/70 rounded-xl p-2.5 border border-emerald-500/30 space-y-1">
+                        <div className="bg-emerald-950/70 rounded-xl p-2.5 border border-emerald-500/30 space-y-2">
                           <p className="text-[11px] text-emerald-100 font-semibold leading-relaxed">
-                            💡 <strong>Auto-Credit Instructions:</strong> Transfer from OPay, PalmPay, Kuda, or any bank app. Include your registered email (<code>{user.email}</code>) or phone (<code>{(user as any)?.phone_number || (user as any)?.phoneNumber || user.email}</code>) in the transfer narration/remark for instant credit.
+                            💡 <strong>Auto-Credit Instructions:</strong> Transfer from OPay, PalmPay, Kuda, or any Nigerian bank app. Paste your registered email into the transfer narration/remark:
                           </p>
+                          <div className="flex items-center justify-between bg-emerald-900/60 rounded-lg px-3 py-1.5 border border-emerald-500/40">
+                            <div className="truncate mr-2">
+                              <span className="text-[9px] text-emerald-300 uppercase font-black block">Your Narration / Remark</span>
+                              <span className="font-mono text-xs font-bold text-white truncate block">{user.email}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(user.email);
+                                toast.success('Narration (Email) copied! Paste this in your bank remark.');
+                              }}
+                              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-[11px] font-bold text-white shrink-0 cursor-pointer"
+                            >
+                              Copy Remark
+                            </button>
+                          </div>
                           <p className="text-[10px] text-emerald-300/80">
-                            ⚡ Funds are credited automatically in &lt; 60 seconds with zero manual approval.
+                            ⚡ Funds are credited automatically within 60 seconds with zero manual approval.
                           </p>
                         </div>
                       </div>

@@ -4733,13 +4733,32 @@ AI:`;
           }
         }
 
-        // Tier 3: Normalized Narration Match (Email and Nigerian Phone Number)
+        // Tier 1.5: User Referral Code / UID in Narration
         if (!matchedProfile && rawNarration) {
+          const refCodeMatch = rawNarration.match(/\b(NORODATA-[A-Z0-9]{4,12})\b/i);
+          if (refCodeMatch) {
+            try {
+              const code = refCodeMatch[1].toUpperCase().trim();
+              const { data: codeProfiles } = await supabase
+                .from("profiles")
+                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                .ilike("referral_code", code);
+              if (codeProfiles && codeProfiles.length === 1) {
+                matchedProfile = codeProfiles[0];
+                matchMethod = "narration_referral_code";
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Tier 3: Normalized Narration Match (Email, Truncated Domain, Nigerian Phone)
+        if (!matchedProfile && rawNarration) {
+          // Strip extensive list of Nigerian bank & NIP prefixes
           const cleanedNarration = rawNarration
-            .replace(/^(TRF|NIP|TRANSFER|DEP|FT|REF|OPAY|KUDA|PALMPAY)[\/\s:_-]+/i, "")
+            .replace(/^(TRF|NIP|TRANSFER|DEP|DEPOSIT|FT|REF|OPAY|KUDA|PALMPAY|MONIEPOINT|ACCESS|GTB|FBN|ZENITH|UBA|STANBIC|WEMA|PROVIDUS|ECOBANK|STERLING|FCMB|KEYSTONE|UNION|JAIS|TAJ|RUBIES|VFD|CARBON|FAIRMONEY|PAYCOM|NOM)[\/\s:_-]+/i, "")
             .trim();
 
-          // 3a. Normalized Email Extraction
+          // 3a. Normalized Full Email Extraction
           const collapsedForEmail = cleanedNarration.replace(/\s*([@.])\s*/g, "$1");
           const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
           const emailMatches = collapsedForEmail.match(emailRegex);
@@ -4761,10 +4780,32 @@ AI:`;
             } catch (_) {}
           }
 
-          // 3b. Phone Number in Narration (11-digit local or +234)
+          // 3b. Truncated Email Fallback (when NIP cuts narration to 30 chars, e.g. user@gm)
           if (!matchedProfile) {
-            const phoneRegex = /(?:(?:\+?234)|0)([789][01]\d{8})/g;
-            const phoneMatches = [...cleanedNarration.matchAll(phoneRegex)];
+            const partialEmailMatch = collapsedForEmail.match(/([a-zA-Z0-9._%+-]{3,})@/);
+            if (partialEmailMatch) {
+              const userPrefix = partialEmailMatch[1].toLowerCase().trim();
+              try {
+                const { data: prefixProfiles } = await supabase
+                  .from("profiles")
+                  .select("id, email, full_name, name, phone_number, wallet_balance, balance")
+                  .ilike("email", `${userPrefix}@%`);
+
+                if (prefixProfiles && prefixProfiles.length === 1) {
+                  matchedProfile = prefixProfiles[0];
+                  matchMethod = "narration_truncated_email_prefix";
+                } else if (prefixProfiles && prefixProfiles.length > 1) {
+                  candidateReason = `Ambiguous prefix: ${prefixProfiles.length} profiles start with ${userPrefix}@`;
+                }
+              } catch (_) {}
+            }
+          }
+
+          // 3c. Phone Number in Narration (handling spaces, +234, 0..., or 10-digit)
+          if (!matchedProfile) {
+            const collapsedForPhone = cleanedNarration.replace(/[\s-]/g, "");
+            const phoneRegex = /(?:(?:\+?234)|0)?([789][01]\d{8})/g;
+            const phoneMatches = [...collapsedForPhone.matchAll(phoneRegex)];
             if (phoneMatches.length === 1) {
               const standardDigits = phoneMatches[0][1];
               const localPhone = `0${standardDigits}`;
@@ -4786,7 +4827,7 @@ AI:`;
           }
         }
 
-        // Tier 4: Sender Name Match (Candidate for Admin Review)
+        // Tier 4: Sender Name Match (Candidate for Admin Review or Exact Match)
         if (!matchedProfile && senderName) {
           const cleanSender = senderName.trim().toUpperCase();
           const tokens = cleanSender.split(/\s+/).filter(t => t.length > 2);
@@ -5144,7 +5185,7 @@ AI:`;
       }
 
       const pData = await pResp.json();
-      const items = Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : [];
+      const items = Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : Array.isArray(pData?.items) ? pData.items : [];
 
       let newlyAdded = 0;
       let alreadyCredited = 0;
@@ -5153,7 +5194,7 @@ AI:`;
         const isSuccessful = item.status === "succeeded" || item.status === "completed" || item.payment_status === "paid";
         if (!isSuccessful) continue;
 
-        const ref = String(item.reference || item.id || "").trim();
+        const ref = String(item.payment_id || item.charge_id || item.id || item.reference || "").trim();
         if (!ref) continue;
 
         const { data: existingVa } = await supabase
@@ -5180,18 +5221,75 @@ AI:`;
           .maybeSingle();
 
         if (!existingUnmatched) {
-          const bt = item.payment_method_details?.bank_transfer;
+          let bt = item.payment_method_details?.bank_transfer || item.payment_method?.bank_transfer;
+          
+          if (!bt?.narration && (item.payment_id || item.id)) {
+            try {
+              const detailUrl = getBachsEndpoint(baseUrl, `/v1/payments/${encodeURIComponent(item.payment_id || item.id)}`);
+              const dResp = await fetch(detailUrl, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+              });
+              if (dResp.ok) {
+                const dData = await dResp.json();
+                bt = dData.payment_method_details?.bank_transfer || dData.payment_method?.bank_transfer || bt;
+              }
+            } catch (_) {}
+          }
+
+          const rawNarration = String(bt?.narration || item.narration || item.description || "").trim();
+          const senderName = String(bt?.sender_name || item.sender_name || item.customer?.name || "").trim();
+          const rawAmount = Number(item.amount ?? item.net ?? 0);
+
+          let candidateUserId = null;
+          let candidateReason = null;
+
+          if (rawNarration) {
+            const emailMatch = rawNarration.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i);
+            if (emailMatch) {
+              const { data: cand } = await supabase.from("profiles").select("id, email").ilike("email", emailMatch[0].trim()).maybeSingle();
+              if (cand?.id) {
+                candidateUserId = cand.id;
+                candidateReason = `Narration email match: ${cand.email}`;
+              }
+            }
+            if (!candidateUserId) {
+              const phoneMatch = rawNarration.match(/(?:(?:\+?234)|0)?([789][01]\d{8})/);
+              if (phoneMatch) {
+                const digits = phoneMatch[1];
+                const { data: cand } = await supabase.from("profiles").select("id, email, phone_number").or(`phone_number.ilike.%${digits}%`).maybeSingle();
+                if (cand?.id) {
+                  candidateUserId = cand.id;
+                  candidateReason = `Narration phone match: ${cand.phone_number || digits} (${cand.email})`;
+                }
+              }
+            }
+          }
+
+          if (!candidateUserId && senderName) {
+            const tokens = senderName.split(/\s+/).filter(t => t.length > 2);
+            if (tokens.length >= 2) {
+              const { data: cand } = await supabase.from("profiles").select("id, email, full_name").ilike("full_name", `%${tokens[0]}%${tokens[1]}%`).maybeSingle();
+              if (cand?.id) {
+                candidateUserId = cand.id;
+                candidateReason = `Sender name match: "${senderName}" matches ${cand.full_name} (${cand.email})`;
+              }
+            }
+          }
+
           await supabase.from("unmatched_payments").insert({
             reference: ref,
             event_id: item.event_id || null,
-            amount: Number(item.amount || 0),
+            amount: rawAmount,
             account_number: bt?.virtual_account?.account_number || null,
-            sender_name: bt?.sender_name || null,
+            sender_name: senderName || null,
             sender_bank: bt?.sender_bank || null,
             sender_account_number: bt?.sender_account_number || null,
-            narration: bt?.narration || null,
+            narration: rawNarration || null,
             raw_payload: item,
             status: "pending",
+            candidate_user_id: candidateUserId,
+            candidate_reason: candidateReason,
           }).catch(() => {});
           newlyAdded++;
         }
@@ -5206,6 +5304,76 @@ AI:`;
       });
     } catch (err) {
       console.error("[POST /api/admin/bachs/sync-deposits Error]:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/admin/bachs/diagnostics", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const secretKey = await resolveBachsSecretKey();
+      const webhookSecret = await resolveBachsWebhookSecret();
+      if (!secretKey) {
+        return res.status(503).json({ error: "Bachs secret key not configured." });
+      }
+      const baseUrl = resolveBachsBaseUrl(secretKey);
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
+
+      let endpoints = [];
+      let endpointsError = null;
+      try {
+        const epResp = await fetch(getBachsEndpoint(baseUrl, "/v1/webhooks/endpoints"), {
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+        });
+        if (epResp.ok) {
+          const epData = await epResp.json();
+          endpoints = Array.isArray(epData) ? epData : Array.isArray(epData?.data) ? epData.data : [];
+        } else {
+          endpointsError = `Bachs returned HTTP ${epResp.status}`;
+        }
+      } catch (e) {
+        endpointsError = e.message;
+      }
+
+      let virtualAccount = null;
+      try {
+        const vaResp = await fetch(getBachsEndpoint(baseUrl, "/v1/virtual-accounts?currency=NGN"), {
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+        });
+        if (vaResp.ok) {
+          virtualAccount = await vaResp.json();
+        }
+      } catch (_) {}
+
+      const safeEndpoints = endpoints.map((ep) => ({
+        id: ep.id,
+        url: ep.url,
+        enabled: ep.enabled,
+        events: ep.events,
+        status: ep.status,
+        created_at: ep.created_at,
+        updated_at: ep.updated_at,
+      }));
+
+      return res.json({
+        gateway: "bachs",
+        mode: secretKey.startsWith("sk_sandbox_") || secretKey.startsWith("sk_test_") ? "sandbox" : "live",
+        baseUrl,
+        apiKeyConfigured: Boolean(secretKey),
+        webhookSecretConfigured: Boolean(webhookSecret),
+        recommendedWebhookUrl: "https://noroya.vercel.app/api/webhooks/bachs",
+        registeredEndpoints: safeEndpoints,
+        endpointsError,
+        virtualAccount: virtualAccount ? {
+          account_number: virtualAccount.account_number,
+          bank_name: virtualAccount.bank_name,
+          account_name: virtualAccount.account_name,
+          status: virtualAccount.status,
+        } : null,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error("[GET /api/admin/bachs/diagnostics Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });
