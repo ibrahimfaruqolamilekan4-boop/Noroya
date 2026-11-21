@@ -292,7 +292,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
       <div className="max-w-lg mx-auto">
         <div className="rounded-3xl p-8 text-center" style={{ backgroundColor: '#132613' }}>
           <SuccessFeedback size={80} showConfetti={true} />
-          <h2 className="text-2xl font-black text-white mt-5 mb-2">Purchase successful!</h2>
+          <h2 className="text-2xl font-bold text-white mt-5 mb-2">Purchase successful!</h2>
           <p className="text-sm mb-7" style={{ color: '#8FB88F' }}>
             Your transaction is processing. The recipient will be credited shortly.
           </p>
@@ -332,11 +332,11 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#3B7A3B' }} />
-            <span className="text-xs font-bold uppercase tracking-widest" style={{ color: '#8FB88F' }}>
+            <span className="text-xs font-bold " style={{ color: '#8FB88F' }}>
               MOZOSUBZ PLANS
             </span>
           </div>
-          <h2 className="text-xl font-black text-white">{type === 'data' ? 'Buy data' : 'Buy airtime'}</h2>
+          <h2 className="text-xl font-bold text-white">{type === 'data' ? 'Buy data' : 'Buy airtime'}</h2>
           <p className="text-sm mt-0.5" style={{ color: '#8FB88F' }}>
             {type === 'data'
               ? 'Fast bundles across every network. Uses the same wallet-and-ledger behavior as the real checkout.'
@@ -347,12 +347,12 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         {/* ── Network Selection Bar with Official Brand Badges ── */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: '#8FB88F' }}>
+            <label className="text-xs font-bold " style={{ color: '#8FB88F' }}>
               SELECT NETWORK
             </label>
             {autoDetected && network && (
-              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-[#B5D430] text-[#132613] animate-pulse shadow-sm flex items-center gap-1">
-                <span>⚡</span>
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#B5D430] text-[#132613] animate-pulse shadow-sm flex items-center gap-1">
+ <span></span>
                 <span>Auto-detected: {network}</span>
               </span>
             )}
@@ -374,7 +374,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                     setAutoDetected(false);
                   }}
                   className={cn(
-                    'flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-200 active:scale-95 cursor-pointer relative',
+                    'flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-200 cursor-pointer relative',
                     isSelected
                       ? 'border-[#B5D430] bg-[#1E3A1E] shadow-lg shadow-emerald-950/50'
                       : 'border-white/10 bg-white/5 hover:bg-white/10 opacity-75 hover:opacity-100'
@@ -384,7 +384,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                     className="w-3.5 h-3.5 rounded-full mb-1.5 shadow-sm border border-white/20"
                     style={{ backgroundColor: net.color }}
                   />
-                  <span className={cn('text-xs font-black', isSelected ? 'text-white' : 'text-white/80')}>
+                  <span className={cn('text-xs font-semibold', isSelected ? 'text-white' : 'text-white/80')}>
                     {net.name}
                   </span>
                   {isSelected && (
@@ -402,7 +402,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         {/* Plan type dropdown — data only */}
         {type === 'data' && (
           <div className="relative">
-            <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: '#8FB88F' }}>
+            <label className="text-xs font-bold block mb-2" style={{ color: '#8FB88F' }}>
               PLAN TYPE
             </label>
             <button
@@ -452,7 +452,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         {/* ── Recipient Number & Quick Beneficiary Pills ── */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: '#8FB88F' }}>
+            <label className="text-xs font-bold " style={{ color: '#8FB88F' }}>
               RECIPIENT NUMBER
             </label>
             {user?.phone_number && (
@@ -461,7 +461,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                 onClick={() => setPhoneNumber(user.phone_number)}
                 className="text-[11px] font-bold text-[#B5D430] hover:underline flex items-center gap-1 cursor-pointer"
               >
-                <span>📱 Use My Number</span>
+ <span> Use My Number</span>
               </button>
             )}
           </div>
@@ -469,7 +469,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           {/* Quick beneficiary pill shortcuts */}
           {recentBeneficiaries.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-              <span className="text-[10px] text-white/50 font-bold uppercase tracking-wider shrink-0">Recent:</span>
+              <span className="text-[10px] text-white/50 font-bold shrink-0">Recent:</span>
               {recentBeneficiaries.map((beneficiary) => (
                 <button
                   key={beneficiary}
@@ -478,7 +478,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   className={cn(
                     'px-2.5 py-1 rounded-lg text-xs font-mono font-semibold transition-all shrink-0 cursor-pointer',
                     phoneNumber === beneficiary
-                      ? 'bg-[#B5D430] text-[#132613] font-bold'
+                      ? 'bg-[#B5D430] text-[#132613] font-semibold'
                       : 'bg-white/10 hover:bg-white/20 text-white/80'
                   )}
                 >
@@ -502,7 +502,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
         {/* Bundle grid (data) OR amount input (airtime) */}
         {type === 'data' && network ? (
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest block mb-3" style={{ color: '#8FB88F' }}>CHOOSE A BUNDLE</label>
+            <label className="text-xs font-bold block mb-3" style={{ color: '#8FB88F' }}>CHOOSE A BUNDLE</label>
             {fetchingPlans ? (
               <div className="flex items-center justify-center py-8">
                 <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#3B7A3B', borderTopColor: 'transparent' }} />
@@ -530,10 +530,10 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                       }}
                     >
                       <div>
-                        <p className="text-base font-black text-white">{sizeDisplay}</p>
+                        <p className="text-base font-bold text-white">{sizeDisplay}</p>
                         <p className="text-xs mt-0.5" style={{ color: '#8FB88F' }}>{plan.validity_days || '30 days'}</p>
                       </div>
-                      <p className="text-base font-black mt-3" style={{ color: '#B5D430' }}>
+                      <p className="text-base font-bold mt-3" style={{ color: '#B5D430' }}>
                         ₦{finalPrice.toLocaleString()}
                       </p>
                     </button>
@@ -544,7 +544,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           </div>
         ) : type === 'airtime' ? (
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest block mb-3" style={{ color: '#8FB88F' }}>AMOUNT (₦)</label>
+            <label className="text-xs font-bold block mb-3" style={{ color: '#8FB88F' }}>AMOUNT (₦)</label>
             {/* Quick amounts */}
             <div className="grid grid-cols-3 gap-2 mb-3">
               {[100, 200, 500, 1000, 2000, 5000].map((amt) => (
@@ -577,7 +577,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           type="button"
           disabled={loading || (type === 'data' && !selectedPlan) || (type === 'airtime' && !airtimeAmount) || !network || !phoneNumber}
           onClick={handlePurchase}
-          className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 active:scale-99 flex items-center justify-center gap-2"
+          className="w-full py-4 rounded-2xl font-bold text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 flex items-center justify-center gap-2"
           style={{ backgroundColor: '#B5D430', color: '#132613' }}
         >
           {loading ? <Loader2 className="animate-spin" size={20} /> : `Buy ${type === 'data' ? 'data bundle' : 'airtime'} →`}
@@ -608,7 +608,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               style={{ backgroundColor: '#132613' }}
             >
               <div className="flex justify-between items-center mb-5">
-                <h3 className="text-lg font-black text-white">Confirm purchase</h3>
+                <h3 className="text-lg font-bold text-white">Confirm purchase</h3>
                 <button onClick={() => setShowConfirmModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-white/60 hover:text-white" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}>
                   <X size={16} />
                 </button>
@@ -616,7 +616,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
 
               <div className="rounded-2xl p-5 text-center mb-4" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
                 <span className="text-xs font-bold block mb-1" style={{ color: '#8FB88F' }}>Total due</span>
-                <span className="text-3xl font-black text-white">
+                <span className="text-3xl font-bold text-white">
                   {formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount))}
                 </span>
               </div>

@@ -9,7 +9,7 @@ import { marketplaceService, EsimPlan } from '../../lib/marketplaceService';
 
 const DEFAULT_CUSTOM_PACKAGE = {
   id: 'custom',
-  label: '⚡ Custom Country / Plan',
+ label: ' Custom Country / Plan',
   price: 'Ask Admin',
   data: 'Custom',
   country: 'Custom'
@@ -42,10 +42,10 @@ class EsimErrorBoundary extends React.Component<{ children: React.ReactNode; onC
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center">
-            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto text-xl font-bold">
-              📶
+            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto text-xl font-semibold">
+ 
             </div>
-            <h3 className="font-black text-lg text-slate-900">eSIM Admin Desk Ready</h3>
+            <h3 className="font-bold text-lg text-slate-900">eSIM Admin Desk Ready</h3>
             <p className="text-xs text-slate-600">
               For instant eSIM provisioning and setup assistance, chat directly with Admin on WhatsApp (+2348143889102) or call our desk.
             </p>
@@ -109,7 +109,7 @@ function EsimChatModalInner({
     {
       id: 'msg-welcome-1',
       sender: 'admin',
-      text: `Hello ${currentUser?.fullName || currentUser?.name || 'there'}! Welcome to the NORODATA Official eSIM Desk 📶\n\nI am online to help you provision and activate high-speed eSIM data profiles. Pick any plan or let me know your destination country and device model.`,
+ text: `Hello ${currentUser?.fullName || currentUser?.name || 'there'}! Welcome to the NORODATA Official eSIM Desk \n\nI am online to help you provision and activate high-speed eSIM data profiles. Pick any plan or let me know your destination country and device model.`,
       time: 'Just now'
     }
   ]);
@@ -316,7 +316,7 @@ function EsimChatModalInner({
       const errMsg: ChatMsg = {
         id: `adm-insuff-${Date.now()}`,
         sender: 'admin',
-        text: `⚠️ INSUFFICIENT BALANCE: ${pkg.label} costs ₦${numericPrice.toLocaleString()}, and your current wallet balance is ₦${userWalletBalance.toLocaleString()}. Please fund your wallet before requesting to buy this eSIM.`,
+ text: ` INSUFFICIENT BALANCE: ${pkg.label} costs ₦${numericPrice.toLocaleString()}, and your current wallet balance is ₦${userWalletBalance.toLocaleString()}. Please fund your wallet before requesting to buy this eSIM.`,
         time: safeFormatTime(new Date().toISOString()),
       };
       setMessages(prev => [...prev, errMsg]);
@@ -375,17 +375,17 @@ function EsimChatModalInner({
         className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden text-left"
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 p-4 sm:p-5 text-white flex items-center justify-between">
+        <div className="bg-brand-900 p-4 sm:p-5 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center border border-white/20 text-xl shrink-0">
-              📶
+ 
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-base sm:text-lg tracking-tight">
+                <h3 className="font-bold text-base sm:text-lg tracking-tight">
                   eSIM Admin Support & Provisioning Desk
                 </h3>
-                <span className="flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Admin Live
                 </span>
@@ -411,7 +411,7 @@ function EsimChatModalInner({
             <button
               type="button"
               onClick={() => setShowSetupGuide(!showSetupGuide)}
-              className="text-[11px] text-emerald-700 hover:text-emerald-800 underline font-extrabold flex items-center gap-1 cursor-pointer"
+              className="text-[11px] text-emerald-700 hover:text-emerald-800 underline font-bold flex items-center gap-1 cursor-pointer"
             >
               <Smartphone size={12} /> {showSetupGuide ? 'Hide Setup Guide' : 'How to install eSIM?'}
             </button>
@@ -423,15 +423,13 @@ function EsimChatModalInner({
                 key={pkg.id}
                 type="button"
                 onClick={() => handleSendPresetInquiry(pkg)}
-                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap border transition-all flex items-center gap-1.5 cursor-pointer ${
-                  selectedPkg === pkg.id
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap border transition-all flex items-center gap-1.5 cursor-pointer ${ selectedPkg === pkg.id
                     ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                     : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
                 }`}
               >
                 <span>{pkg.label}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
-                  selectedPkg === pkg.id ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-emerald-800'
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${ selectedPkg === pkg.id ? 'bg-emerald-700 text-white' : 'bg-slate-100 text-emerald-800'
                 }`}>
                   {pkg.price}
                 </span>
@@ -455,7 +453,7 @@ function EsimChatModalInner({
         {/* Collapsible Setup Guide */}
         {showSetupGuide && (
           <div className="bg-emerald-50/80 border-b border-emerald-200 p-3 sm:px-5 text-xs text-emerald-950 space-y-1.5 animate-fadeIn">
-            <div className="font-extrabold flex items-center gap-1.5 text-emerald-900">
+            <div className="font-bold flex items-center gap-1.5 text-emerald-900">
               <CheckCircle2 size={14} className="text-emerald-700" />
               Easy 3-Step eSIM Installation:
             </div>
@@ -474,11 +472,11 @@ function EsimChatModalInner({
               key={msg.id}
               className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
             >
-              <div className="flex items-center gap-1.5 mb-1 text-[10px] text-slate-400 font-bold">
+              <div className="flex items-center gap-1.5 mb-1 text-[10px] text-slate-400 font-semibold">
                 {msg.sender === 'admin' ? (
                   <>
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span className="text-emerald-800 font-extrabold">NORODATA Admin Desk</span>
+                    <span className="text-emerald-800 font-semibold">NORODATA Admin Desk</span>
                   </>
                 ) : (
                   <span>You</span>
@@ -487,8 +485,7 @@ function EsimChatModalInner({
               </div>
 
               <div
-                className={`max-w-[85%] rounded-2xl p-3.5 text-xs font-medium shadow-sm leading-relaxed whitespace-pre-wrap ${
-                  msg.sender === 'user'
+                className={`max-w-[85%] rounded-2xl p-3.5 text-xs font-medium shadow-sm leading-relaxed whitespace-pre-wrap ${ msg.sender === 'user'
                     ? 'bg-emerald-600 text-white rounded-br-none'
                     : 'bg-white text-slate-800 border border-slate-200/80 rounded-bl-none'
                 }`}
@@ -499,11 +496,11 @@ function EsimChatModalInner({
                 {msg.hasQr && (
                   <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-900 space-y-2">
                     <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                      <div className="flex items-center gap-1.5 font-black text-xs text-emerald-900">
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-900">
                         <QrCode size={14} className="text-emerald-700" />
                         eSIM Profile Code Ready
                       </div>
-                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
                         {currentPkgObj.country}
                       </span>
                     </div>
@@ -554,7 +551,7 @@ function EsimChatModalInner({
             <button
               type="submit"
               disabled={!inputText.trim()}
-              className="p-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-2xl font-bold transition-all shadow-md cursor-pointer shrink-0 active:scale-95 flex items-center gap-1.5 text-xs"
+              className="p-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-2xl font-bold transition-all shadow-md cursor-pointer shrink-0 flex items-center gap-1.5 text-xs"
             >
               <Send size={15} />
               <span className="hidden sm:inline">Send</span>
@@ -563,7 +560,7 @@ function EsimChatModalInner({
 
           {/* Quick Support Info & Copy Contact */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 text-[11px]">
-            <div className="flex items-center gap-1.5 text-slate-500 font-bold">
+            <div className="flex items-center gap-1.5 text-slate-500 font-semibold">
               <ShieldCheck size={14} className="text-emerald-600" />
               <span>Escrow protected • Real-time Admin sync</span>
             </div>
@@ -572,7 +569,7 @@ function EsimChatModalInner({
               <button
                 type="button"
                 onClick={copyAdminContact}
-                className="px-3 py-1.5 rounded-xl bg-green-50 hover:bg-green-100 text-green-700 font-extrabold border border-green-200 transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-green-50 hover:bg-green-100 text-green-700 font-bold border border-green-200 transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 <MessageSquare size={12} /> Copy Admin WhatsApp
               </button>
@@ -586,7 +583,7 @@ function EsimChatModalInner({
                     toast.success('Admin phone (+2348143889102) copied!');
                   } catch (_) {}
                 }}
-                className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold border border-slate-200 transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 transition-all flex items-center gap-1.5 cursor-pointer"
               >
                 <PhoneCall size={12} /> Call Desk (+2348143889102)
               </button>

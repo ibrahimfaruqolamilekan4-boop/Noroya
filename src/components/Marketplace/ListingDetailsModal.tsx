@@ -67,14 +67,14 @@ export function ListingDetailsModal({
         {/* Header */}
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
           <div className="flex items-center gap-3">
-            <span className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center text-xl font-bold">
-              {cat?.icon || (isForeignNumber ? '📱' : '🌐')}
+            <span className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center text-xl font-semibold">
+ {cat?.icon || (isForeignNumber ? '' : '')}
             </span>
             <div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">
+              <span className="text-[10px] font-bold text-emerald-700">
                 {cat?.name || (isForeignNumber ? 'Foreign Number' : 'Social Media Account')}
               </span>
-              <h3 className="text-base font-black text-slate-900 leading-tight">
+              <h3 className="text-base font-bold text-slate-900 leading-tight">
                 Product Details
               </h3>
             </div>
@@ -92,7 +92,7 @@ export function ListingDetailsModal({
           {/* Main Title & Price */}
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-xl font-black text-slate-900 leading-snug">
+              <h2 className="text-xl font-bold text-slate-900 leading-snug">
                 {listing.title}
               </h2>
               <div className="flex items-center gap-2 mt-2">
@@ -106,8 +106,8 @@ export function ListingDetailsModal({
               </div>
             </div>
             <div className="text-right shrink-0">
-              <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 block">Price</span>
-              <span className="text-2xl font-black text-emerald-600 font-mono">
+              <span className="text-[10px] font-bold tracking-widest text-slate-400 block">Price</span>
+              <span className="text-2xl font-bold text-emerald-600 font-mono">
                 ₦{Number(listing.price).toLocaleString()}
               </span>
             </div>
@@ -115,7 +115,7 @@ export function ListingDetailsModal({
 
           {/* Description */}
           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1.5">
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">
+            <h4 className="text-xs font-bold text-slate-500">
               Description & Specifications
             </h4>
             <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line font-medium">
@@ -126,13 +126,13 @@ export function ListingDetailsModal({
           {/* Product Specifications / Metadata */}
           {listing.product_details && Object.keys(listing.product_details).length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">
+              <h4 className="text-xs font-bold text-slate-500">
                 Item Attributes
               </h4>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {Object.entries(listing.product_details).map(([key, val]) => (
                   <div key={key} className="p-3 bg-white border border-slate-100 rounded-xl">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                    <span className="text-[10px] text-slate-400 font-bold block">
                       {key.replace(/_/g, ' ')}
                     </span>
                     <span className="font-bold text-slate-800 font-mono text-xs truncate block mt-0.5">
@@ -146,7 +146,7 @@ export function ListingDetailsModal({
 
           {/* Escrow Guarantee Banner */}
           <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-            <div className="flex items-center gap-2 text-emerald-800 font-black text-xs">
+            <div className="flex items-center gap-2 text-emerald-800 font-bold text-xs">
               <ShieldCheck size={16} className="text-emerald-600" />
               <span>NORODATA Buyer Protection Guarantee</span>
             </div>
@@ -171,14 +171,14 @@ export function ListingDetailsModal({
         <div className="p-5 border-t border-slate-100 bg-slate-50/60 flex items-center gap-3">
           <button
             onClick={onClose}
-            className="px-5 py-3 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-black uppercase tracking-wider transition cursor-pointer"
+            className="px-5 py-3 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-bold transition cursor-pointer"
           >
             Close
           </button>
           <button
             onClick={handleBuyNow}
             disabled={loading || isOwner}
-            className="flex-1 py-3 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition cursor-pointer"
+            className="flex-1 py-3 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition cursor-pointer"
           >
             {loading ? (
               <>

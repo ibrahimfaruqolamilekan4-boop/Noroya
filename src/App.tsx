@@ -48,7 +48,7 @@ function AppContent() {
             className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg"
             style={{ backgroundColor: '#3B7A3B' }}
           >
-            <span className="text-white font-black text-xl">N</span>
+            <span className="text-white font-bold text-xl">N</span>
           </div>
           <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#3B7A3B', borderTopColor: 'transparent' }} />
           <p className="text-sm font-medium" style={{ color: '#3B7A3B' }}>Loading NORODATA…</p>
@@ -74,7 +74,7 @@ function AppContent() {
         <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#EDEDE9' }}>
           <div className="flex flex-col items-center gap-4">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg" style={{ backgroundColor: '#3B7A3B' }}>
-              <span className="text-white font-black text-xl">N</span>
+              <span className="text-white font-bold text-xl">N</span>
             </div>
             <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#3B7A3B', borderTopColor: 'transparent' }} />
           </div>
