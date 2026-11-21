@@ -94,7 +94,7 @@ export function CreateListingModal({
         productDetails
       });
 
-      toast.success(isNumber ? '🎉 Foreign Number published for sale!' : '🎉 Listing published to the Digital Marketplace!');
+ toast.success(isNumber ? ' Foreign Number published for sale!' : ' Listing published to the Digital Marketplace!');
       setTitle('');
       setDescription('');
       setPrice('');
@@ -122,11 +122,11 @@ export function CreateListingModal({
         >
           <div className="flex items-center justify-between pb-4 border-b border-slate-100">
             <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-semibold">
                 <Plus size={20} />
               </div>
               <div>
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                <h3 className="text-lg font-bold text-slate-900 tracking-tight">
                   {isAdmin ? 'Post Foreign Number / Listing (Admin)' : 'Sell a Social Media Account'}
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
@@ -154,7 +154,7 @@ export function CreateListingModal({
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
             {/* Category selection */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 Product Category
               </label>
               <select
@@ -172,7 +172,7 @@ export function CreateListingModal({
 
             {/* Title */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 Listing Title
               </label>
               <input
@@ -187,7 +187,7 @@ export function CreateListingModal({
 
             {/* Price */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 Selling Price (₦)
               </label>
               <input
@@ -198,13 +198,13 @@ export function CreateListingModal({
                 value={price}
                 onChange={e => setPrice(e.target.value)}
                 placeholder="e.g. 4500"
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-base font-black text-emerald-600 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-base font-bold text-emerald-600 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             {/* Product Identifier (Number or Handle) */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 {isNumber ? "Foreign Phone Number" : "Handle / Username"}
               </label>
               <input
@@ -219,7 +219,7 @@ export function CreateListingModal({
 
             {/* Extra detail */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 {isNumber ? "Carrier / Supported Apps (WhatsApp, Telegram, PayPal…)" : "Followers / Engagement Rate"}
               </label>
               <input
@@ -233,7 +233,7 @@ export function CreateListingModal({
 
             {/* Description */}
             <div>
-              <label className="block text-xs font-black uppercase text-slate-500 tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-500 tracking-wider mb-1.5">
                 Description & Instructions for Buyer
               </label>
               <textarea
@@ -263,14 +263,14 @@ export function CreateListingModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 py-3.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                className="flex-1 py-3.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={submitting}
-                className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="flex-1 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {submitting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                 {submitting ? 'Publishing…' : isNumber ? 'Post Number for Sale' : 'Publish Listing'}

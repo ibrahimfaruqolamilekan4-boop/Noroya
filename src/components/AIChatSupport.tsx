@@ -42,7 +42,7 @@ export default function AIChatSupport() {
       {/* Trigger Button */}
       <button 
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-2xl shadow-blue-300 hover:scale-110 transition-transform active:scale-95 z-50"
+        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-2xl shadow-blue-300 transition-transform z-50"
       >
         <MessageSquare size={24} />
       </button>
@@ -64,7 +64,7 @@ export default function AIChatSupport() {
                 </div>
                 <div>
                   <h4 className="font-bold text-sm">NORODATA AI Support</h4>
-                  <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider">Online</p>
+                  <p className="text-[10px] text-blue-100 font-bold tracking-wider">Online</p>
                 </div>
               </div>
               <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -100,9 +100,9 @@ export default function AIChatSupport() {
                   </div>
                   <div className="bg-slate-50 p-3 rounded-2xl">
                     <div className="flex gap-1">
-                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" />
-                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full " />
+                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full [animation-delay:0.2s]" />
+                      <div className="w-1.5 h-1.5 bg-slate-400 rounded-full [animation-delay:0.4s]" />
                     </div>
                   </div>
                 </div>

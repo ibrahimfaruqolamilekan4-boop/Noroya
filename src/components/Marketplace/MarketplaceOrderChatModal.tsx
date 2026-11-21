@@ -233,7 +233,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
           onPaymentComplete(res.newBuyerBalance);
         }
       }
-      toast.success(`🎉 Deal completed! ₦${Number(order.price).toLocaleString()} has been debited from the wallet.`);
+ toast.success(` Deal completed! ₦${Number(order.price).toLocaleString()} has been debited from the wallet.`);
     } catch (error: any) {
       if (error.code === 'INSUFFICIENT_BALANCE' || String(error.message || '').toLowerCase().includes('insufficient')) {
         setInsufficientError(error.message);
@@ -285,26 +285,25 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
         className="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-2xl w-full h-[92vh] flex flex-col overflow-hidden shadow-2xl"
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-900 border-b border-emerald-500/20 p-4 flex items-center justify-between">
+        <div className="bg-brand-900 border-b border-emerald-500/20 p-4 flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                {order.status === 'completed' ? '✓ Deal Completed & Paid' : '● Live Admin Order Chat'}
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+ {order.status === 'completed' ? ' Deal Completed & Paid' : '● Live Admin Order Chat'}
               </span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
                 <History className="w-3 h-3 text-emerald-400" />
                 Permanent Trace ID: {order.id}
               </span>
             </div>
-            <h2 className="text-base sm:text-lg font-black text-white truncate mt-1">
+            <h2 className="text-base sm:text-lg font-bold text-white truncate mt-1">
               {order.marketplace_listings?.title || 'Foreign Number Purchase'}
             </h2>
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 mt-1">
-              <span className="font-black text-emerald-400">
+              <span className="font-bold text-emerald-400">
                 Price: ₦{Number(order.price).toLocaleString()}
               </span>
-              <span className={`flex items-center gap-1 font-semibold px-2 py-0.5 rounded-md border ${
-                buyerBalance >= Number(order.price || 0) || order.status === 'completed'
+              <span className={`flex items-center gap-1 font-semibold px-2 py-0.5 rounded-md border ${ buyerBalance >= Number(order.price || 0) || order.status === 'completed'
                   ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300'
                   : 'bg-red-950/80 border-red-500/40 text-red-300'
               }`}>
@@ -336,10 +335,10 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                 <Phone className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                <p className="text-[10px] font-bold text-emerald-400">
                   Selected Foreign Number (Use this number to login & receive code)
                 </p>
-                <p className="font-mono font-black text-white text-base sm:text-lg tracking-wide">
+                <p className="font-mono font-bold text-white text-base sm:text-lg tracking-wide">
                   {phoneNumber}
                 </p>
               </div>
@@ -347,7 +346,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
             <button
               type="button"
               onClick={() => copyPhoneNumber(phoneNumber)}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 transition shrink-0 shadow"
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition shrink-0 shadow"
             >
               {copiedPhone ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               {copiedPhone ? 'Number Copied!' : 'Copy Number'}
@@ -357,8 +356,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
 
         {/* Buyer Status Banner (per specification) */}
         {!isSellerOrAdmin && order.status !== 'completed' && (
-          <div className={`px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-            buyerBalance >= Number(order.price || 0)
+          <div className={`px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${ buyerBalance >= Number(order.price || 0)
               ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
               : 'bg-red-950/95 border-red-500/50 text-red-200'
           }`}>
@@ -381,7 +379,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={handleSendReady}
                   disabled={sending}
-                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition shadow cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shadow cursor-pointer"
                 >
                   Send 'Ready'
                 </button>
@@ -392,7 +390,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                     onClose();
                     window.dispatchEvent(new CustomEvent('open-fund-modal'));
                   }}
-                  className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black text-xs transition shadow cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition shadow cursor-pointer"
                 >
                   Fund Wallet
                 </button>
@@ -434,7 +432,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
               const senderLabel =
                 msg.sender_name ||
                 (msg.sender_role === 'admin' || msg.sender_id === 'admin'
-                  ? '👑 NORODATA Official Admin'
+ ? ' NORODATA Official Admin'
                   : order.buyer?.full_name || order.buyer?.email || 'Customer');
 
               return (
@@ -445,8 +443,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-md px-4 py-3 rounded-2xl text-sm ${
-                      msg.message_type === 'verification_code'
+                    className={`max-w-md px-4 py-3 rounded-2xl text-sm ${ msg.message_type === 'verification_code'
                         ? 'bg-emerald-950/90 border-2 border-emerald-500/60 text-emerald-100 shadow-lg'
                         : isOwn
                         ? 'bg-emerald-600 text-white rounded-br-none'
@@ -454,7 +451,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3 mb-1">
-                      <span className="text-[10px] font-black uppercase tracking-wider opacity-85">
+                      <span className="text-[10px] font-bold opacity-85">
                         {senderLabel}
                       </span>
                       {msg.sender_email && isSellerOrAdmin && (
@@ -464,17 +461,17 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
 
                     {msg.message_type === 'verification_code' ? (
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2 font-black text-emerald-300 text-xs uppercase tracking-wider">
+                        <div className="flex items-center gap-2 font-bold text-emerald-300 text-xs ">
                           <Key className="w-4 h-4" />
                           Official Login Verification Code
                         </div>
                         <p className="text-xs text-slate-300">{msg.content}</p>
-                        <div className="flex items-center gap-2 bg-slate-900 p-2.5 rounded-xl font-mono text-lg font-black border border-emerald-500/40">
+                        <div className="flex items-center gap-2 bg-slate-900 p-2.5 rounded-xl font-mono text-lg font-bold border border-emerald-500/40">
                           <span className="flex-1 text-emerald-400 tracking-widest">{msg.code_value}</span>
                           <button
                             type="button"
                             onClick={() => copyCode(msg.code_value || '')}
-                            className="p-1.5 hover:bg-slate-800 rounded-lg transition text-emerald-300 flex items-center gap-1 text-xs font-sans font-bold"
+                            className="p-1.5 hover:bg-slate-800 rounded-lg transition text-emerald-300 flex items-center gap-1 text-xs font-sans font-semibold"
                           >
                             {copiedCode ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                             {copiedCode ? 'Copied' : 'Copy'}
@@ -511,7 +508,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={handleRequestCode}
                   disabled={requestingCode}
-                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow"
+                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow"
                 >
                   {requestingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
                   {order.code_requested ? 'Request Code Again' : 'Request Verification Code'}
@@ -534,7 +531,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={handleCompleteDealAndDebit}
                   disabled={completingDeal}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow-lg"
+                  className="px-4 py-2.5 rounded-xl bg-surface-muted hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50 shrink-0 shadow-lg"
                 >
                   {completingDeal ? (
                     <>
@@ -556,7 +553,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
           {isSellerOrAdmin && order.status !== 'completed' && (
             <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="font-bold text-emerald-300 flex items-center gap-1.5">
                   <Key className="w-3.5 h-3.5" />
                   Admin Verification Code & Auto-Debit Panel
                 </span>
@@ -587,7 +584,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={() => handleAdminSendCode(true)}
                   disabled={sending || !verificationCode.trim()}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-lg cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition disabled:opacity-50 shadow-lg cursor-pointer"
                 >
                   Send Code & Complete (debit ₦{Number(order.price).toLocaleString()})
                 </button>
@@ -600,7 +597,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
                   type="button"
                   onClick={handleCompleteDealAndDebit}
                   disabled={completingDeal}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition disabled:opacity-50"
                 >
                   {completingDeal ? 'Debiting...' : `Complete Deal & Debit ₦${Number(order.price).toLocaleString()}`}
                 </button>
@@ -610,7 +607,7 @@ export const MarketplaceOrderChatModal: React.FC<MarketplaceOrderChatModalProps>
 
           {order.status === 'completed' && (
             <div className="bg-emerald-500/15 border border-emerald-500/40 rounded-xl p-3 text-emerald-300 text-xs flex items-center justify-between">
-              <div className="flex items-center gap-2 font-bold">
+              <div className="flex items-center gap-2 font-semibold">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>
                   Deal Completed! ₦{Number(order.price).toLocaleString()} was automatically debited from wallet. Full chat history is permanently saved.

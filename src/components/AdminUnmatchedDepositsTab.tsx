@@ -253,16 +253,16 @@ export function AdminUnmatchedDepositsTab() {
   return (
     <div className="space-y-6 text-left">
       {/* ── Banner Header ── */}
-      <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 rounded-3xl border-2 border-emerald-500/40 p-6 md:p-8 text-white shadow-xl relative overflow-hidden">
+      <div className="bg-surface-muted rounded-3xl border-2 border-emerald-500/40 p-6 md:p-8 text-white shadow-xl relative overflow-hidden">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[11px] font-black uppercase tracking-widest text-emerald-300">
+              <span className="text-[11px] font-bold text-emerald-300">
                 Super Admin Virtual Account Reconciliation Desk
               </span>
             </div>
-            <h3 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+            <h3 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
               Bachs.io Unmatched Deposits
             </h3>
             <p className="text-xs md:text-sm text-emerald-100/80 max-w-2xl leading-relaxed">
@@ -273,14 +273,14 @@ export function AdminUnmatchedDepositsTab() {
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             <div className="bg-emerald-900/60 border border-emerald-500/30 rounded-2xl px-4 py-3 text-center">
-              <span className="text-[10px] uppercase font-bold text-emerald-300 block">Pending Review</span>
-              <span className="text-2xl font-black text-amber-400 font-mono">{pendingCount}</span>
+              <span className="text-[10px] font-bold text-emerald-300 block">Pending Review</span>
+              <span className="text-2xl font-bold text-amber-400 font-mono">{pendingCount}</span>
             </div>
             <button
               type="button"
               onClick={handleSyncBachs}
               disabled={syncing}
-              className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition shadow-lg flex items-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+              className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw size={14} className={cn(syncing && 'animate-spin')} />
               <span>{syncing ? 'Reconciling…' : 'Sync Bachs (30d)'}</span>
@@ -297,7 +297,7 @@ export function AdminUnmatchedDepositsTab() {
               key={st}
               onClick={() => setFilterStatus(st)}
               className={cn(
-                'px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition cursor-pointer',
+                'px-4 py-2 text-xs font-bold  rounded-xl transition cursor-pointer',
                 filterStatus === st
                   ? 'bg-slate-900 text-white shadow-sm'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
@@ -330,7 +330,7 @@ export function AdminUnmatchedDepositsTab() {
         ) : filteredPayments.length === 0 ? (
           <div className="p-12 text-center space-y-3">
             <CheckCircle2 size={40} className="text-emerald-500 mx-auto" />
-            <h4 className="font-black text-slate-800 text-base">No {filterStatus} unmatched payments</h4>
+            <h4 className="font-bold text-slate-800 text-base">No {filterStatus} unmatched payments</h4>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               All incoming Bachs.io virtual account payments have either been automatically matched or successfully resolved.
             </p>
@@ -338,7 +338,7 @@ export function AdminUnmatchedDepositsTab() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] tracking-wider">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[10px] tracking-wider">
                 <tr>
                   <th className="px-5 py-3.5">Time / Reference</th>
                   <th className="px-5 py-3.5">Amount</th>
@@ -370,7 +370,7 @@ export function AdminUnmatchedDepositsTab() {
                         </td>
 
                         <td className="px-5 py-4">
-                          <span className="text-base font-black text-emerald-700 font-mono">
+                          <span className="text-base font-bold text-emerald-700 font-mono">
                             {formatCurrency(p.amount)}
                           </span>
                         </td>
@@ -392,7 +392,7 @@ export function AdminUnmatchedDepositsTab() {
                           </div>
                           {p.candidate_reason && (
                             <p className="text-[10px] text-indigo-600 mt-1 font-semibold flex items-center gap-1">
-                              <span>🎯 {p.candidate_reason}</span>
+ <span> {p.candidate_reason}</span>
                             </p>
                           )}
                         </td>
@@ -400,7 +400,7 @@ export function AdminUnmatchedDepositsTab() {
                         <td className="px-5 py-4 space-y-1">
                           <span
                             className={cn(
-                              'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1',
+                              'px-2.5 py-1 rounded-full text-[10px] font-bold  inline-flex items-center gap-1',
                               p.status === 'pending'
                                 ? 'bg-amber-100 text-amber-900'
                                 : p.status === 'credited'
@@ -408,7 +408,7 @@ export function AdminUnmatchedDepositsTab() {
                                 : 'bg-slate-100 text-slate-600'
                             )}
                           >
-                            {p.status === 'pending' ? '⏳ Pending' : p.status === 'credited' ? '✓ Credited' : p.status}
+ {p.status === 'pending' ? '⏳ Pending' : p.status === 'credited' ? ' Credited' : p.status}
                           </span>
                           {p.resolved_at && (
                             <p className="text-[10px] text-slate-400">
@@ -431,7 +431,7 @@ export function AdminUnmatchedDepositsTab() {
                             <button
                               type="button"
                               onClick={() => openCreditModal(p)}
-                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition shadow-sm inline-flex items-center gap-1 cursor-pointer active:scale-95"
+                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-sm inline-flex items-center gap-1 cursor-pointer"
                             >
                               <UserCheck size={13} />
                               <span>Credit User</span>
@@ -445,7 +445,7 @@ export function AdminUnmatchedDepositsTab() {
                         <tr className="bg-slate-900 text-slate-200">
                           <td colSpan={6} className="p-4 text-xs font-mono">
                             <div className="flex items-center justify-between pb-2 border-b border-slate-700 text-slate-400">
-                              <span className="font-bold uppercase tracking-wider">Raw Bachs.io Webhook Payload</span>
+                              <span className="font-bold ">Raw Bachs.io Webhook Payload</span>
                               <span className="text-[10px]">Reference: {p.reference}</span>
                             </div>
                             <pre className="mt-2 text-[11px] overflow-x-auto p-3 bg-black/50 rounded-xl">
@@ -469,10 +469,10 @@ export function AdminUnmatchedDepositsTab() {
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl space-y-5 border border-slate-200 text-left">
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div>
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
                   Manual Virtual Account Resolution
                 </span>
-                <h4 className="text-xl font-black text-slate-900 mt-1">
+                <h4 className="text-xl font-bold text-slate-900 mt-1">
                   Credit ₦{creditModalPayment.amount.toLocaleString()} to User
                 </h4>
                 <p className="text-xs text-slate-500">
@@ -484,7 +484,7 @@ export function AdminUnmatchedDepositsTab() {
                 onClick={() => setCreditModalPayment(null)}
                 className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer"
               >
-                ✕
+ 
               </button>
             </div>
 
@@ -492,7 +492,7 @@ export function AdminUnmatchedDepositsTab() {
             <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 text-xs space-y-1.5 text-emerald-950">
               <div className="flex justify-between">
                 <span className="text-slate-500">Sender Name:</span>
-                <span className="font-bold">{creditModalPayment.sender_name || 'N/A'}</span>
+                <span className="font-semibold">{creditModalPayment.sender_name || 'N/A'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Sender Bank:</span>
@@ -500,7 +500,7 @@ export function AdminUnmatchedDepositsTab() {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Bank Narration:</span>
-                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 font-bold">
+                <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 font-semibold">
                   {creditModalPayment.narration || '(Empty)'}
                 </span>
               </div>
@@ -554,7 +554,7 @@ export function AdminUnmatchedDepositsTab() {
               {selectedUser && (
                 <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-2 border border-slate-800">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                    <span className="text-[10px] font-bold text-emerald-400 tracking-wider">
                       Selected Target User
                     </span>
                     <button
@@ -578,8 +578,8 @@ export function AdminUnmatchedDepositsTab() {
                     </div>
                   </div>
                   <div className="border-t border-slate-800 pt-2 flex items-center justify-between text-xs">
-                    <span className="text-emerald-300 font-bold">New Balance After Credit:</span>
-                    <span className="font-mono font-black text-emerald-400 text-sm">
+                    <span className="text-emerald-300 font-semibold">New Balance After Credit:</span>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
                       {formatCurrency(Number(selectedUser.wallet_balance ?? selectedUser.balance ?? 0) + Number(creditModalPayment.amount))}
                     </span>
                   </div>
@@ -613,7 +613,7 @@ export function AdminUnmatchedDepositsTab() {
                 type="button"
                 onClick={handleExecuteCredit}
                 disabled={!selectedUser || submittingCredit}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition shadow-md flex items-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {submittingCredit ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
                 <span>Confirm & Credit Wallet</span>

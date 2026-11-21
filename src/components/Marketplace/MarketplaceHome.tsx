@@ -201,7 +201,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
       });
       if (res.plan) {
         setEsimPlans(prev => [res.plan, ...prev]);
-        toast.success(`🎉 eSIM Plan "${res.plan.title}" posted successfully!`);
+ toast.success(` eSIM Plan "${res.plan.title}" posted successfully!`);
         setCreateEsimModalOpen(false);
         setNewEsimTitle('');
         setNewEsimPrice('');
@@ -354,7 +354,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-3xl overflow-hidden border border-emerald-500/20">
+    <div className="min-h-screen bg-brand-950 rounded-3xl overflow-hidden border border-emerald-500/20">
       {/* ── POPUP MESSAGE WHEN USER CLICKS ON MARKETPLACE ──────────────────── */}
       <AnimatePresence>
         {showMarketplacePopup && (
@@ -383,10 +383,10 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   <Info className="w-6 h-6" />
                 </div>
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
                     Important Notice
                   </span>
-                  <h3 className="text-lg font-black text-white mt-1">
+                  <h3 className="text-lg font-bold text-white mt-1">
                     Foreign Numbers & eSIM Guide
                   </h3>
                 </div>
@@ -394,7 +394,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
               <div className="space-y-3 text-xs sm:text-sm text-slate-200 bg-slate-800/80 border border-slate-700 rounded-2xl p-4 leading-relaxed">
                 <div className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
                     1
                   </span>
                   <p>
@@ -403,7 +403,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                 </div>
 
                 <div className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
                     2
                   </span>
                   <p>
@@ -412,7 +412,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                 </div>
 
                 <div className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full bg-teal-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  <span className="w-5 h-5 rounded-full bg-teal-400 text-slate-950 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
                     3
                   </span>
                   <p>
@@ -426,7 +426,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   <Wallet className="w-4 h-4 text-emerald-400" />
                   Your Current Wallet Balance:
                 </span>
-                <span className="text-base font-black text-emerald-400">
+                <span className="text-base font-bold text-emerald-400">
                   ₦{Number(liveWalletBalance).toLocaleString()}
                 </span>
               </div>
@@ -438,14 +438,14 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     setShowMarketplacePopup(false);
                     window.dispatchEvent(new CustomEvent('open-fund-modal'));
                   }}
-                  className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-black text-xs transition"
+                  className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-bold text-xs transition"
                 >
                   + Fund Wallet First
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowMarketplacePopup(false)}
-                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs shadow-lg transition"
+                  className="flex-1 py-3 px-4 rounded-xl bg-surface-muted hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg transition"
                 >
                   I Understand, Continue →
                 </button>
@@ -483,10 +483,10 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   <AlertTriangle className="w-6 h-6" />
                 </div>
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30">
+                  <span className="text-[10px] font-bold text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30">
                     Wallet Check Failed
                   </span>
-                  <h3 className="text-xl font-black text-white mt-1">
+                  <h3 className="text-xl font-bold text-white mt-1">
                     Insufficient Balance
                   </h3>
                 </div>
@@ -499,20 +499,20 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
               <div className="bg-slate-950/90 border border-red-500/30 rounded-2xl p-4 space-y-2.5 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400 font-bold">Required Price:</span>
-                  <span className="font-black text-white text-sm">
+                  <span className="text-slate-400 font-semibold">Required Price:</span>
+                  <span className="font-bold text-white text-sm">
                     ₦{Number(insufficientModal.requiredAmount).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between border-t border-slate-800 pt-2">
-                  <span className="text-slate-400 font-bold">Your Wallet Balance:</span>
-                  <span className="font-black text-red-400 text-sm">
+                  <span className="text-slate-400 font-semibold">Your Wallet Balance:</span>
+                  <span className="font-bold text-red-400 text-sm">
                     ₦{Number(insufficientModal.currentBalance).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between border-t border-slate-800 pt-2">
-                  <span className="text-amber-300 font-bold">Amount Needed:</span>
-                  <span className="font-black text-amber-400 text-sm">
+                  <span className="text-amber-300 font-semibold">Amount Needed:</span>
+                  <span className="font-bold text-amber-400 text-sm">
                     ₦{Math.max(0, Number(insufficientModal.requiredAmount) - Number(insufficientModal.currentBalance)).toLocaleString()}
                   </span>
                 </div>
@@ -532,7 +532,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     setInsufficientModal(null);
                     window.dispatchEvent(new CustomEvent('open-fund-modal'));
                   }}
-                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs shadow-lg transition"
+                  className="flex-1 py-3 px-4 rounded-xl bg-surface-muted hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg transition"
                 >
                   Deposit Funds Now →
                 </button>
@@ -543,17 +543,17 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
       </AnimatePresence>
 
       {/* Hero Header */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-emerald-950/90 via-slate-900 to-teal-950/90 border-b border-emerald-500/20 py-10 px-6">
+      <div className="relative overflow-hidden bg-brand-950 border-b border-emerald-500/20 py-10 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
               <div className="inline-flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/30 rounded-full px-3.5 py-1 mb-3">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                <span className="text-xs font-bold text-emerald-300 ">
                   Admin-Verified Foreign Numbers & Digital Assets
                 </span>
               </div>
-              <h1 className="text-3xl md:text-4xl font-black text-white mb-2 tracking-tight">
+              <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 tracking-tight">
                 Foreign Numbers, eSIMs & Socials
               </h1>
               <p className="text-slate-300 text-sm md:text-base max-w-2xl">
@@ -562,11 +562,11 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
               <div className="mt-3 inline-flex items-center gap-2 bg-slate-900/90 border border-slate-700 px-3.5 py-1.5 rounded-xl text-xs text-slate-200">
                 <Wallet className="w-4 h-4 text-emerald-400" />
                 <span>Your Wallet Balance:</span>
-                <strong className="text-emerald-400 font-black">₦{Number(liveWalletBalance).toLocaleString()}</strong>
+                <strong className="text-emerald-400 font-semibold">₦{Number(liveWalletBalance).toLocaleString()}</strong>
                 <button
                   type="button"
                   onClick={() => setShowMarketplacePopup(true)}
-                  className="ml-2 text-[11px] text-amber-300 underline hover:text-amber-200 font-bold"
+                  className="ml-2 text-[11px] text-amber-300 underline hover:text-amber-200 font-semibold"
                 >
                   How it works
                 </button>
@@ -583,7 +583,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     setCreateDefaultType('foreign_number');
                     setCreateModalOpen(true);
                   }}
-                  className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black py-3 px-5 rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-600/30 text-sm cursor-pointer"
+                  className="bg-surface-muted hover:from-emerald-600 hover:to-teal-700 text-white font-bold py-3 px-5 rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-600/30 text-sm cursor-pointer"
                 >
                   <Plus className="w-5 h-5" />
                   + Post Foreign Number (Admin)
@@ -612,39 +612,38 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
         {/* Tabs */}
         <div className="flex gap-2 mb-8 border-b border-slate-800 overflow-x-auto pb-1">
           {[
-            { id: 'browse', label: '🌍 Browse Foreign Numbers & Assets' },
+ { id: 'browse', label: ' Browse Foreign Numbers & Assets' },
             ...(isAdmin
               ? [
                   {
                     id: 'admin-orders',
-                    label: `💬 Buyer Chats & Trace History (${adminOrders.length})`,
+ label: ` Buyer Chats & Trace History (${adminOrders.length})`,
                     badge: pendingAdminOrdersCount,
                   },
                   ...(isSuperOrGeneralAdmin
                     ? [
                         {
                           id: 'manage-admins',
-                          label: `👑 Promote / Manage Admins (${promotedAdmins.length})`,
+ label: ` Promote / Manage Admins (${promotedAdmins.length})`,
                         },
                       ]
                     : []),
                 ]
               : []),
-            { id: 'my-orders', label: '📦 My Purchases & Chat History' },
-            { id: 'my-listings', label: '🏷️ My Listings' },
+ { id: 'my-orders', label: ' My Purchases & Chat History' },
+ { id: 'my-listings', label: ' My Listings' },
           ].map((tab: any) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-5 py-3 font-bold transition border-b-2 whitespace-nowrap flex items-center gap-2 text-sm cursor-pointer ${
-                activeTab === tab.id
+              className={`px-5 py-3 font-bold transition border-b-2 whitespace-nowrap flex items-center gap-2 text-sm cursor-pointer ${ activeTab === tab.id
                   ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5 rounded-t-xl'
                   : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
               <span>{tab.label}</span>
               {tab.badge > 0 && (
-                <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-amber-500 text-slate-950">
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500 text-slate-950">
                   {tab.badge} Active
                 </span>
               )}
@@ -671,9 +670,9 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
               <div className="flex flex-wrap gap-3">
                 {[
                   { value: 'all', label: 'All Offerings' },
-                  { value: 'foreign_number', label: '📱 Foreign Numbers (Admin Verified)' },
-                  { value: 'esim', label: '📶 International eSIM' },
-                  { value: 'social_account', label: '👥 Social Media Accounts' },
+ { value: 'foreign_number', label: ' Foreign Numbers (Admin Verified)' },
+ { value: 'esim', label: ' International eSIM' },
+ { value: 'social_account', label: ' Social Media Accounts' },
                 ].map((type) => (
                   <button
                     key={type.value}
@@ -681,8 +680,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                       setSelectedType(type.value as any);
                       setSelectedCategory('all');
                     }}
-                    className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${
-                      selectedType === type.value
+                    className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer ${ selectedType === type.value
                         ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
                         : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
                     }`}
@@ -696,13 +694,12 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
                   <button
                     onClick={() => setSelectedCategory('all')}
-                    className={`p-3 rounded-xl border transition text-center cursor-pointer ${
-                      selectedCategory === 'all'
+                    className={`p-3 rounded-xl border transition text-center cursor-pointer ${ selectedCategory === 'all'
                         ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
                         : 'bg-slate-800/40 border-slate-700/50 text-slate-300 hover:border-slate-600'
                     }`}
                   >
-                    <div className="text-lg mb-1">🌐</div>
+ <div className="text-lg mb-1"></div>
                     <div className="text-xs font-semibold">All</div>
                   </button>
 
@@ -712,8 +709,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                       <button
                         key={cat.id}
                         onClick={() => setSelectedCategory(cat.id)}
-                        className={`p-3 rounded-xl border transition text-center cursor-pointer ${
-                          selectedCategory === cat.id
+                        className={`p-3 rounded-xl border transition text-center cursor-pointer ${ selectedCategory === cat.id
                             ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
                             : 'bg-slate-800/40 border-slate-700/50 text-slate-300 hover:border-slate-600'
                         }`}
@@ -729,11 +725,11 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
             {/* Banner explaining the Foreign Number instant chat + wallet requirement */}
             <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start sm:items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 font-black">
-                  💬
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0 font-semibold">
+ 
                 </div>
                 <div className="text-xs text-slate-200 space-y-0.5">
-                  <p className="font-black text-emerald-300 text-sm">
+                  <p className="font-bold text-emerald-300 text-sm">
                     How Foreign Number & eSIM Purchase Works
                   </p>
                   <p className="text-slate-300">
@@ -747,7 +743,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     setCreateDefaultType('foreign_number');
                     setCreateModalOpen(true);
                   }}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shrink-0 transition cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shrink-0 transition cursor-pointer"
                 >
                   + Post New Number
                 </button>
@@ -756,13 +752,13 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
             {/* eSIM Instant Activation Banner & Packages */}
             {(selectedType === 'all' || selectedType === 'esim') && (
-              <div className="bg-gradient-to-r from-teal-950/90 via-slate-900 to-emerald-950/90 border border-teal-500/30 rounded-2xl p-6 shadow-xl">
+              <div className="bg-brand-900 border border-teal-500/30 rounded-2xl p-6 shadow-xl">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="space-y-2 max-w-xl">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-bold">
-                      <span>📶 Official International eSIM Desk</span>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-500/30 text-teal-300 text-xs font-semibold">
+ <span> Official International eSIM Desk</span>
                     </div>
-                    <h2 className="text-2xl font-black text-white">
+                    <h2 className="text-2xl font-bold text-white">
                       Instant Global eSIM Profiles (USA, UK, Europe & 150+ Countries)
                     </h2>
                     <p className="text-slate-300 text-sm leading-relaxed">
@@ -788,7 +784,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                           setEsimChatOpen(true);
                         }
                       }}
-                      className="bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold px-5 py-3 rounded-xl shadow-lg transition flex items-center gap-2 whitespace-nowrap cursor-pointer text-xs sm:text-sm"
+                      className="bg-surface-muted hover:from-teal-600 hover:to-emerald-700 text-white font-bold px-5 py-3 rounded-xl shadow-lg transition flex items-center gap-2 whitespace-nowrap cursor-pointer text-xs sm:text-sm"
                     >
                       <MessageSquare className="w-4 h-4" />
                       Message Admin for eSIM
@@ -798,7 +794,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
                 {esimPlans.length === 0 ? (
                   <div className="mt-6 pt-6 border-t border-slate-800/80 text-center py-8 px-4 bg-slate-900/60 rounded-2xl border border-slate-800/80 space-y-3">
-                    <p className="text-sm text-slate-200 font-bold">
+                    <p className="text-sm text-slate-200 font-semibold">
                       No active eSIM packages currently posted
                     </p>
                     <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
@@ -835,8 +831,8 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                         )}
                         <div>
                           <div className="flex items-center justify-between mb-2 pr-6">
-                            <span className="text-2xl">{pkg.flag || '📶'}</span>
-                            <span className="text-base font-black text-teal-400">{pkg.price}</span>
+ <span className="text-2xl">{pkg.flag || ''}</span>
+                            <span className="text-base font-bold text-teal-400">{pkg.price}</span>
                           </div>
                           <h4 className="font-bold text-white group-hover:text-teal-300 transition text-sm">
                             {pkg.title}
@@ -845,7 +841,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                             {pkg.desc || `${pkg.data_amount} • ${pkg.duration} • ${pkg.carrier}`}
                           </p>
                         </div>
-                        <div className="mt-4 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-teal-400 font-bold">
+                        <div className="mt-4 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-teal-400 font-semibold">
                           <span>Click to Open Chat & Get eSIM</span>
                           <ExternalLink className="w-3.5 h-3.5" />
                         </div>
@@ -865,11 +861,11 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   </div>
                 ) : listings.length === 0 ? (
                   <div className="text-center py-16 px-6 bg-slate-900/50 rounded-2xl border border-slate-800 space-y-4">
-                    <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-2xl font-black">
-                      📱
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-2xl font-semibold">
+ 
                     </div>
                     <div className="max-w-md mx-auto space-y-1">
-                      <h4 className="text-base font-black text-white">No active numbers or accounts currently posted</h4>
+                      <h4 className="text-base font-bold text-white">No active numbers or accounts currently posted</h4>
                       <p className="text-xs text-slate-400 leading-relaxed">
                         Our admins will post verified foreign numbers and assets with real prices here. Check back soon or message our desk!
                       </p>
@@ -881,7 +877,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                           setCreateDefaultType('foreign_number');
                           setCreateModalOpen(true);
                         }}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-950 transition cursor-pointer"
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-950 transition cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
                         + Post Real Foreign Number
@@ -909,18 +905,18 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                           className="bg-slate-900/80 border border-slate-700/60 hover:border-emerald-500/60 rounded-2xl overflow-hidden cursor-pointer transition group flex flex-col justify-between shadow-lg"
                         >
                           <div>
-                            <div className="h-36 bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-950/60 flex flex-col items-center justify-center relative overflow-hidden p-4 text-center">
-                              <div className="text-4xl mb-1 group-hover:scale-110 transition">
-                                {listing.marketplace_categories?.icon || '📱'}
+                            <div className="h-36 bg-brand-800 flex flex-col items-center justify-center relative overflow-hidden p-4 text-center">
+                              <div className="text-4xl mb-1 transition">
+ {listing.marketplace_categories?.icon || ''}
                               </div>
                               {phoneDisplay && (
-                                <span className="font-mono font-black text-sm text-emerald-300 bg-slate-950/90 px-3 py-1 rounded-lg border border-emerald-500/40 shadow">
+                                <span className="font-mono font-bold text-sm text-emerald-300 bg-slate-950/90 px-3 py-1 rounded-lg border border-emerald-500/40 shadow">
                                   {phoneDisplay}
                                 </span>
                               )}
                               <div className="absolute top-3 left-3">
-                                <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                  {isForeignNumber ? '✓ Admin Official Number' : 'Verified Asset'}
+                                <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+ {isForeignNumber ? ' Admin Official Number' : 'Verified Asset'}
                                 </span>
                               </div>
                               <div className="absolute top-3 right-3 flex items-center gap-1.5">
@@ -943,7 +939,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
                             <div className="p-5 space-y-3">
                               <div>
-                                <h3 className="font-black text-white group-hover:text-emerald-400 transition line-clamp-2 text-base">
+                                <h3 className="font-bold text-white group-hover:text-emerald-400 transition line-clamp-2 text-base">
                                   {listing.title}
                                 </h3>
                                 <p className="text-xs text-slate-400 line-clamp-2 mt-1">
@@ -954,10 +950,10 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                               <div className="flex items-center justify-between pt-2 border-t border-slate-800">
                                 <div className="text-xs text-slate-300 font-semibold">
                                   {isForeignNumber
-                                    ? '👑 NORODATA Official Admin'
+ ? ' NORODATA Official Admin'
                                     : listing.profiles?.full_name || 'Verified Seller'}
                                 </div>
-                                <div className="flex items-center gap-1 text-amber-400 text-xs font-bold">
+                                <div className="flex items-center gap-1 text-amber-400 text-xs font-semibold">
                                   <Star className="w-3.5 h-3.5 fill-current" />
                                   {(listing.profiles?.marketplace_seller_rating || 5.0).toFixed(1)}
                                 </div>
@@ -967,17 +963,17 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
                           <div className="px-5 pb-5 pt-2 flex items-center justify-between gap-2">
                             <div>
-                              <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              <span className="text-[10px] font-bold text-slate-400 block">
                                 Auto-Debit Price
                               </span>
-                              <div className="text-xl font-black text-emerald-400">
+                              <div className="text-xl font-bold text-emerald-400">
                                 ₦{Number(listing.price).toLocaleString()}
                               </div>
                             </div>
                             <button
                               type="button"
                               disabled={isOpening}
-                              className="bg-emerald-600 group-hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-black text-xs transition flex items-center gap-1.5 shadow-md"
+                              className="bg-emerald-600 group-hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 shadow-md"
                             >
                               {isOpening ? (
                                 <>
@@ -1012,7 +1008,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
           <div className="space-y-4">
             <div className="bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="font-black text-white text-base flex items-center gap-2">
+                <h3 className="font-bold text-white text-base flex items-center gap-2">
                   <History className="w-5 h-5 text-emerald-400" />
                   Incoming Foreign Number Chats & Permanent Audit History
                 </h3>
@@ -1064,16 +1060,15 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            order.status === 'completed'
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${ order.status === 'completed'
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                               : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                           }`}
                         >
-                          {order.status === 'completed' ? '✓ Completed & Wallet Debited' : '⏳ Awaiting Login Code'}
+ {order.status === 'completed' ? ' Completed & Wallet Debited' : '⏳ Awaiting Login Code'}
                         </span>
                         {order.code_requested && order.status !== 'completed' && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-500/20 text-red-300 border border-red-500/40 flex items-center gap-1">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/40 flex items-center gap-1">
                             <BellRing className="w-3 h-3" /> Buyer Requested Login Code
                           </span>
                         )}
@@ -1081,7 +1076,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                           ID: {order.id} • {msgCount} permanent msg{msgCount === 1 ? '' : 's'}
                         </span>
                       </div>
-                      <h3 className="font-black text-white text-base">
+                      <h3 className="font-bold text-white text-base">
                         {order.marketplace_listings?.title || 'Foreign Number Order'}
                       </h3>
                       {phoneNum && (
@@ -1110,10 +1105,10 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     </div>
 
                     <div className="flex sm:flex-col items-end justify-between gap-2 shrink-0">
-                      <div className="text-lg font-black text-emerald-400">
+                      <div className="text-lg font-bold text-emerald-400">
                         ₦{Number(order.price).toLocaleString()}
                       </div>
-                      <button className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5">
+                      <button className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5">
                         <MessageSquare className="w-3.5 h-3.5" />
                         Open Chat & Send Code
                       </button>
@@ -1134,7 +1129,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   <UserPlus className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-white">
+                  <h3 className="text-lg font-bold text-white">
                     Promote Email to Foreign Number & Marketplace Admin
                   </h3>
                   <p className="text-xs text-slate-400">
@@ -1155,7 +1150,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                 <button
                   type="submit"
                   disabled={promotingEmail || !promoteEmailInput.trim()}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                  className="px-6 py-3 rounded-xl bg-surface-muted hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-lg"
                 >
                   {promotingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                   Promote Email to Admin
@@ -1163,7 +1158,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
               </form>
 
               <div className="pt-4 border-t border-slate-800 space-y-2">
-                <p className="text-xs font-black uppercase tracking-wider text-slate-400">
+                <p className="text-xs font-bold text-slate-400">
                   Active Foreign Number & Marketplace Admins ({promotedAdmins.length})
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1183,7 +1178,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                           <span className="text-xs font-bold text-white truncate">{email}</span>
                           {isCore && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
                               Core Admin
                             </span>
                           )}
@@ -1235,12 +1230,11 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <div className="text-lg font-black text-emerald-400">
+                      <div className="text-lg font-bold text-emerald-400">
                         ₦{Number(listing.price).toLocaleString()}
                       </div>
                       <span
-                        className={`text-xs px-2 py-1 rounded-full ${
-                          listing.status === 'available'
+                        className={`text-xs px-2 py-1 rounded-full ${ listing.status === 'available'
                             ? 'bg-emerald-500/20 text-emerald-300'
                             : 'bg-slate-700 text-slate-300'
                         }`}
@@ -1312,20 +1306,20 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                         </span>
                       </div>
                       {phoneNum && (
-                        <p className="text-xs font-mono text-emerald-400 font-bold">
+                        <p className="text-xs font-mono text-emerald-400 font-semibold">
                           Number: {phoneNum}
                         </p>
                       )}
                       <p className="text-xs text-slate-400">
                         Status:{' '}
-                        <span className="capitalize text-emerald-400 font-bold">
+                        <span className="capitalize text-emerald-400 font-semibold">
                           {order.status === 'completed' ? 'Completed & Auto-Debited' : 'Chat Open with Admin'}
                         </span>
                         {order.verification_code ? ` • Login Code: ${order.verification_code}` : ''}
                       </p>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-black text-emerald-400">
+                      <div className="text-lg font-bold text-emerald-400">
                         ₦{Number(order.price).toLocaleString()}
                       </div>
                       <span className="text-xs text-emerald-300 font-bold flex items-center gap-1 justify-end mt-1">
@@ -1405,13 +1399,13 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
 
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-400 text-2xl shrink-0">
-                📶
+ 
               </div>
               <div>
-                <span className="text-[10px] font-black uppercase tracking-widest text-teal-400 bg-teal-500/10 px-2.5 py-0.5 rounded-full border border-teal-500/30">
+                <span className="text-[10px] font-bold text-teal-400 bg-teal-500/10 px-2.5 py-0.5 rounded-full border border-teal-500/30">
                   Admin Inventory
                 </span>
-                <h3 className="text-lg font-black text-white mt-1">Post Real eSIM Package</h3>
+                <h3 className="text-lg font-bold text-white mt-1">Post Real eSIM Package</h3>
               </div>
             </div>
 
@@ -1425,7 +1419,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     value={newEsimCountry}
                     onChange={(e) => setNewEsimCountry(e.target.value)}
                     placeholder="e.g. United States, UK, Europe"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
                 <div>
@@ -1435,8 +1429,8 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     required
                     value={newEsimFlag}
                     onChange={(e) => setNewEsimFlag(e.target.value)}
-                    placeholder="e.g. 🇺🇸, 🇬🇧, 🌍, 🇨🇦"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+ placeholder="e.g. 🇺🇸, 🇬🇧, , 🇨🇦"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
               </div>
@@ -1449,7 +1443,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   value={newEsimTitle}
                   onChange={(e) => setNewEsimTitle(e.target.value)}
                   placeholder="e.g. USA 5GB (30 Days) 5G Data"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                 />
               </div>
 
@@ -1462,7 +1456,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     value={newEsimData}
                     onChange={(e) => setNewEsimData(e.target.value)}
                     placeholder="e.g. 5GB, 10GB, 20GB"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
                 <div>
@@ -1473,7 +1467,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     value={newEsimDuration}
                     onChange={(e) => setNewEsimDuration(e.target.value)}
                     placeholder="e.g. 30 Days, 15 Days"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
               </div>
@@ -1489,7 +1483,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     value={newEsimPrice}
                     onChange={(e) => setNewEsimPrice(e.target.value)}
                     placeholder="e.g. 8500"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
                 <div>
@@ -1499,7 +1493,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                     value={newEsimCarrier}
                     onChange={(e) => setNewEsimCarrier(e.target.value)}
                     placeholder="e.g. AT&T / T-Mobile 5G"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                   />
                 </div>
               </div>
@@ -1511,7 +1505,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                   value={newEsimDesc}
                   onChange={(e) => setNewEsimDesc(e.target.value)}
                   placeholder="e.g. Instant QR Activation • Unlocked iPhone & Android"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-bold"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-semibold"
                 />
               </div>
 
@@ -1526,7 +1520,7 @@ export const MarketplaceHome: React.FC<MarketplaceHomeProps> = ({
                 <button
                   type="submit"
                   disabled={submittingEsim}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-bold transition shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="flex-1 py-2.5 rounded-xl bg-surface-muted hover:from-teal-600 hover:to-emerald-700 text-white font-bold transition shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {submittingEsim ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                   <span>{submittingEsim ? 'Publishing...' : 'Publish eSIM Plan'}</span>

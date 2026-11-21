@@ -214,16 +214,16 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
   return (
     <div className="space-y-4">
       {/* Overview Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 rounded-3xl p-5 text-white border border-emerald-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-brand-900 rounded-3xl p-5 text-white border border-emerald-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-2 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
               <Phone size={18} />
             </span>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
               Foreign Numbers & Buyer Chats Desk
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-400 text-slate-950">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400 text-slate-950">
               Live Hub
             </span>
           </div>
@@ -236,7 +236,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
           <button
             type="button"
             onClick={() => setCreateListingOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-md transition cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-surface-muted hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
           >
             <Plus size={14} />
             <span>+ Post Foreign Number</span>
@@ -255,19 +255,19 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
       {/* Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl p-3.5 border border-slate-100 shadow-sm space-y-0.5">
-          <p className="text-[10px] uppercase font-bold text-slate-400">Total Buyer Chats</p>
-          <p className="text-xl font-black text-slate-900">{orders.length}</p>
+          <p className="text-[10px] font-bold text-slate-400">Total Buyer Chats</p>
+          <p className="text-xl font-bold text-slate-900">{orders.length}</p>
         </div>
         <div className="bg-white rounded-2xl p-3.5 border border-amber-100 shadow-sm space-y-0.5">
-          <p className="text-[10px] uppercase font-bold text-amber-600">🟡 Open Chats</p>
-          <p className="text-xl font-black text-amber-600">{openCount}</p>
+ <p className="text-[10px] font-bold text-amber-600"> Open Chats</p>
+          <p className="text-xl font-bold text-amber-600">{openCount}</p>
         </div>
         <div className="bg-white rounded-2xl p-3.5 border border-emerald-100 shadow-sm space-y-0.5">
-          <p className="text-[10px] uppercase font-bold text-emerald-600">🟢 Completed Deals</p>
-          <p className="text-xl font-black text-emerald-600">{completedCount}</p>
+ <p className="text-[10px] font-bold text-emerald-600"> Completed Deals</p>
+          <p className="text-xl font-bold text-emerald-600">{completedCount}</p>
         </div>
         <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-sm space-y-0.5">
-          <p className="text-[10px] uppercase font-bold text-blue-600">🛡️ Auto-Debit Guard</p>
+ <p className="text-[10px] font-bold text-blue-600"> Auto-Debit Guard</p>
           <p className="text-xs font-bold text-blue-700 mt-1">Atomic Locking</p>
         </div>
       </div>
@@ -290,12 +290,11 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
             </div>
 
             {/* Status Tabs */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-semibold">
               <button
                 type="button"
                 onClick={() => setStatusFilter('all')}
-                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
-                  statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${ statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 All ({orders.length})
@@ -303,8 +302,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
               <button
                 type="button"
                 onClick={() => setStatusFilter('open')}
-                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
-                  statusFilter === 'open' ? 'bg-amber-500 text-white shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${ statusFilter === 'open' ? 'bg-amber-500 text-white shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 Open ({openCount})
@@ -312,8 +310,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
               <button
                 type="button"
                 onClick={() => setStatusFilter('completed')}
-                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${
-                  statusFilter === 'completed' ? 'bg-emerald-600 text-white shadow-sm font-black' : 'text-slate-500 hover:text-slate-800'
+                className={`flex-1 py-1 rounded-lg transition cursor-pointer text-center ${ statusFilter === 'completed' ? 'bg-emerald-600 text-white shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 Completed ({completedCount})
@@ -339,15 +336,14 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                   <div
                     key={ord.id}
                     onClick={() => setSelectedOrderId(ord.id)}
-                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${
-                      isSelected
+                    className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${ isSelected
                         ? 'bg-emerald-50/80 border-emerald-400 shadow-sm'
                         : 'bg-white hover:bg-slate-50 border-slate-100'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <div className="min-w-0">
-                        <span className="font-black text-xs text-slate-900 block truncate">
+                        <span className="font-bold text-xs text-slate-900 block truncate">
                           {buyerLabel}
                         </span>
                         {ord.buyer?.email && (
@@ -357,8 +353,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                         )}
                       </div>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
-                          isDone
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${ isDone
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                             : 'bg-amber-100 text-amber-800 border border-amber-300'
                         }`}
@@ -401,12 +396,11 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-base font-black text-slate-900 truncate">
+                      <h3 className="text-base font-bold text-slate-900 truncate">
                         {activeOrder.buyer?.full_name || activeOrder.buyer?.name || 'Buyer'}
                       </h3>
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                          activeOrder.status === 'completed'
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${ activeOrder.status === 'completed'
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                             : 'bg-amber-100 text-amber-800 border border-amber-300'
                         }`}
@@ -438,12 +432,12 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200">
                   <div className="flex items-center gap-3 text-xs">
                     <span>
-                      Price: <strong className="font-black text-slate-900">₦{currentPrice.toLocaleString()}</strong>
+                      Price: <strong className="font-bold text-slate-900">₦{currentPrice.toLocaleString()}</strong>
                     </span>
                     <span className="text-slate-300">•</span>
                     <span>
                       Buyer Wallet:{' '}
-                      <strong className="font-black text-slate-900">
+                      <strong className="font-bold text-slate-900">
                         ₦{buyerBalance.toLocaleString()}
                       </strong>
                     </span>
@@ -452,12 +446,12 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                   {/* Clear line: "Enough balance" (green) or "Short by ₦X" (red) */}
                   <div>
                     {buyerBalance >= currentPrice ? (
-                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                         <CheckCircle2 size={13} className="text-emerald-600" />
                         Enough balance
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-red-100 text-red-800 border border-red-300">
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-300">
                         <AlertCircle size={13} className="text-red-600" />
                         Short by ₦{(currentPrice - buyerBalance).toLocaleString()}
                       </span>
@@ -488,8 +482,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                         className={`flex ${isFromAdmin ? 'justify-end' : 'justify-start'}`}
                       >
                         <div
-                          className={`max-w-[85%] rounded-2xl p-3 text-xs ${
-                            isVerificationCode
+                          className={`max-w-[85%] rounded-2xl p-3 text-xs ${ isVerificationCode
                               ? 'bg-emerald-950 border-2 border-emerald-500 text-emerald-100 shadow-lg w-full max-w-sm'
                               : isFromAdmin
                               ? 'bg-emerald-600 text-white rounded-br-none'
@@ -497,8 +490,8 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                           }`}
                         >
                           <div className="flex items-center justify-between gap-3 mb-1">
-                            <span className="font-black uppercase tracking-wider text-[9px] opacity-80">
-                              {isFromAdmin ? '👑 Official Admin Desk' : activeOrder.buyer?.full_name || 'Buyer'}
+                            <span className="font-bold text-[9px] opacity-80">
+ {isFromAdmin ? ' Official Admin Desk' : activeOrder.buyer?.full_name || 'Buyer'}
                             </span>
                             <span className="text-[9px] opacity-60">
                               {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -507,13 +500,13 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
 
                           {isVerificationCode ? (
                             <div className="space-y-2">
-                              <div className="flex items-center gap-1.5 font-black text-emerald-300 uppercase tracking-wider text-[11px]">
+                              <div className="flex items-center gap-1.5 font-bold text-emerald-300 text-[11px]">
                                 <Key size={14} />
                                 <span>Verification Code Delivered</span>
                               </div>
                               <p className="text-slate-300">{m.content || m.body}</p>
                               <div className="flex items-center justify-between bg-slate-900 p-2.5 rounded-xl border border-emerald-500/40">
-                                <span className="font-mono text-base font-black text-emerald-400 tracking-widest">
+                                <span className="font-mono text-base font-bold text-emerald-400 tracking-widest">
                                   {m.code_value}
                                 </span>
                                 <button
@@ -542,8 +535,8 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                 {/* Admin Fulfillment Box */}
                 {activeOrder.status !== 'completed' ? (
                   <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-3 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="text-emerald-300 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="text-emerald-300 flex items-center gap-1.5 text-[10px]">
                         <Key size={13} />
                         Admin Fulfillment (Atomic Auto-Debit)
                       </span>
@@ -564,7 +557,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                         type="button"
                         onClick={handleAdminSendCodeAndComplete}
                         disabled={fulfilling || !verificationCode.trim()}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition disabled:opacity-50 shadow-md cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition disabled:opacity-50 shadow-md cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
                       >
                         {fulfilling ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
                         <span>Send Code & Complete (debit ₦{currentPrice.toLocaleString()})</span>
@@ -573,7 +566,7 @@ function ForeignNumbersAdminDesk({ user, adminEmail }: { user: any; adminEmail: 
                   </div>
                 ) : (
                   <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-2.5 text-emerald-800 text-xs flex items-center justify-between">
-                    <div className="flex items-center gap-2 font-bold">
+                    <div className="flex items-center gap-2 font-semibold">
                       <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
                       <span>Deal Completed! ₦{currentPrice.toLocaleString()} was debited from buyer wallet.</span>
                     </div>
@@ -682,7 +675,7 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
       const res = await marketplaceService.createEsimPlan({
         title: title.trim(),
         country: country.trim(),
-        flag: flag.trim() || '🌐',
+ flag: flag.trim() || '',
         data_amount: dataAmount.trim(),
         duration: duration.trim(),
         numericPrice: numPrice,
@@ -717,13 +710,13 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
 
   return (
     <div className="space-y-4">
-      <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-brand-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="p-2 rounded-2xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
               <Globe size={20} />
             </span>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight">Real eSIM Packages Manager</h2>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Real eSIM Packages Manager</h2>
           </div>
           <p className="text-xs text-teal-100/70 mt-1 max-w-xl">
             Post and manage real international eSIM packages. Users see these plans live on the Marketplace and can request instant activation.
@@ -732,7 +725,7 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
         <button
           type="button"
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white font-black text-xs shadow-lg transition cursor-pointer shrink-0"
+          className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-surface-muted hover:from-teal-600 hover:to-emerald-700 text-white font-bold text-xs shadow-lg transition cursor-pointer shrink-0"
         >
           <Plus size={16} />
           <span>+ Post New eSIM Plan</span>
@@ -742,14 +735,14 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
       {loading ? (
         <div className="text-center py-16 bg-white rounded-3xl border border-slate-200">
           <RefreshCw className="w-8 h-8 text-teal-600 animate-spin mx-auto mb-2" />
-          <p className="text-xs text-slate-500 font-bold">Loading active eSIM packages...</p>
+          <p className="text-xs text-slate-500 font-semibold">Loading active eSIM packages...</p>
         </div>
       ) : plans.length === 0 ? (
         <div className="text-center py-16 px-6 bg-white rounded-3xl border border-slate-200 space-y-3 shadow-sm">
-          <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-600 text-2xl mx-auto font-black">
-            📶
+          <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-600 text-2xl mx-auto font-semibold">
+ 
           </div>
-          <h3 className="text-base font-black text-slate-900">No eSIM packages currently posted</h3>
+          <h3 className="text-base font-bold text-slate-900">No eSIM packages currently posted</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
             You have not posted any real eSIM packages yet. Click the button below to add your first package with live pricing.
           </p>
@@ -779,16 +772,16 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
               </button>
 
               <div className="flex items-center gap-3 pr-10">
-                <span className="text-3xl">{p.flag || '📶'}</span>
+ <span className="text-3xl">{p.flag || ''}</span>
                 <div>
-                  <h4 className="font-black text-slate-900 text-sm line-clamp-1">{p.title}</h4>
+                  <h4 className="font-bold text-slate-900 text-sm line-clamp-1">{p.title}</h4>
                   <p className="text-[11px] text-slate-400 font-semibold">{p.country}</p>
                 </div>
               </div>
 
               <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-between text-xs border border-slate-100">
-                <span className="text-slate-500 font-bold">{p.data_amount} • {p.duration}</span>
-                <span className="font-black text-teal-700 text-sm">{p.price}</span>
+                <span className="text-slate-500 font-semibold">{p.data_amount} • {p.duration}</span>
+                <span className="font-bold text-teal-700 text-sm">{p.price}</span>
               </div>
 
               <p className="text-xs text-slate-500 line-clamp-2">{p.desc || p.carrier}</p>
@@ -810,11 +803,11 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
             </button>
 
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center text-2xl font-black shrink-0">
-                📶
+              <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center text-2xl font-bold shrink-0">
+ 
               </div>
               <div>
-                <h3 className="text-lg font-black text-slate-900">Post Real eSIM Package</h3>
+                <h3 className="text-lg font-bold text-slate-900">Post Real eSIM Package</h3>
                 <p className="text-xs text-slate-500">Live inventory for customers on NORODATA</p>
               </div>
             </div>
@@ -839,7 +832,7 @@ function EsimPlansAdminSection({ adminEmail: _adminEmail }: { adminEmail: string
                     required
                     value={flag}
                     onChange={(e) => setFlag(e.target.value)}
-                    placeholder="e.g. 🇺🇸, 🇬🇧, 🌍"
+ placeholder="e.g. 🇺🇸, 🇬🇧, "
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-teal-500"
                   />
                 </div>
@@ -1146,38 +1139,35 @@ export function AdminEsimMessages() {
           <button
             type="button"
             onClick={() => setDeskMode('foreign-numbers')}
-            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
-              deskMode === 'foreign-numbers'
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${ deskMode === 'foreign-numbers'
                 ? 'bg-emerald-600 text-white shadow-lg'
                 : 'bg-slate-800 text-slate-300 hover:text-white'
             }`}
           >
             <Phone size={15} />
-            <span>📱 Foreign Numbers & Buyer Chats</span>
+ <span> Foreign Numbers & Buyer Chats</span>
           </button>
           <button
             type="button"
             onClick={() => setDeskMode('esim')}
-            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
-              deskMode === 'esim'
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${ deskMode === 'esim'
                 ? 'bg-teal-600 text-white shadow-lg'
                 : 'bg-slate-800 text-slate-300 hover:text-white'
             }`}
           >
             <MessageSquare size={15} />
-            <span>📶 eSIM Inquiries ({inquiries.length})</span>
+ <span> eSIM Inquiries ({inquiries.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setDeskMode('esim-plans')}
-            className={`px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${
-              deskMode === 'esim-plans'
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition cursor-pointer ${ deskMode === 'esim-plans'
                 ? 'bg-teal-600 text-white shadow-lg'
                 : 'bg-slate-800 text-slate-300 hover:text-white'
             }`}
           >
             <Globe size={15} />
-            <span>🌐 Manage eSIM Plans</span>
+ <span> Manage eSIM Plans</span>
           </button>
         </div>
         <span className="text-xs font-mono text-emerald-400 font-bold px-2">
@@ -1192,16 +1182,16 @@ export function AdminEsimMessages() {
       ) : (
         <>
           {/* Top Overview Banner */}
-          <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
+          <div className="bg-brand-900 rounded-3xl p-6 text-white border border-teal-500/30 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="p-2 rounded-2xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
                   <MessageSquare size={20} />
                 </span>
-                <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
                   eSIM Customer Messages & Fulfillment Desk
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-teal-400 text-slate-950">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-400 text-slate-950">
                   Live Hub
                 </span>
               </div>
@@ -1212,7 +1202,7 @@ export function AdminEsimMessages() {
 
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
-                <p className="text-[10px] uppercase font-bold text-teal-300/80">Active Operator</p>
+                <p className="text-[10px] font-bold text-teal-300/80">Active Operator</p>
                 <p className="text-xs font-mono font-bold text-white truncate max-w-[200px]">{adminEmail}</p>
               </div>
               <button
@@ -1229,20 +1219,20 @@ export function AdminEsimMessages() {
           {/* Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
             <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-1">
-              <p className="text-[10px] uppercase font-bold text-slate-400">Total Inquiries</p>
-              <p className="text-2xl font-black text-slate-900">{inquiries.length}</p>
+              <p className="text-[10px] font-bold text-slate-400">Total Inquiries</p>
+              <p className="text-2xl font-bold text-slate-900">{inquiries.length}</p>
             </div>
             <div className="bg-white rounded-2xl p-4 border border-amber-100 shadow-sm space-y-1">
-              <p className="text-[10px] uppercase font-bold text-amber-600">🟡 Pending Response</p>
-              <p className="text-2xl font-black text-amber-600">{pendingCount}</p>
+ <p className="text-[10px] font-bold text-amber-600"> Pending Response</p>
+              <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
             </div>
             <div className="bg-white rounded-2xl p-4 border border-blue-100 shadow-sm space-y-1">
-              <p className="text-[10px] uppercase font-bold text-blue-600">🔵 In Progress</p>
-              <p className="text-2xl font-black text-blue-600">{inProgressCount}</p>
+ <p className="text-[10px] font-bold text-blue-600"> In Progress</p>
+              <p className="text-2xl font-bold text-blue-600">{inProgressCount}</p>
             </div>
             <div className="bg-white rounded-2xl p-4 border border-emerald-100 shadow-sm space-y-1">
-              <p className="text-[10px] uppercase font-bold text-emerald-600">🟢 Completed</p>
-              <p className="text-2xl font-black text-emerald-600">{completedCount}</p>
+ <p className="text-[10px] font-bold text-emerald-600"> Completed</p>
+              <p className="text-2xl font-bold text-emerald-600">{completedCount}</p>
             </div>
           </div>
 
@@ -1262,12 +1252,11 @@ export function AdminEsimMessages() {
                   />
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-bold">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-[11px] font-semibold">
                   <button
                     type="button"
                     onClick={() => setFilterStatus('all')}
-                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                      filterStatus === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${ filterStatus === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     All ({inquiries.length})
@@ -1275,8 +1264,7 @@ export function AdminEsimMessages() {
                   <button
                     type="button"
                     onClick={() => setFilterStatus('pending')}
-                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                      filterStatus === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${ filterStatus === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     Pending ({pendingCount})
@@ -1284,8 +1272,7 @@ export function AdminEsimMessages() {
                   <button
                     type="button"
                     onClick={() => setFilterStatus('in_progress')}
-                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                      filterStatus === 'in_progress' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${ filterStatus === 'in_progress' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     Active ({inProgressCount})
@@ -1293,8 +1280,7 @@ export function AdminEsimMessages() {
                   <button
                     type="button"
                     onClick={() => setFilterStatus('completed')}
-                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${
-                      filterStatus === 'completed' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                    className={`flex-1 py-1.5 rounded-lg transition cursor-pointer text-center ${ filterStatus === 'completed' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     Done ({completedCount})
@@ -1315,8 +1301,7 @@ export function AdminEsimMessages() {
                       <div
                         key={inq.id}
                         onClick={() => setSelectedInquiryId(inq.id)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${
-                          isSelected
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative ${ isSelected
                             ? 'bg-teal-50/70 border-teal-400 shadow-sm'
                             : 'bg-white hover:bg-slate-50 border-slate-100'
                         }`}
@@ -1325,8 +1310,7 @@ export function AdminEsimMessages() {
                           <span className="font-bold text-xs text-slate-900 truncate">
                             {inq.user_name}
                           </span>
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase shrink-0 ${
-                            inq.status === 'pending'
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${ inq.status === 'pending'
                               ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : inq.status === 'in_progress'
                               ? 'bg-blue-100 text-blue-800 border border-blue-300'
@@ -1345,7 +1329,7 @@ export function AdminEsimMessages() {
                         </p>
 
                         <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
-                          <span>📱 {inq.device_model || 'Device unspecified'}</span>
+ <span> {inq.device_model || 'Device unspecified'}</span>
                           <span>{new Date(inq.updated_at || inq.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                       </div>
@@ -1362,9 +1346,9 @@ export function AdminEsimMessages() {
                   <div className="pb-4 border-b border-slate-100 space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                           <span>{activeInquiry.user_name}</span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             activeInquiry.status === 'pending'
                               ? 'bg-amber-100 text-amber-800'
                               : activeInquiry.status === 'in_progress'
@@ -1434,14 +1418,13 @@ export function AdminEsimMessages() {
                           className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}
                         >
                           <div
-                            className={`max-w-[85%] rounded-2xl p-3.5 text-xs ${
-                              isAdmin
+                            className={`max-w-[85%] rounded-2xl p-3.5 text-xs ${ isAdmin
                                 ? 'bg-teal-600 text-white rounded-br-none'
                                 : 'bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-3 mb-1">
-                              <span className="font-bold text-[10px] uppercase opacity-75">
+                              <span className="font-bold text-[10px] opacity-75">
                                 {isAdmin ? 'eSIM Admin Desk' : activeInquiry.user_name}
                               </span>
                               <span className="text-[10px] opacity-60">

@@ -210,16 +210,16 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
               aria-label="NORODATA Home"
             >
               <div 
-                className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform" 
+                className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-md transition-transform" 
                 style={{ backgroundColor: '#132613' }}
               >
-                <span className="text-xl font-black text-[#B5D430]">N</span>
+                <span className="text-xl font-bold text-[#B5D430]">N</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-2xl font-black tracking-tight leading-none" style={{ color: '#132613' }}>
+                <span className="text-2xl font-bold tracking-tight leading-none" style={{ color: '#132613' }}>
                   NORODATA
                 </span>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#3B7A3B]">
+                <span className="text-[10px] font-bold text-[#3B7A3B]">
                   VTU & Digital Utilities
                 </span>
               </div>
@@ -361,7 +361,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             </div>
 
             {/* Headline */}
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.1]" style={{ color: '#132613' }}>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.1]" style={{ color: '#132613' }}>
               The Fast, Dependable Way to Recharge & Pay Bills in Nigeria.
             </h1>
 
@@ -374,7 +374,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-2">
               <button
                 onClick={() => onAuth('signup')}
-                className="w-full sm:w-auto px-8 py-4 rounded-2xl text-base font-black text-white shadow-lg hover:shadow-xl flex items-center justify-center gap-3 transition-transform hover:-translate-y-0.5"
+                className="w-full sm:w-auto px-8 py-4 rounded-2xl text-base font-bold text-white shadow-lg hover:shadow-xl flex items-center justify-center gap-3 transition-transform hover:-translate-y-0.5"
                 style={{ backgroundColor: '#3B7A3B' }}
               >
                 <span>Get Started</span>
@@ -421,10 +421,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                   
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                      <span className="text-[11px] font-bold text-emerald-300">
                         Virtual Wallet
                       </span>
-                      <h4 className="text-xl font-black tracking-tight text-white">NORODATA</h4>
+                      <h4 className="text-xl font-bold tracking-tight text-white">NORODATA</h4>
                     </div>
                     <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
                       <Zap size={18} className="text-[#B5D430]" />
@@ -433,14 +433,14 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
                   <div>
                     <span className="text-xs text-slate-300 font-medium block mb-1">Available Balance</span>
-                    <div className="text-3xl sm:text-4xl font-black text-white tracking-tight flex items-baseline gap-1">
+                    <div className="text-3xl sm:text-4xl font-bold text-white tracking-tight flex items-baseline gap-1">
                       <span>₦48,500.00</span>
                     </div>
                   </div>
 
                   <div className="pt-4 border-t border-white/10 flex justify-between items-center text-xs">
                     <div>
-                      <span className="text-[10px] text-slate-400 block uppercase">Dedicated Virtual Account</span>
+                      <span className="text-[10px] text-slate-400 block ">Dedicated Virtual Account</span>
                       <span className="font-bold text-white tracking-wide">Sterling Bank • 8234850192</span>
                     </div>
                     <button
@@ -459,9 +459,9 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
               {/* Floating Live Transaction Mock Items */}
               <div className="bg-white rounded-2xl p-4 border border-[#E2E2DC] shadow-lg space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                  <span className="text-xs font-black uppercase tracking-wider text-slate-500">Live Transaction Feed</span>
+                  <span className="text-xs font-bold text-slate-500">Live Transaction Feed</span>
                   <span className="flex items-center gap-1 text-[11px] font-bold text-[#3B7A3B]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#3B7A3B] animate-ping" /> Instant
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#3B7A3B] " /> Instant
                   </span>
                 </div>
 
@@ -477,7 +477,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-slate-900">₦400.00</p>
+                      <p className="font-bold text-slate-900">₦400.00</p>
                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Delivered</span>
                     </div>
                   </div>
@@ -485,7 +485,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-lg bg-orange-100 text-orange-800 flex items-center justify-center font-bold text-[11px]">
-                        💡
+ 
                       </div>
                       <div>
                         <p className="font-bold text-slate-900 leading-tight">Ikeja Electric Prepaid</p>
@@ -493,7 +493,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-slate-900">₦5,000.00</p>
+                      <p className="font-bold text-slate-900">₦5,000.00</p>
                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Success</span>
                     </div>
                   </div>
@@ -520,7 +520,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                 <Zap size={24} />
               </div>
               <div>
-                <h4 className="font-black text-slate-900 text-base">Instant Delivery</h4>
+                <h4 className="font-bold text-slate-900 text-base">Instant Delivery</h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                   Automated telecom API dispatch delivers data and airtime within 3 to 10 seconds.
                 </p>
@@ -533,7 +533,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                 <RotateCcw size={24} />
               </div>
               <div>
-                <h4 className="font-black text-slate-900 text-base">Wallet Refund on Failure</h4>
+                <h4 className="font-bold text-slate-900 text-base">Wallet Refund on Failure</h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                   If any network provider drops a request, your funds are reversed to your wallet instantly.
                 </p>
@@ -546,7 +546,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                 <Headphones size={24} />
               </div>
               <div>
-                <h4 className="font-black text-slate-900 text-base">24/7 Human Support</h4>
+                <h4 className="font-bold text-slate-900 text-base">24/7 Human Support</h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                   Reach real human support desks directly on WhatsApp and Telegram when you need assistance.
                 </p>
@@ -559,7 +559,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                 <ShieldCheck size={24} />
               </div>
               <div>
-                <h4 className="font-black text-slate-900 text-base">Secure Login</h4>
+                <h4 className="font-bold text-slate-900 text-base">Secure Login</h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                   Protected with Supabase encrypted authentication, secure cookies, and session tokens.
                 </p>
@@ -575,10 +575,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
       {/* ========================================================================= */}
       <section id="services" className="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24">
         <div className="text-center max-w-3xl mx-auto mb-16 space-y-3">
-          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+          <span className="text-xs font-bold text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
             Our Digital Catalog
           </span>
-          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight" style={{ color: '#132613' }}>
             Everything You Need, Recharged in Seconds
           </h2>
           <p className="text-sm sm:text-base text-slate-600">
@@ -594,11 +594,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <Smartphone size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   Airtime
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -618,11 +618,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <Wifi size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   Data Bundles
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -642,11 +642,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <Tv size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   Cable TV Subscription
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -666,11 +666,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <Lightbulb size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   Electricity Bills
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -690,11 +690,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <PhoneCall size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   Foreign Phone Numbers
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -714,11 +714,11 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             className="bg-white rounded-3xl p-7 border border-[#E2E2DC] shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group hover:-translate-y-1 flex flex-col justify-between"
           >
             <div className="space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center group-hover:scale-110 transition-transform">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center transition-transform">
                 <CreditCard size={28} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-[#3B7A3B] transition-colors">
                   eSIM
                 </h3>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
@@ -742,10 +742,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           
           <div className="text-center max-w-2xl mx-auto mb-16 space-y-3">
-            <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+            <span className="text-xs font-bold text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
               Three Simple Steps
             </span>
-            <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight" style={{ color: '#132613' }}>
               How NORODATA Works
             </h2>
             <p className="text-sm sm:text-base text-slate-600">
@@ -758,12 +758,12 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             {/* Step 1 */}
             <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
               <div 
-                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-white shadow-md"
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-md"
                 style={{ backgroundColor: '#132613' }}
               >
                 1
               </div>
-              <h3 className="text-xl font-black text-slate-900">Fund Your Wallet</h3>
+              <h3 className="text-xl font-bold text-slate-900">Fund Your Wallet</h3>
               <p className="text-sm text-slate-600 leading-relaxed">
                 Sign up in 30 seconds to get your personal automated virtual bank account. Transfer from any Nigerian bank app to credit your wallet in seconds.
               </p>
@@ -772,12 +772,12 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             {/* Step 2 */}
             <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
               <div 
-                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-white shadow-md"
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-md"
                 style={{ backgroundColor: '#3B7A3B' }}
               >
                 2
               </div>
-              <h3 className="text-xl font-black text-slate-900">Choose a Service</h3>
+              <h3 className="text-xl font-bold text-slate-900">Choose a Service</h3>
               <p className="text-sm text-slate-600 leading-relaxed">
                 Pick your telecom network, internet data bundle, electricity DisCo, cable TV package, or foreign number. Enter the recipient number or meter.
               </p>
@@ -786,12 +786,12 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             {/* Step 3 */}
             <div className="bg-[#EDEDE9]/50 rounded-3xl p-8 border border-[#E2E2DC] relative space-y-4">
               <div 
-                className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg text-[#132613] shadow-md"
+                className="w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg text-[#132613] shadow-md"
                 style={{ backgroundColor: '#B5D430' }}
               >
                 3
               </div>
-              <h3 className="text-xl font-black text-slate-900">Get Instant Confirmation</h3>
+              <h3 className="text-xl font-bold text-slate-900">Get Instant Confirmation</h3>
               <p className="text-sm text-slate-600 leading-relaxed">
                 Our backend fulfills your purchase instantly. Your airtime, data, or meter token is delivered immediately and logged in your transaction history.
               </p>
@@ -802,7 +802,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
           <div className="text-center mt-12">
             <button
               onClick={() => onAuth('signup')}
-              className="px-8 py-3.5 rounded-2xl text-sm font-black text-white shadow-md hover:shadow-lg transition-transform hover:-translate-y-0.5"
+              className="px-8 py-3.5 rounded-2xl text-sm font-bold text-white shadow-md hover:shadow-lg transition-transform hover:-translate-y-0.5"
               style={{ backgroundColor: '#3B7A3B' }}
             >
               Create Your Account Now
@@ -817,10 +817,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
       {/* ========================================================================= */}
       <section id="pricing" className="py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24">
         <div className="text-center max-w-3xl mx-auto mb-12 space-y-3">
-          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+          <span className="text-xs font-bold text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
             Transparent Pricing
           </span>
-          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight" style={{ color: '#132613' }}>
             Live Wholesale Data Rates
           </h2>
           <p className="text-sm sm:text-base text-slate-600">
@@ -847,7 +847,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                   key={net}
                   onClick={() => setActiveNetworkTab(net)}
                   className={cn(
-                    "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+                    "px-5 py-2.5 rounded-xl text-xs font-bold  transition-all",
                     isActive
                       ? "bg-[#132613] text-white shadow"
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
@@ -892,14 +892,14 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
                   >
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-emerald-50 text-[#3B7A3B] rounded-md border border-emerald-100">
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-[#3B7A3B] rounded-md border border-emerald-100">
                           {plan.type || 'Data'}
                         </span>
                         <span className="text-xs text-slate-500 font-semibold">{plan.validity}</span>
                       </div>
-                      <h4 className="text-lg font-black text-slate-900 mt-1">{plan.name}</h4>
+                      <h4 className="text-lg font-bold text-slate-900 mt-1">{plan.name}</h4>
                       <div className="mt-3 flex items-baseline gap-1">
-                        <span className="text-2xl font-black text-[#132613]">
+                        <span className="text-2xl font-bold text-[#132613]">
                           ₦{plan.price.toLocaleString()}
                         </span>
                       </div>
@@ -907,7 +907,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
                     <button
                       onClick={() => onAuth('signup')}
-                      className="mt-6 w-full py-2.5 rounded-xl text-xs font-black text-white transition-opacity hover:opacity-95 shadow-sm"
+                      className="mt-6 w-full py-2.5 rounded-xl text-xs font-bold text-white transition-opacity hover:opacity-95 shadow-sm"
                       style={{ backgroundColor: '#3B7A3B' }}
                     >
                       Buy This Plan
@@ -940,10 +940,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           
           <div className="text-center max-w-2xl mx-auto mb-12 space-y-3">
-            <span className="text-xs font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200 inline-block">
+            <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200 inline-block">
               Community & Feedback
             </span>
-            <h2 className="text-3xl font-black tracking-tight" style={{ color: '#132613' }}>
+            <h2 className="text-3xl font-bold tracking-tight" style={{ color: '#132613' }}>
               Built for Everyday Nigerians & Resellers
             </h2>
             <p className="text-sm text-slate-600">
@@ -956,7 +956,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             
             <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
-                🎓
+ 
               </div>
               <h4 className="font-bold text-slate-900 text-base">Campus Resellers</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -969,7 +969,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
             <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
-                🏢
+ 
               </div>
               <h4 className="font-bold text-slate-900 text-base">Cyber Cafés & Business Centers</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -982,7 +982,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
             <div className="bg-[#EDEDE9]/40 rounded-2xl p-6 border border-[#E2E2DC] space-y-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#3B7A3B] flex items-center justify-center font-bold text-sm">
-                📱
+ 
               </div>
               <h4 className="font-bold text-slate-900 text-base">Individual Smart Users</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
@@ -1010,10 +1010,10 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
       <section id="faq" className="py-24 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto scroll-mt-24">
         
         <div className="text-center mb-16 space-y-3">
-          <span className="text-xs font-black uppercase tracking-wider text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
+          <span className="text-xs font-bold text-[#3B7A3B] bg-emerald-50 px-3.5 py-1.5 rounded-full border border-emerald-100 inline-block">
             Frequently Asked Questions
           </span>
-          <h2 className="text-3xl sm:text-4xl font-black tracking-tight" style={{ color: '#132613' }}>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight" style={{ color: '#132613' }}>
             Got Questions? We’ve Got Answers.
           </h2>
           <p className="text-sm sm:text-base text-slate-600">
@@ -1102,15 +1102,15 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
             <div className="lg:col-span-2 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-[#3B7A3B] flex items-center justify-center shadow">
-                  <span className="text-lg font-black text-[#B5D430]">N</span>
+                  <span className="text-lg font-bold text-[#B5D430]">N</span>
                 </div>
-                <span className="text-2xl font-black tracking-tight text-white">NORODATA</span>
+                <span className="text-2xl font-bold tracking-tight text-white">NORODATA</span>
               </div>
               <p className="text-xs sm:text-sm text-slate-300 max-w-sm leading-relaxed">
                 Nigeria’s reliable digital recharge and utility payment platform. Instant data bundles, airtime top-ups, electric tokens, and eSIM connectivity.
               </p>
               <div className="pt-2">
-                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                <span className="text-[11px] font-bold text-slate-400 block">
                   Reconciliation Partner
                 </span>
                 <span className="text-xs font-semibold text-emerald-300">
@@ -1121,7 +1121,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
             {/* Col 3: Services */}
             <div className="space-y-3">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Services</h4>
+              <h4 className="text-xs font-bold text-slate-300">Services</h4>
               <ul className="space-y-2 text-xs text-slate-400 font-semibold">
                 <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Airtime VTU</button></li>
                 <li><button onClick={() => onAuth('login')} className="hover:text-white transition-colors">Data Bundles</button></li>
@@ -1134,7 +1134,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
             {/* Col 4: Quick Links */}
             <div className="space-y-3">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Quick Links</h4>
+              <h4 className="text-xs font-bold text-slate-300">Quick Links</h4>
               <ul className="space-y-2 text-xs text-slate-400 font-semibold">
                 <li><a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a></li>
                 <li><a href="#pricing" className="hover:text-white transition-colors">Live Pricing</a></li>
@@ -1146,7 +1146,7 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
 
             {/* Col 5: Support & Contact */}
             <div className="space-y-3">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Support Desk</h4>
+              <h4 className="text-xs font-bold text-slate-300">Support Desk</h4>
               <div className="space-y-2 text-xs text-slate-400 font-semibold">
                 {SUPPORT_CONTACTS.map((item) => (
                   <a
@@ -1191,12 +1191,12 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
       {/* ========================================================================= */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-[#E2E2DC] z-40 flex items-center justify-between gap-3 shadow-lg">
         <div className="flex flex-col">
-          <span className="text-xs font-black text-slate-900 leading-tight">Instant VTU Top-Up</span>
+          <span className="text-xs font-bold text-slate-900 leading-tight">Instant VTU Top-Up</span>
           <span className="text-[10px] text-slate-500">Fund once, recharge in seconds</span>
         </div>
         <button
           onClick={() => onAuth('signup')}
-          className="px-5 py-2.5 rounded-xl text-xs font-black text-white shadow-md"
+          className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-md"
           style={{ backgroundColor: '#3B7A3B' }}
         >
           Get Started

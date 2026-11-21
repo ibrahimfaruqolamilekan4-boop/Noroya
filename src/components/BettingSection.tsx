@@ -210,7 +210,7 @@ export default function BettingSection() {
             {/* STAGE 1: select Platform */}
             {!provider ? (
               <div className="space-y-4">
-                <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
+                <label className="text-xs font-bold text-slate-400 ml-1 block">
                   Select Sportsbook Platform
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -220,11 +220,11 @@ export default function BettingSection() {
                       onClick={() => setProvider(bet)}
                       className="border border-slate-100 bg-white rounded-3xl p-5 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-50/40 text-left transition-all flex flex-col justify-between h-36 outline-none"
                     >
-                      <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center font-black text-xs shadow-sm", bet.logoBg, bet.textColor)}>
+                      <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-xs shadow-sm", bet.logoBg, bet.textColor)}>
                         {bet.shortName.slice(0, 4).toUpperCase()}
                       </div>
                       <div className="mt-4">
-                        <h4 className="font-extrabold text-slate-800 text-sm tracking-tight truncate">{bet.shortName}</h4>
+                        <h4 className="font-bold text-slate-800 text-sm tracking-tight truncate">{bet.shortName}</h4>
                         <p className="text-[10px] text-slate-400 font-bold mt-0.5">{bet.name}</p>
                       </div>
                     </button>
@@ -241,8 +241,8 @@ export default function BettingSection() {
                       <Trophy size={20} />
                     </span>
                     <div>
-                      <h4 className="font-extrabold text-slate-900">{provider.name} Funding</h4>
-                      <p className="text-[10px] text-slate-400 font-extrabold tracking-widest uppercase">Verified Realtime API Clearance</p>
+                      <h4 className="font-bold text-slate-900">{provider.name} Funding</h4>
+                      <p className="text-[10px] text-slate-400 font-bold ">Verified Realtime API Clearance</p>
                     </div>
                   </div>
                   <div className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg">
@@ -254,9 +254,9 @@ export default function BettingSection() {
                   
                   {/* Betting ID Account */}
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 flex justify-between">
+                    <label className="text-xs font-bold text-slate-400 ml-1 flex justify-between">
                       <span>Sportsbook Wallet / Customer ID</span>
-                      <span className="text-slate-300 font-bold tracking-normal uppercase text-[9px]">ID Check Safe</span>
+                      <span className="text-slate-300 font-bold text-[9px]">ID Check Safe</span>
                     </label>
                     <input
                       required
@@ -270,7 +270,7 @@ export default function BettingSection() {
 
                   {/* Fund amount */}
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Specify Top-Up Amount (₦)</label>
+                    <label className="text-xs font-bold text-slate-400 ml-1">Specify Top-Up Amount (₦)</label>
                     <input
                       required
                       type="text"
@@ -292,7 +292,7 @@ export default function BettingSection() {
                           className={cn(
                             "py-2 rounded-xl text-xs font-semibold border transition-all",
                             amount === String(val) 
-                              ? "bg-blue-600 text-white border-blue-600 font-bold" 
+                              ? "bg-blue-600 text-white border-blue-600 font-semibold" 
                               : "bg-white text-slate-600 border-slate-100 hover:bg-slate-50"
                           )}
                         >
@@ -314,7 +314,7 @@ export default function BettingSection() {
                     <button
                       disabled={isValidating}
                       type="submit"
-                      className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
+                      className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl py-4 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
                     >
                       {isValidating ? (
                         <>
@@ -347,36 +347,36 @@ export default function BettingSection() {
                 <ShieldCheck size={22} />
               </div>
               <div className="space-y-1">
-                <p className="text-xs uppercase font-black text-green-700 tracking-wider">Validated Receiver Account</p>
-                <h4 className="font-extrabold text-slate-900 text-lg leading-snug">{validatedAccount.customerName}</h4>
+                <p className="text-xs font-bold text-green-700 tracking-wider">Validated Receiver Account</p>
+                <h4 className="font-bold text-slate-900 text-lg leading-snug">{validatedAccount.customerName}</h4>
                 <p className="text-xs text-slate-500 leading-relaxed font-sans">Active Betting Account Confirmed with Platform Database.</p>
               </div>
             </div>
 
             {/* Bill summary statement */}
             <div className="p-6 bg-white rounded-[2rem] border border-slate-100 shadow-sm space-y-4 font-sans">
-              <h4 className="font-black text-slate-900 text-sm uppercase tracking-wider pl-1 pb-2 border-b border-slate-50">Instant Top-Up Statement</h4>
+              <h4 className="font-bold text-slate-900 text-sm pl-1 pb-2 border-b border-slate-50">Instant Top-Up Statement</h4>
               
               <div className="divide-y divide-slate-100 text-xs">
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium">Sportsbook Service</span>
-                  <span className="font-extrabold text-slate-800">{provider.name}</span>
+                  <span className="font-bold text-slate-800">{provider.name}</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium font-sans">Wallet User ID</span>
-                  <span className="font-mono font-extrabold text-slate-800 tracking-wider">{validatedAccount.walletId}</span>
+                  <span className="font-mono font-bold text-slate-800 tracking-wider">{validatedAccount.walletId}</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium">Clearance System</span>
-                  <span className="font-extrabold text-slate-800">API Realtime Top-up Route</span>
+                  <span className="font-bold text-slate-800">API Realtime Top-up Route</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium font-sans">Platform Fee Surcharge</span>
-                  <span className="font-bold text-emerald-600 uppercase flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded">FREE</span></span>
+                  <span className="font-bold text-emerald-600 flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded">FREE</span></span>
                 </div>
                 <div className="py-4 flex justify-between text-sm border-t border-dashed border-slate-200">
-                  <span className="text-slate-900 font-extrabold">Final Billing Amount</span>
-                  <span className="text-lg font-black text-blue-600 font-mono">{formatCurrency(Number(amount))}</span>
+                  <span className="text-slate-900 font-semibold">Final Billing Amount</span>
+                  <span className="text-lg font-bold text-blue-600 font-mono">{formatCurrency(Number(amount))}</span>
                 </div>
               </div>
 
@@ -399,7 +399,7 @@ export default function BettingSection() {
               <button
                 disabled={isPaying}
                 onClick={handlePayment}
-                className="py-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
+                className="py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
               >
                 {isPaying ? (
                   <>
@@ -426,8 +426,8 @@ export default function BettingSection() {
             <div className="text-center py-6 space-y-3">
               <SuccessFeedback size={70} showConfetti={true} />
               <div>
-                <h4 className="text-2xl font-black text-slate-900 mt-2">Wallet Funded!</h4>
-                <p className="text-xs text-slate-400 font-extrabold tracking-widest uppercase">AUTOMATED WALLET CLEARANCE DONE</p>
+                <h4 className="text-2xl font-bold text-slate-900 mt-2">Wallet Funded!</h4>
+                <p className="text-xs text-slate-400 font-bold ">AUTOMATED WALLET CLEARANCE DONE</p>
               </div>
             </div>
 
@@ -435,35 +435,35 @@ export default function BettingSection() {
             <div className="bg-slate-50 rounded-[2rem] border border-slate-100 p-6 space-y-3.5 divide-y divide-slate-100 text-xs">
               <div className="py-2.5 flex justify-between items-center first:pt-0">
                 <span className="text-slate-400 font-medium">Merchant Outlet</span>
-                <span className="font-extrabold text-slate-800">NORODATA Hub</span>
+                <span className="font-bold text-slate-800">NORODATA Hub</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Bookmaker Platform</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.provider}</span>
+                <span className="font-bold text-slate-800">{paymentReceipt.provider}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Customer Fullname</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.customerName}</span>
+                <span className="font-bold text-slate-800">{paymentReceipt.customerName}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Receiver Wallet ID</span>
-                <span className="font-mono font-extrabold text-slate-800">{paymentReceipt.walletId}</span>
+                <span className="font-mono font-bold text-slate-800">{paymentReceipt.walletId}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Credited Amount</span>
-                <span className="font-black text-slate-900 font-mono text-sm">{formatCurrency(paymentReceipt.amount)}</span>
+                <span className="font-bold text-slate-900 font-mono text-sm">{formatCurrency(paymentReceipt.amount)}</span>
               </div>
               {paymentReceipt.cashbackEarned > 0 ? (
                 <div className="py-2.5 flex justify-between items-center">
-                  <span className="text-amber-700 font-bold">Earned Cashback Bonus</span>
-                  <span className="font-black font-mono text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">
+                  <span className="text-amber-700 font-semibold">Earned Cashback Bonus</span>
+                  <span className="font-bold font-mono text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">
                     + {formatCurrency(paymentReceipt.cashbackEarned)}
                   </span>
                 </div>
               ) : null}
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium font-sans">Reference Token ID</span>
-                <span className="font-mono font-extrabold text-slate-650">{paymentReceipt.ref}</span>
+                <span className="font-mono font-bold text-slate-650">{paymentReceipt.ref}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Operation Date/Time</span>
@@ -475,13 +475,13 @@ export default function BettingSection() {
             <div className="grid grid-cols-2 gap-4">
               <button
                 onClick={() => window.print()}
-                className="py-4 rounded-xl bg-slate-900 text-white font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-black transition-all shadow-md"
+                className="py-4 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-black transition-all shadow-md"
               >
                 <Printer size={16} /> Print E-Receipt
               </button>
               <button
                 onClick={resetFlow}
-                className="py-4 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-extrabold text-xs tracking-wider uppercase transition-all"
+                className="py-4 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold text-xs transition-all"
               >
                 New Wallet Fund
               </button>

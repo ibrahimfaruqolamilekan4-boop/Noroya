@@ -316,16 +316,16 @@ export default function ResellerPortal() {
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-3">
             <span className={cn(
-              "px-4 py-1.5 rounded-full text-xs font-black tracking-widest uppercase inline-flex items-center gap-1.5 shadow-sm",
-              resellerStatus?.status === 'active' ? "bg-amber-400 text-slate-950 font-bold" :
-              resellerStatus?.status === 'grace' ? "bg-orange-400 text-slate-950 font-bold" :
-              "bg-slate-800 text-slate-300 font-bold"
+              "px-4 py-1.5 rounded-full text-xs font-bold  inline-flex items-center gap-1.5 shadow-sm",
+              resellerStatus?.status === 'active' ? "bg-amber-400 text-slate-950 font-semibold" :
+              resellerStatus?.status === 'grace' ? "bg-orange-400 text-slate-950 font-semibold" :
+              "bg-slate-800 text-slate-300 font-semibold"
             )}>
               <Award size={14} className="animate-pulse" />
               {statusLabel}
             </span>
-            <h2 className="text-3xl font-black tracking-tight leading-none text-white">Merchant Agency Dashboard</h2>
-            <p className="text-slate-400 text-xs font-bold uppercase tracking-wider max-w-lg leading-relaxed">
+            <h2 className="text-3xl font-bold tracking-tight leading-none text-white">Merchant Agency Dashboard</h2>
+            <p className="text-slate-400 text-xs font-bold max-w-lg leading-relaxed">
               Wholesale VTU Distribution Engine & Point-of-Sale (POS) commissions terminal
             </p>
             {resellerStatus?.status === 'grace' && (
@@ -336,8 +336,8 @@ export default function ResellerPortal() {
             )}
           </div>
           <div className="bg-white/5 border border-white/5 p-5 rounded-[2rem] text-right md:min-w-64">
-            <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">RESELLER TRADING CAPITAL</p>
-            <h3 className="text-3xl font-mono font-black text-white">{formatCurrency(user?.balance || 0)}</h3>
+            <p className="text-[10px] text-slate-400 font-bold mb-1">RESELLER TRADING CAPITAL</p>
+            <h3 className="text-3xl font-mono font-bold text-white">{formatCurrency(user?.balance || 0)}</h3>
             <p className="text-[10px] text-emerald-400 font-semibold mt-1 flex items-center justify-end gap-1">
               <span>Data discount:</span>
               <strong className="bg-emerald-400/10 px-1.5 py-0.5 rounded">
@@ -353,8 +353,8 @@ export default function ResellerPortal() {
         <button
           onClick={() => setActiveSubTab('reseller')}
           className={cn(
-            "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
-            activeSubTab === 'reseller' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
+            "text-xs font-bold tracking-widest pb-2 transition-all cursor-pointer",
+            activeSubTab === 'reseller' ? "border-b-2 border-blue-600 text-blue-600 font-semibold" : "text-slate-400 hover:text-slate-600"
           )}
         >
           Reseller Subscription
@@ -364,8 +364,8 @@ export default function ResellerPortal() {
             <button
               onClick={() => setActiveSubTab('terminal')}
               className={cn(
-                "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
-                activeSubTab === 'terminal' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
+                "text-xs font-bold tracking-widest pb-2 transition-all cursor-pointer",
+                activeSubTab === 'terminal' ? "border-b-2 border-blue-600 text-blue-600 font-semibold" : "text-slate-400 hover:text-slate-600"
               )}
             >
               Sales POS Console
@@ -373,8 +373,8 @@ export default function ResellerPortal() {
             <button
               onClick={() => setActiveSubTab('bulk-fund')}
               className={cn(
-                "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
-                activeSubTab === 'bulk-fund' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
+                "text-xs font-bold tracking-widest pb-2 transition-all cursor-pointer",
+                activeSubTab === 'bulk-fund' ? "border-b-2 border-blue-600 text-blue-600 font-semibold" : "text-slate-400 hover:text-slate-600"
               )}
             >
               Bulk Capital Deposit
@@ -384,8 +384,8 @@ export default function ResellerPortal() {
         <button
           onClick={() => setActiveSubTab('ledger')}
           className={cn(
-            "text-xs uppercase font-black tracking-widest pb-2 transition-all cursor-pointer",
-            activeSubTab === 'ledger' ? "border-b-2 border-blue-600 text-blue-600 font-extrabold" : "text-slate-400 hover:text-slate-600"
+            "text-xs font-bold tracking-widest pb-2 transition-all cursor-pointer",
+            activeSubTab === 'ledger' ? "border-b-2 border-blue-600 text-blue-600 font-semibold" : "text-slate-400 hover:text-slate-600"
           )}
         >
           Margin Calculator & Perks
@@ -404,7 +404,7 @@ export default function ResellerPortal() {
             className="space-y-8"
           >
             <div className="max-w-xl mx-auto bg-amber-500/5 border border-amber-200 rounded-[2.5rem] p-8 space-y-6 shadow-sm relative overflow-hidden">
-              <div className="absolute top-0 right-0 bg-amber-400 text-slate-950 px-4 py-1.5 rounded-bl-2xl text-[9px] font-black tracking-widest uppercase">
+              <div className="absolute top-0 right-0 bg-amber-400 text-slate-950 px-4 py-1.5 rounded-bl-2xl text-[9px] font-bold ">
                 Monthly Subscription
               </div>
 
@@ -413,8 +413,8 @@ export default function ResellerPortal() {
                   <Sparkles size={24} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-extrabold text-slate-900">Reseller Access</h3>
-                  <p className="text-xs text-amber-700 font-bold uppercase tracking-wider mt-1">
+                  <h3 className="text-xl font-bold text-slate-900">Reseller Access</h3>
+                  <p className="text-xs text-amber-700 font-bold mt-1">
                     ₦{(resellerStatus?.monthly_fee ?? 1000).toLocaleString()} / MONTH
                   </p>
                 </div>
@@ -427,7 +427,7 @@ export default function ResellerPortal() {
                 <ul className="space-y-2 text-xs font-semibold text-slate-600">
                   <li className="flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-amber-600 animate-pulse" />
-                    <span className="font-extrabold text-amber-950">
+                    <span className="font-bold text-amber-950">
                       {(resellerStatus?.discount_percent ?? 20)}% off retail price on all data plans
                     </span>
                   </li>
@@ -450,7 +450,7 @@ export default function ResellerPortal() {
                 <div className="bg-white border border-amber-100 rounded-2xl p-4 text-xs font-semibold text-slate-600 space-y-1">
                   <div className="flex justify-between">
                     <span>Status</span>
-                    <span className={cn("font-bold", resellerStatus.status === 'grace' ? "text-orange-600" : "text-emerald-600")}>
+                    <span className={cn("font-semibold", resellerStatus.status === 'grace' ? "text-orange-600" : "text-emerald-600")}>
                       {resellerStatus.status === 'grace' ? 'Grace period' : 'Active'}
                     </span>
                   </div>
@@ -470,7 +470,7 @@ export default function ResellerPortal() {
               <button
                 disabled={isSubscribing || isLoadingStatus}
                 onClick={handleSubscribe}
-                className="w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-200 cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                className="w-full py-4 rounded-2xl font-bold text-xs transition-all bg-amber-500 text-white hover:bg-amber-600 shadow-xl shadow-amber-200 cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {isSubscribing ? (
                   <>
@@ -507,8 +507,8 @@ export default function ResellerPortal() {
                   <Smartphone size={22} />
                 </span>
                 <div>
-                  <h3 className="text-lg font-extrabold text-slate-900">POS Retail Cashier Terminal</h3>
-                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Automated Wholesale Order Desk</p>
+                  <h3 className="text-lg font-bold text-slate-900">POS Retail Cashier Terminal</h3>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">Automated Wholesale Order Desk</p>
                 </div>
               </div>
 
@@ -532,9 +532,9 @@ export default function ResellerPortal() {
                       setSaleReceipt(null);
                     }}
                     className={cn(
-                      "py-2 px-1 flex flex-col items-center gap-1 rounded-xl text-[10px] font-black tracking-tight transition-all",
+                      "py-2 px-1 flex flex-col items-center gap-1 rounded-xl text-[10px] font-bold tracking-tight transition-all",
                       saleType === item.id 
-                        ? "bg-slate-900 text-white font-extrabold" 
+                        ? "bg-slate-900 text-white font-semibold" 
                         : "text-slate-400 hover:text-slate-650"
                     )}
                   >
@@ -550,7 +550,7 @@ export default function ResellerPortal() {
                 {/* Client Cell / Identifier */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">
                       Customer Fullname (Optional)
                     </label>
                     <input
@@ -562,7 +562,7 @@ export default function ResellerPortal() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">
                       {saleType === 'cable' ? 'Smartcard/IUC Decoder Number' : 
                        saleType === 'electricity' ? 'Electricity Meter ID' : 
                        saleType === 'betting' ? 'Bookmaker User ID' : 'Client Phone Call Number'}
@@ -581,7 +581,7 @@ export default function ResellerPortal() {
                 {/* Carrier details */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">
                       Operator Carrier Provider
                     </label>
                     <select
@@ -623,7 +623,7 @@ export default function ResellerPortal() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">
                       Product Package / Plan
                     </label>
                     {saleType === 'data' ? (
@@ -669,7 +669,7 @@ export default function ResellerPortal() {
                 {/* Pricing / Markup Calculator */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">
                       Your Cost (₦){saleType === 'data' && discountPercent > 0 ? ' -- after reseller discount' : ''}
                     </label>
                     <input
@@ -687,9 +687,9 @@ export default function ResellerPortal() {
                   </div>
 
                   <div className="space-y-1.5 p-3 rounded-2xl bg-amber-500/5 border border-amber-100 border-dashed">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-amber-700 ml-1 flex justify-between">
+                    <label className="text-[10px] font-bold text-amber-700 ml-1 flex justify-between">
                       <span>Customer Retail Selling Price (Markup)</span>
-                      <span className="text-amber-800 text-[9px] font-extrabold uppercase bg-amber-100 px-1 py-0.2 rounded">YOUR MARGIN PROFIT</span>
+                      <span className="text-amber-800 text-[9px] font-bold bg-amber-100 px-1 py-0.2 rounded">YOUR MARGIN PROFIT</span>
                     </label>
                     <input
                       type="tel"
@@ -708,7 +708,7 @@ export default function ResellerPortal() {
                       <span>Your cost:</span>
                       <span className="font-mono">{formatCurrency(Number(saleCost))}</span>
                     </div>
-                    <div className="flex justify-between pt-2 border-t border-dashed border-emerald-200 text-sm font-black text-slate-900">
+                    <div className="flex justify-between pt-2 border-t border-dashed border-emerald-200 text-sm font-bold text-slate-900">
                       <span>Markup Profit:</span>
                       <span className="text-emerald-700 font-mono">
                         {formatCurrency(Math.max(0, Number(customerPrice || saleCost) - Number(saleCost)))}
@@ -720,7 +720,7 @@ export default function ResellerPortal() {
                 <button
                   disabled={isSelling || !saleCost}
                   type="submit"
-                  className="w-full py-4 rounded-2xl bg-slate-900 text-white font-extrabold text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2"
+                  className="w-full py-4 rounded-2xl bg-slate-900 text-white font-bold text-xs transition-all shadow-md flex items-center justify-center gap-2"
                 >
                   {isSelling ? (
                     <>
@@ -744,35 +744,35 @@ export default function ResellerPortal() {
                       <CheckCircle2 size={24} />
                     </div>
                     <div>
-                      <h4 className="font-black text-slate-900">Receipt Dispatch Out</h4>
-                      <p className="text-[9px] text-slate-400 font-extrabold tracking-widest uppercase mb-1">POS COUNTER PRINTER</p>
+                      <h4 className="font-bold text-slate-900">Receipt Dispatch Out</h4>
+                      <p className="text-[9px] text-slate-400 font-bold mb-1">POS COUNTER PRINTER</p>
                     </div>
                   </div>
 
                   <div className="space-y-3.5 divide-y divide-slate-200/60 text-xs font-sans">
                     <div className="py-2 flex justify-between">
                       <span className="text-slate-400 font-medium">Customer Fullname</span>
-                      <span className="font-extrabold text-slate-800">{saleReceipt.customerName}</span>
+                      <span className="font-bold text-slate-800">{saleReceipt.customerName}</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium font-sans">Drawn Receiver ID</span>
-                      <span className="font-mono font-extrabold text-slate-800">{saleReceipt.customerPhone}</span>
+                      <span className="font-mono font-bold text-slate-800">{saleReceipt.customerPhone}</span>
                     </div>
                     <div className="py-2.5 flex justify-between animate-pulse">
                       <span className="text-slate-400 font-medium">Product Dispatched</span>
-                      <span className="font-extrabold text-slate-800">{saleReceipt.carrier} {saleReceipt.plan}</span>
+                      <span className="font-bold text-slate-800">{saleReceipt.carrier} {saleReceipt.plan}</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium">Margin markup margin</span>
-                      <span className="font-extrabold font-mono text-emerald-600">+ {formatCurrency(saleReceipt.markupProfit)}</span>
+                      <span className="font-bold font-mono text-emerald-600">+ {formatCurrency(saleReceipt.markupProfit)}</span>
                     </div>
                     <div className="py-2.5 flex justify-between bg-white border border-slate-100 rounded-xl p-2.5 shadow-sm mt-2">
-                      <span className="text-slate-900 font-black">Customer Invoice Charge</span>
-                      <span className="font-black text-slate-900 font-mono text-sm">{formatCurrency(saleReceipt.customerCharge)}</span>
+                      <span className="text-slate-900 font-semibold">Customer Invoice Charge</span>
+                      <span className="font-bold text-slate-900 font-mono text-sm">{formatCurrency(saleReceipt.customerCharge)}</span>
                     </div>
                     <div className="py-2 flex justify-between text-[10px] text-slate-450">
                       <span>Invoice Reference</span>
-                      <span className="font-mono font-bold">{saleReceipt.ref}</span>
+                      <span className="font-mono font-semibold">{saleReceipt.ref}</span>
                     </div>
                   </div>
 
@@ -794,10 +794,10 @@ export default function ResellerPortal() {
                 </div>
               ) : (
                 <div className="bg-white border border-slate-100 border-dashed p-10 rounded-[2.5rem] flex flex-col items-center justify-center text-center h-full min-h-64">
-                  <span className="p-4 bg-slate-50 rounded-2xl text-slate-400 mb-4 animate-bounce">
+                  <span className="p-4 bg-slate-50 rounded-2xl text-slate-400 mb-4 ">
                     <Building2 size={32} />
                   </span>
-                  <h4 className="font-extrabold text-slate-800 text-sm">POS Awaiting Customer Ticket</h4>
+                  <h4 className="font-bold text-slate-800 text-sm">POS Awaiting Customer Ticket</h4>
                   <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
                     Fill the form details on the left, set your markup customer charge, and clear the transaction ticket!
                   </p>
@@ -829,10 +829,10 @@ export default function ResellerPortal() {
                     )}
                   >
                     <div>
-                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-wider">{bundle.tag}</span>
-                      <h4 className="font-black text-slate-900 text-xl font-mono mt-2">{formatCurrency(bundle.amount)}</h4>
+                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold ">{bundle.tag}</span>
+                      <h4 className="font-bold text-slate-900 text-xl font-mono mt-2">{formatCurrency(bundle.amount)}</h4>
                     </div>
-                    <div className="text-[10px] text-emerald-600 font-extrabold flex items-center gap-1 mt-3">
+                    <div className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-3">
                       <span>Cash bonus:</span>
                       <strong className="bg-emerald-50 px-1 py-0.5 rounded">+{formatCurrency(bonusValue)} (+{bundle.bonusPercent}%)</strong>
                     </div>
@@ -848,15 +848,15 @@ export default function ResellerPortal() {
                   <DollarSign size={22} className="animate-spin-slow" />
                 </span>
                 <div>
-                  <h3 className="text-lg font-extrabold text-slate-900">Credit Capital Account</h3>
-                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Automated Wholesale deposit portal</p>
+                  <h3 className="text-lg font-bold text-slate-900">Credit Capital Account</h3>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">Automated Wholesale deposit portal</p>
                 </div>
               </div>
 
               <form onSubmit={handleBulkFundSubmit} className="space-y-4">
                 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">
+                  <label className="text-xs font-bold text-slate-400 ml-1">
                     Select Simulated Funding Code/Amount (₦)
                   </label>
                   <input
@@ -865,7 +865,7 @@ export default function ResellerPortal() {
                     value={bulkAmount}
                     onChange={(e) => setBulkAmount(e.target.value.replace(/\D/g, ''))}
                     placeholder="e.g. 20000"
-                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4  px-5 text-lg font-mono font-black focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500"
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-lg font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/10 focus:border-amber-500"
                   />
                   <p className="text-[10px] text-slate-450 leading-relaxed pl-1 font-semibold">
                     * Capital bonuses: ₦15,000+ (+0.5% boost), ₦50,000+ (+1.0% boost), ₦100,000+ (+1.5% premium boost!).
@@ -881,12 +881,12 @@ export default function ResellerPortal() {
                     {Number(bulkAmount) >= 15000 && (
                       <div className="flex justify-between pt-1 text-emerald-600">
                         <span>Agency deposit loyalty bonus credit:</span>
-                        <span className="font-mono font-bold">
+                        <span className="font-mono font-semibold">
                           + {formatCurrency(Number(bulkAmount) * (Number(bulkAmount) >= 100000 ? 0.015 : Number(bulkAmount) >= 50000 ? 0.01 : 0.005))}
                         </span>
                       </div>
                     )}
-                    <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-black text-slate-900">
+                    <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-slate-900">
                       <span>Total balance added:</span>
                       <span className="text-blue-600 font-mono">
                         {formatCurrency(Number(bulkAmount) + (Number(bulkAmount) >= 15000 ? Number(bulkAmount) * (Number(bulkAmount) >= 100000 ? 0.015 : Number(bulkAmount) >= 50000 ? 0.01 : 0.005) : 0))}
@@ -898,7 +898,7 @@ export default function ResellerPortal() {
                 <button
                   disabled={isFunding || !bulkAmount}
                   type="submit"
-                  className="w-full py-4 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-amber-100 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-4 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition-all shadow-xl shadow-amber-100 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isFunding ? (
                     <>
@@ -927,7 +927,7 @@ export default function ResellerPortal() {
             <div className="bg-white border border-slate-100 rounded-[2.5rem] p-8 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-8">
               
               <div className="md:col-span-7 space-y-4">
-                <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest rounded-lg">PROFIT SIMULATOR</span>
+                <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-lg">PROFIT SIMULATOR</span>
                 <h3 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Project Your Monthly Data Savings</h3>
                 <p className="text-xs text-slate-500 leading-relaxed font-sans">
                   Adjust your simulated monthly data sales turnover to see how much your
@@ -936,7 +936,7 @@ export default function ResellerPortal() {
 
                 {/* Range turnover inputs */}
                 <div className="space-y-3 pt-4">
-                  <div className="flex justify-between text-xs font-black text-slate-400 uppercase">
+                  <div className="flex justify-between text-xs font-bold text-slate-400 ">
                     <span>Projected Monthly Data Turn-over sales (₦)</span>
                     <span className="text-blue-600 font-bold font-mono text-sm">{formatCurrency(Number(projVol))}</span>
                   </div>
@@ -949,7 +949,7 @@ export default function ResellerPortal() {
                     onChange={(e) => setProjVol(e.target.value)}
                     className="w-full accent-blue-600 cursor-pointer"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
                     <span>₦5,000 Min</span>
                     <span>₦250,000 Mid</span>
                     <span>₦500,000 Max</span>
@@ -958,10 +958,10 @@ export default function ResellerPortal() {
 
                 <div className="grid grid-cols-1 gap-4 pt-4">
                   <div className="p-4 bg-emerald-500/5 border border-emerald-100 rounded-2xl text-center">
-                    <p className="text-[10px] text-emerald-800 font-black uppercase tracking-wider mb-2">
+                    <p className="text-[10px] text-emerald-800 font-bold mb-2">
                       Discount value at {(resellerStatus?.discount_percent ?? 20)}% off retail
                     </p>
-                    <h4 className="text-xl font-mono font-black text-emerald-600">
+                    <h4 className="text-xl font-mono font-bold text-emerald-600">
                       {formatCurrency(Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100))}
                     </h4>
                     <p className="text-[10px] text-slate-400 mt-1">
@@ -974,7 +974,7 @@ export default function ResellerPortal() {
               {/* Net breakdown side */}
               <div className="md:col-span-5 flex flex-col justify-between bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
                 <div className="space-y-3">
-                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 font-sans">How the numbers work</h4>
+                  <h4 className="text-xs font-bold text-slate-400 font-sans">How the numbers work</h4>
                   <div className="space-y-2 text-xs font-semibold text-slate-600">
                     <div className="flex justify-between">
                       <span>Retail price paid without a subscription</span>
@@ -982,20 +982,20 @@ export default function ResellerPortal() {
                     </div>
                     <div className="flex justify-between text-emerald-600">
                       <span>Reseller discount ({resellerStatus?.discount_percent ?? 20}%)</span>
-                      <span className="font-mono font-bold">
+                      <span className="font-mono font-semibold">
                         - {formatCurrency(Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100))}
                       </span>
                     </div>
                     <div className="flex justify-between text-red-500">
                       <span>Monthly subscription fee</span>
-                      <span className="font-mono font-bold">- {formatCurrency(resellerStatus?.monthly_fee ?? 1000)}</span>
+                      <span className="font-mono font-semibold">- {formatCurrency(resellerStatus?.monthly_fee ?? 1000)}</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="pt-4 border-t border-slate-200/60 text-center">
                   <p className="text-xs text-slate-500 font-medium font-sans">Net Monthly Savings</p>
-                  <h3 className="text-2xl font-mono font-black text-blue-600 mt-1">
+                  <h3 className="text-2xl font-mono font-bold text-blue-600 mt-1">
                     {formatCurrency(Math.max(0,
                       (Number(projVol) * ((resellerStatus?.discount_percent ?? 20) / 100)) - (resellerStatus?.monthly_fee ?? 1000)
                     ))}

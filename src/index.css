@@ -1,11 +1,73 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/*
+  Noroya design tokens.
+  Direction: crisp neo-brutalist fintech. Deep green surfaces, lime accent,
+  hard offset shadows instead of glows, sentence-case labels, one weight scale.
+*/
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Brand */
+  --color-brand-950: #0f1f0f;
+  --color-brand-900: #132613;
+  --color-brand-800: #1a381a;
+  --color-brand-700: #244d24;
+  --color-accent-400: #c8e35a;
+  --color-accent-500: #b5d430;
+  --color-accent-600: #9dbd22;
+
+  /* Surfaces */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f6f7f4;
+  --color-line: #e3e6df;
+  --color-ink: #16180f;
+  --color-ink-muted: #5b6152;
+
+  /* Type scale - three steps, not nine */
+  --text-label: 0.75rem;
+  --text-body: 0.9375rem;
+  --text-title: 1.375rem;
+
+  --radius-card: 0.875rem;
 }
-/* Fintech UI/UX Redesign Polish */
-/* Fintech UI/UX Polish Final */
-/* NORODATA Fintech Ready */
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Numbers and money read as data, not decoration */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* One offset-shadow system replaces scattered glows and per-file shadows */
+  .shadow-brut {
+    box-shadow: 2px 2px 0 0 var(--color-ink);
+  }
+  .shadow-brut-lg {
+    box-shadow: 4px 4px 0 0 var(--color-ink);
+  }
+  .shadow-brut-sm {
+    box-shadow: 1px 1px 0 0 var(--color-ink);
+  }
+}

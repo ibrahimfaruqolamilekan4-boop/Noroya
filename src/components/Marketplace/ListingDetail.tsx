@@ -113,7 +113,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
       setSubmitting(true);
       await marketplaceService.processPayment(currentUserId, order.id, Number(listing.price));
       setOrder((prev: any) => ({ ...prev, status: 'paid' }));
-      toast.success(`✓ Payment complete! ₦${Number(listing.price).toLocaleString()} deducted from wallet.`);
+ toast.success(` Payment complete! ₦${Number(listing.price).toLocaleString()} deducted from wallet.`);
       loadMessages();
     } catch (error: any) {
       toast.error(error.message || 'Payment failed');
@@ -131,7 +131,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
       setSubmitting(true);
       await marketplaceService.verifyAndComplete(order.id, verificationCode.trim());
       setOrder((prev: any) => ({ ...prev, status: 'completed' }));
-      toast.success('✓ Purchase verified! Funds released to seller.');
+ toast.success(' Purchase verified! Funds released to seller.');
       setShowVerifyForm(false);
       loadMessages();
     } catch (error: any) {
@@ -155,7 +155,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
       <div className="text-center py-20">
         <p className="text-slate-600 font-bold mb-4">Listing not found or removed.</p>
         {onBack && (
-          <button onClick={onBack} className="px-5 py-2.5 bg-emerald-700 text-white rounded-xl text-sm font-bold">
+          <button onClick={onBack} className="px-5 py-2.5 bg-emerald-700 text-white rounded-xl text-sm font-semibold">
             ← Back to Marketplace
           </button>
         )}
@@ -170,7 +170,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
       {onBack && (
         <button
           onClick={onBack}
-          className="mb-6 inline-flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-600 hover:text-emerald-700 transition"
+          className="mb-6 inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-emerald-700 transition"
         >
           <ArrowLeft size={16} />
           Back to Listings
@@ -183,21 +183,21 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
           {/* Product Details */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 mb-6 border border-slate-200/80 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-2xl">{listing.marketplace_categories?.icon || '🛍️'}</span>
-              <span className="text-xs font-black uppercase tracking-widest text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+ <span className="text-2xl">{listing.marketplace_categories?.icon || ''}</span>
+              <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
                 {listing.marketplace_categories?.name || 'Digital Item'}
               </span>
               <span className="text-xs text-slate-400 font-semibold">• {listing.views || 0} views</span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mb-4">{listing.title}</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-4">{listing.title}</h1>
             <p className="text-slate-700 text-sm sm:text-base leading-relaxed mb-6 whitespace-pre-line">
               {listing.description}
             </p>
 
             {listing.product_details && Object.keys(listing.product_details).length > 0 && (
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/80 mb-4">
-                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">Item Specifications:</p>
+                <p className="text-xs font-bold text-slate-500 mb-2">Item Specifications:</p>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   {Object.entries(listing.product_details).map(([key, val]) => (
                     <div key={key} className="bg-white p-3 rounded-xl border border-slate-100">
@@ -211,18 +211,18 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
           </div>
 
           {/* Seller Card */}
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-3xl p-6 mb-6">
+          <div className="bg-surface-muted border border-emerald-200 rounded-3xl p-6 mb-6">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-black flex items-center justify-center text-lg">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-bold flex items-center justify-center text-lg">
                 {(listing.profiles?.full_name || listing.profiles?.name || 'S')[0]?.toUpperCase()}
               </div>
               <div className="flex-1">
-                <h3 className="font-black text-slate-900 text-base sm:text-lg">
+                <h3 className="font-bold text-slate-900 text-base sm:text-lg">
                   {listing.profiles?.full_name || listing.profiles?.name || 'Verified Seller'}
                 </h3>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-amber-500 font-black text-xs">
-                    ★ {(listing.profiles?.marketplace_seller_rating || 5.0).toFixed(1)}
+                  <span className="text-amber-500 font-bold text-xs">
+ {(listing.profiles?.marketplace_seller_rating || 5.0).toFixed(1)}
                   </span>
                   <span className="text-xs text-slate-500">
                     ({listing.profiles?.marketplace_seller_reviews || 0} reviews)
@@ -240,8 +240,8 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
         <div>
           <div className="bg-white border-2 border-slate-200 rounded-3xl p-6 sticky top-6 shadow-sm">
             <div className="mb-4">
-              <span className="text-xs text-slate-400 font-bold block uppercase tracking-wider">Purchase Price</span>
-              <p className="text-3xl sm:text-4xl font-black text-emerald-700">
+              <span className="text-xs text-slate-400 font-bold block ">Purchase Price</span>
+              <p className="text-3xl sm:text-4xl font-bold text-emerald-700">
                 ₦{Number(listing.price).toLocaleString()}
               </p>
             </div>
@@ -257,24 +257,24 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
               <button
                 disabled={submitting || listing.status !== 'available'}
                 onClick={handleInitiatePurchase}
-                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition-all shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
+                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white py-3.5 rounded-2xl font-bold text-sm transition-all shadow-md disabled:opacity-50 cursor-pointer"
               >
-                {submitting ? 'Starting...' : '💬 Chat & Buy'}
+ {submitting ? 'Starting...' : ' Chat & Buy'}
               </button>
             ) : order.status === 'pending' ? (
               <button
                 disabled={submitting}
                 onClick={handlePayment}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition-all shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-2xl font-bold text-sm transition-all shadow-md disabled:opacity-50 cursor-pointer"
               >
-                {submitting ? 'Processing...' : '💳 Pay Now (Wallet)'}
+ {submitting ? 'Processing...' : ' Pay Now (Wallet)'}
               </button>
             ) : order.status === 'paid' ? (
               <div className="text-center text-xs text-amber-700 font-bold p-3 bg-amber-50 border border-amber-200 rounded-2xl mb-3">
                 ⏳ Payment in Escrow. Waiting for seller to send verification code in chat...
               </div>
             ) : order.status === 'completed' ? (
-              <div className="text-center text-xs text-emerald-700 font-black p-3 bg-emerald-50 border border-emerald-200 rounded-2xl mb-3 flex items-center justify-center gap-2">
+              <div className="text-center text-xs text-emerald-700 font-bold p-3 bg-emerald-50 border border-emerald-200 rounded-2xl mb-3 flex items-center justify-center gap-2">
                 <CheckCircle2 size={16} />
                 Order Completed & Verified!
               </div>
@@ -297,7 +297,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
                     <button
                       disabled={submitting}
                       onClick={handleVerify}
-                      className="w-full bg-emerald-700 hover:bg-emerald-800 text-white py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider shadow cursor-pointer"
+                      className="w-full bg-emerald-700 hover:bg-emerald-800 text-white py-2.5 rounded-xl font-bold text-xs shadow cursor-pointer"
                     >
                       {submitting ? 'Verifying...' : 'Verify & Complete'}
                     </button>
@@ -305,7 +305,7 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
                 )}
                 <button
                   onClick={() => setShowVerifyForm(!showVerifyForm)}
-                  className="w-full text-xs text-emerald-700 font-black py-2 hover:underline cursor-pointer"
+                  className="w-full text-xs text-emerald-700 font-bold py-2 hover:underline cursor-pointer"
                 >
                   {showVerifyForm ? 'Hide Form' : 'Enter Verification Code'}
                 </button>
@@ -319,10 +319,10 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
       {order && (
         <div className="mt-8 bg-white border-2 border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm">
           <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-            <h3 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
-              💬 Chat with Seller
+            <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
+ Chat with Seller
             </h3>
-            <span className="text-xs px-3 py-1 rounded-full font-black uppercase tracking-wider bg-slate-100 text-slate-700">
+            <span className="text-xs px-3 py-1 rounded-full font-bold bg-slate-100 text-slate-700">
               Order #{order.id.slice(0, 8)}
             </span>
           </div>
@@ -337,15 +337,14 @@ export function ListingDetail({ listingId, user, onBack }: ListingDetailProps) {
                 return (
                   <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                     <div
-                      className={`max-w-md px-4 py-3 rounded-2xl text-sm ${
-                        isMe
+                      className={`max-w-md px-4 py-3 rounded-2xl text-sm ${ isMe
                           ? 'bg-emerald-700 text-white rounded-br-none shadow-sm'
                           : 'bg-white text-slate-900 border border-slate-200 rounded-bl-none shadow-sm'
                       }`}
                     >
                       <p className="whitespace-pre-line">{msg.content}</p>
                       {msg.message_type === 'verification_code' && (
-                        <div className="mt-2 p-2 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-mono font-black text-base text-center">
+                        <div className="mt-2 p-2 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-mono font-bold text-base text-center">
                           {msg.code_value}
                         </div>
                       )}
