@@ -107,6 +107,10 @@ interface PricingRow {
   isActive:      boolean;
   lastSyncedAt?: string;
   manualOverride?: number | null;
+  /** Admin has deliberately priced this plan — only priced plans reach customers. */
+  isPriced?:     boolean;
+  /** 'live' while the provider still returns it, 'removed' once it disappears upstream. */
+  providerStatus?: 'live' | 'removed';
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -555,6 +559,8 @@ function AdminPricingManagerInner() {
               isActive: p.is_active !== false,
               lastSyncedAt: p.last_synced_at,
               manualOverride: p.manual_price_override ? Number(p.manual_price_override) : null,
+              isPriced: p.is_priced === true,
+              providerStatus: p.provider_status === 'removed' ? 'removed' : 'live',
             };
           });
 
@@ -952,13 +958,82 @@ function AdminPricingManagerInner() {
       let resData: any = {};
       try { resData = await res.json(); } catch { /**/ }
       if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
-      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saved: true, saving: false, dirty: false } : r));
+      setRows(prev => prev.map(r => r.planId === planId
+        ? { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: row.sellingPrice }
+        : r));
       toast.success(`✅ "${row.name}" saved to store`);
     } catch (err: any) {
       setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
       toast.error(err.message || 'Save failed');
     }
   }, [rows]);
+
+  const catalogue = useMemo(() => ({
+    visible:  rows.filter(r => r.providerStatus !== 'removed' && r.isPriced).length,
+    removed:  rows.filter(r => r.providerStatus === 'removed').length,
+    unpriced: rows.filter(r => r.providerStatus !== 'removed' && !r.isPriced).length,
+  }), [rows]);
+
+  // ── Bulk catalogue actions ────────────────────────────────────────────────
+  // Price every live-but-unpriced plan in one go, so a fresh provider sync does
+  // not leave the store empty until each row is saved by hand.
+  const priceAllUnpriced = useCallback(async () => {
+    setPublishing(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/price-all-unpriced', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ margin_percent: parseFloat(globalMarkup) || 10 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Bulk pricing failed');
+      toast.success(`✅ Priced ${data.priced} plan${data.priced === 1 ? '' : 's'} — now live in store`);
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error(err.message || 'Bulk pricing failed');
+    } finally {
+      setPublishing(false);
+    }
+  }, [globalMarkup, fetchPlans]);
+
+  // Drop plans the provider has removed from the catalogue entirely.
+  const pruneRemoved = useCallback(async () => {
+    if (catalogue.removed === 0) return;
+    if (!window.confirm(`Delete ${catalogue.removed} plan(s) that Mozosubz no longer offers? This cannot be undone.`)) return;
+    setPublishing(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/prune-removed', { method: 'POST', headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Prune failed');
+      toast.success(`🗑️ Removed ${data.pruned} stale plan${data.pruned === 1 ? '' : 's'}`);
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error(err.message || 'Prune failed');
+    } finally {
+      setPublishing(false);
+    }
+  }, [catalogue.removed, fetchPlans]);
+
+  // Toggle a plan's customer visibility without touching its price.
+  const togglePriced = useCallback(async (planId: string, nextPriced: boolean) => {
+    setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/set-priced', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ provider_plan_id: planId, is_priced: nextPriced }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Toggle failed');
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, isPriced: nextPriced, saving: false } : r));
+      toast.success(nextPriced ? 'Plan is now visible to customers' : 'Plan hidden from customers');
+    } catch (err: any) {
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
+      toast.error(err.message || 'Toggle failed');
+    }
+  }, []);
 
   // ── Publish ALL visible unsaved/dirty rows in parallel ─────────────────────
   const publishAll = useCallback(async () => {
@@ -993,7 +1068,9 @@ function AdminPricingManagerInner() {
       });
 
       setRows(prev => prev.map(r => {
-        if (successIds.has(r.planId)) return { ...r, saved: true, saving: false, dirty: false };
+        if (successIds.has(r.planId)) {
+          return { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: r.sellingPrice };
+        }
         if (targets.find(t => t.planId === r.planId)) return { ...r, saving: false };
         return r;
       }));
@@ -1026,6 +1103,7 @@ function AdminPricingManagerInner() {
     () => filtered.filter(r => r.dirty || !r.saved).length,
     [filtered]
   );
+
 
   const netCounts = useMemo(() => {
     const c: Record<string, number> = { all: rows.length };
@@ -1118,6 +1196,29 @@ function AdminPricingManagerInner() {
               </span>
               {showKeyConfig ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
+
+            {fetched && (
+              <div className="flex items-center gap-2 mr-auto">
+                <span className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-emerald-950/40 text-emerald-300 border border-emerald-800/40"
+                  title="Priced plans that Mozosubz still sells — these are what customers see.">
+                  <Eye size={11} /> {catalogue.visible} visible
+                </span>
+                {catalogue.unpriced > 0 && (
+                  <button onClick={priceAllUnpriced} disabled={publishing}
+                    title="These plans are hidden from customers because no price is set. Click to price them all."
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-600 hover:bg-slate-700 transition disabled:opacity-50 cursor-pointer">
+                    <EyeOff size={11} /> {catalogue.unpriced} unpriced — price all
+                  </button>
+                )}
+                {catalogue.removed > 0 && (
+                  <button onClick={pruneRemoved} disabled={publishing}
+                    title="Mozosubz no longer returns these plans. They are already hidden from customers."
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-red-950/40 text-red-300 border border-red-800/50 hover:bg-red-900/40 transition disabled:opacity-50 cursor-pointer">
+                    <AlertTriangle size={11} /> {catalogue.removed} removed — prune
+                  </button>
+                )}
+              </div>
+            )}
 
             <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
               className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
@@ -1513,7 +1614,9 @@ function AdminPricingManagerInner() {
               const belowCost = row.sellingPrice < row.costPrice;
               return (
                 <div key={row.planId}
-                  className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/30 transition-colors ${row.dirty ? 'bg-amber-500/5' : ''}`}
+                  className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/30 transition-colors ${
+                    row.providerStatus === 'removed' ? 'bg-red-500/5 opacity-70' : row.dirty ? 'bg-amber-500/5' : ''
+                  }`}
                   style={{ gridTemplateColumns: showCost ? '2.5fr 1fr 1fr 1fr 1fr 1fr auto auto' : '2.5fr 1fr 1fr 1fr auto auto' }}>
 
                   {/* Plan identity */}
@@ -1526,8 +1629,28 @@ function AdminPricingManagerInner() {
                       <span className="text-[9px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded-md font-mono">
                         {row.provider === 'nifex' ? 'Nifex' : 'Mozosubz'}
                       </span>
+                      {row.providerStatus === 'removed' && (
+                        <span
+                          title="Mozosubz no longer returns this plan. It is hidden from customers even though a price is stored here."
+                          className="text-[9px] bg-red-500/20 text-red-300 border border-red-500/40 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <AlertTriangle size={9} /> REMOVED FROM PROVIDER
+                        </span>
+                      )}
+                      {row.providerStatus !== 'removed' && !row.isPriced && (
+                        <span
+                          title="No price set yet — this plan is hidden from customers until you save a price."
+                          className="text-[9px] bg-slate-700/60 text-slate-300 border border-slate-500/40 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <EyeOff size={9} /> UNPRICED — HIDDEN
+                        </span>
+                      )}
+                      {row.providerStatus !== 'removed' && row.isPriced && (
+                        <span
+                          title="Priced and live at the provider — visible to customers."
+                          className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <Eye size={9} /> VISIBLE TO CUSTOMERS
+                        </span>
+                      )}
                       {row.dirty && <span className="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-bold">UNSAVED</span>}
-                      {row.saved && !row.dirty && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold">LIVE</span>}
                     </div>
                     <p className="text-sm text-white font-medium truncate">{row.name}</p>
                     <p className="text-[10px] text-slate-500">
@@ -1572,8 +1695,28 @@ function AdminPricingManagerInner() {
                     </span>
                   </button>
 
+                  {/* Customer visibility toggle (independent of the price value) */}
+                  <button
+                    onClick={() => togglePriced(row.planId, !row.isPriced)}
+                    disabled={row.saving || row.providerStatus === 'removed'}
+                    title={
+                      row.providerStatus === 'removed'
+                        ? 'Plan removed from provider'
+                        : row.isPriced
+                          ? 'Hide from customers'
+                          : 'Show to customers'
+                    }
+                    className={`p-1.5 rounded-lg border transition disabled:opacity-30 disabled:cursor-not-allowed ${
+                      row.isPriced
+                        ? 'text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10'
+                        : 'text-slate-500 border-slate-700 hover:bg-slate-700/30'
+                    }`}>
+                    {row.isPriced ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+
                   {/* Save button */}
-                  <button onClick={() => publishRow(row.planId)} disabled={row.saving || belowCost}
+                  <button onClick={() => publishRow(row.planId)} disabled={row.saving || belowCost || row.providerStatus === 'removed'}
+                    title={row.providerStatus === 'removed' ? 'Plan removed from provider — cannot publish' : undefined}
                     className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border whitespace-nowrap transition disabled:opacity-40 disabled:cursor-not-allowed ${
                       row.saved && !row.dirty
                         ? 'border-slate-600 bg-slate-800 text-slate-400 hover:text-white'
