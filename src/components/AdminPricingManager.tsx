@@ -62,6 +62,35 @@ const MTN_SUBTABS = [
 ] as const;
 type MtnSubTab = typeof MTN_SUBTABS[number]['id'];
 
+const SERVICE_SUBTABS: Record<string, { id: string; label: string; serviceCode?: string }[]> = {
+  MTN: [
+    { id: 'all_mtn',       label: 'All MTN' },
+    { id: 'mtn_sme',       label: 'MTN SME',       serviceCode: 'mtn_sme' },
+    { id: 'mtn_cg',        label: 'MTN CG',        serviceCode: 'mtn_cg' },
+    { id: 'mtn_gifting',   label: 'MTN Gifting',   serviceCode: 'mtn_gifting' },
+    { id: 'mtn_datashare', label: 'MTN Datashare', serviceCode: 'mtn_datashare' },
+    { id: 'mtn_awoof',     label: 'MTN Awoof',     serviceCode: 'mtn_awoof' },
+    { id: 'mtn_coupon',    label: 'MTN Coupon',    serviceCode: 'mtn_coupon' },
+  ],
+  GLO: [
+    { id: 'all_glo',       label: 'All GLO' },
+    { id: 'glo_sme',       label: 'GLO SME',       serviceCode: 'glo_sme' },
+    { id: 'glo_cg',        label: 'GLO CG',        serviceCode: 'glo_cg' },
+    { id: 'glo_data',      label: 'GLO Data',      serviceCode: 'glo_data' },
+  ],
+  Airtel: [
+    { id: 'all_airtel',    label: 'All Airtel' },
+    { id: 'airtel_sme',    label: 'Airtel SME',    serviceCode: 'airtel_sme' },
+    { id: 'airtel_cg',     label: 'Airtel CG',     serviceCode: 'airtel_cg' },
+    { id: 'airtel_gifting',label: 'Airtel Gifting',serviceCode: 'airtel_gifting' },
+  ],
+  '9mobile': [
+    { id: 'all_9mobile',   label: 'All 9mobile' },
+    { id: 'etisalat_sme',  label: '9mobile SME',   serviceCode: 'etisalat_sme' },
+    { id: 'etisalat_data', label: '9mobile Data',  serviceCode: 'etisalat_data' },
+  ],
+};
+
 export type MainCategory = 'data' | 'cable' | 'electricity' | 'exam';
 
 export interface UtilityRow {
@@ -164,7 +193,12 @@ async function getAdminHeaders(): Promise<Record<string, string>> {
   }
 }
 
-function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTab, search: string): boolean {
+function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTab, search: string, activeServiceCode?: string | null): boolean {
+  if (activeServiceCode) {
+    const sId = String(r.serviceId || '').toLowerCase();
+    const sc = activeServiceCode.toLowerCase();
+    if (sId !== sc && !sId.includes(sc)) return false;
+  }
   if (networkTab !== 'all' && r.network.toUpperCase() !== networkTab.toUpperCase()) return false;
   if (networkTab.toUpperCase() === 'MTN' && mtnSubTab !== 'all_mtn') {
     const sub = mtnSubTab.toLowerCase().replace(/^mtn_/, '');
@@ -231,6 +265,8 @@ function AdminPricingManagerInner() {
   const [isForceFetchingAll, setIsForceFetchingAll] = useState(false);
   const [isSyncingFromProvider, setIsSyncingFromProvider] = useState(false);
   const [showFailureLogs, setShowFailureLogs] = useState(false);
+  const [fetchError,      setFetchError]      = useState<string | null>(null);
+  const [activeServiceCode, setActiveServiceCode] = useState<string | null>(null);
 
   // ── Utility Services State (Cable TV, Electricity DISCOs, Exam PINs) ───────
   const [mainCategory, setMainCategory] = useState<MainCategory>('data');
@@ -457,184 +493,74 @@ function AdminPricingManagerInner() {
     }
   };
 
-  // ── Load existing DB prices (reads vtu_plans single source of truth) ───────
-  const loadExistingPrices = useCallback(async () => {
-    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; dbId: string; manualOverride?: number | null; lastSyncedAt?: string }> = {};
-
+  // ── Load existing DB overrides ONLY for selected provider ─────────────────
+  const loadExistingOverrides = useCallback(async (provider: string) => {
+    const map: Record<string, { selling: number; cost: number; active: boolean; manualOverride?: number | null }> = {};
     try {
-      const { data: vtuData, error: vtuErr } = await supabase
+      const { data, error } = await supabase
         .from('vtu_plans')
-        .select('provider_plan_id, plan_name, provider_price, price_to_user, is_active, provider, service, manual_price_override, last_synced_at');
+        .select('provider_plan_id, price_to_user, provider_price, is_active, manual_price_override')
+        .eq('provider', provider);
 
-      if (!vtuErr && vtuData && vtuData.length > 0) {
-        vtuData.forEach((r: any) => {
+      if (!error && data) {
+        data.forEach((r: any) => {
           const key = String(r.provider_plan_id || '').trim();
           if (key) {
             map[key] = {
               selling: Number(r.price_to_user || 0),
               cost: Number(r.provider_price || 0),
               active: r.is_active !== false,
-              provider: String(r.provider || 'mozosubz'),
-              bigisub_id: key,
-              dbId: key,
               manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
-              lastSyncedAt: r.last_synced_at,
             };
           }
         });
-        return map;
       }
     } catch (_) {}
-
-    // Fallback: legacy services_config
-    const { data, error } = await supabase
-      .from('services_config')
-      .select('id, mozosubz_plan_id, mozosubs_plan_id, bigisub_identifier_id, selling_price, cost_price, is_active, provider, item_name')
-      .eq('service_type', 'data');
-
-    if (error) console.warn('[loadExistingPrices]', error.message);
-
-    (data || []).forEach((r: any) => {
-      const keys = [
-        String(r.mozosubz_plan_id || '').trim(),
-        String(r.mozosubs_plan_id || '').trim(),
-        String(r.bigisub_identifier_id || '').trim(),
-        String(r.id || '').trim(),
-      ].filter(Boolean);
-
-      const val = {
-        selling:   Number(r.selling_price || 0),
-        cost:      Number(r.cost_price    || 0),
-        active:    r.is_active !== false,
-        provider:  String(r.provider || 'mozosubz'),
-        bigisub_id: String(r.bigisub_identifier_id || ''),
-        dbId:       String(r.id || ''),
-      };
-
-      keys.forEach(k => { map[k] = val; });
-    });
     return map;
   }, []);
 
-  // ── Fetch live plans from selected provider ────────────────────────────────
-  const fetchPlans = useCallback(async () => {
+  // ── Fetch live plans directly from selected provider API ───────────────────
+  const fetchPlans = useCallback(async (serviceCodeOverride?: string) => {
     setLoading(true);
+    setFetchError(null);
+    const serviceToFetch = serviceCodeOverride !== undefined ? serviceCodeOverride : activeServiceCode;
     try {
       const headers = await getAdminHeaders();
+      const overridesMap = await loadExistingOverrides(selectedProvider);
 
-      // 1. Fetch from unified vtu_plans table (single source of truth with total active count)
-      const vtuRes = await fetch('/api/admin/vtu-plans', { headers }).catch(() => null);
-      if (vtuRes && vtuRes.ok) {
-        const vtuJson = await vtuRes.json();
-        if (vtuJson.success && Array.isArray(vtuJson.plans) && vtuJson.plans.length > 0) {
-          const defaultMarkup = parseFloat(globalMarkup) || 10;
-          const mappedRows: PricingRow[] = vtuJson.plans.map((p: any) => {
-            const cost = Number(p.provider_price || 0);
-            const selling = Number(p.price_to_user || 0);
-            const markup = cost > 0 ? Math.round(((selling - cost) / cost) * 1000) / 10 : defaultMarkup;
-            const pId = String(p.provider_plan_id || p.id).trim();
+      const queryParams = new URLSearchParams({ provider: selectedProvider });
+      if (serviceToFetch) queryParams.set('service_code', serviceToFetch);
 
-            const svc = SERVICE_MAP[p.service] || {
-              id: p.service || 'custom',
-              label: `${p.network} Data`,
-              network: p.network,
-              color: '#818CF8',
-              bg: 'rgba(129,140,248,0.10)',
-              border: 'rgba(129,140,248,0.30)',
-            };
+      const res = await fetch(`/api/admin/get-provider-plans?${queryParams.toString()}`, {
+        method: 'GET',
+        headers,
+      });
 
-            return {
-              planId: pId,
-              serviceId: p.service as ServiceID,
-              network: p.network || svc.network,
-              name: String(p.plan_name || p.name),
-              costPrice: cost,
-              markupPct: markup,
-              sellingPrice: selling,
-              saved: true,
-              saving: false,
-              dirty: false,
-              provider: (p.provider || selectedProvider) as ProviderSlug,
-              bigisubPlanId: pId,
-              isActive: p.is_active !== false,
-              lastSyncedAt: p.last_synced_at,
-              manualOverride: p.manual_price_override ? Number(p.manual_price_override) : null,
-              isPriced: p.is_priced === true,
-              providerStatus: p.provider_status === 'removed' ? 'removed' : 'live',
-            };
-          });
+      const data = await res.json().catch(() => null);
 
-          setRows(mappedRows);
-          setFetched(true);
-          setLastFetched(new Date());
-          toast.success(`Loaded ${mappedRows.length} plans from vtu_plans (Active in DB: ${vtuJson.active || mappedRows.length})`);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Fallback: fetch from upstream provider endpoint
-      const endpoint = selectedProvider === 'nifex'
-        ? '/api/admin/fetch-nifex-plans'
-        : '/api/admin/fetch-mozosubz-plans';
-
-      const [res, existingPrices] = await Promise.all([
-        fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ fetchOnly: true }),
-        }),
-        loadExistingPrices(),
-      ]);
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err?.error || `Server error ${res.status}`);
-      }
-
-      const data = await res.json();
-      if (data.warning) {
-        setFetchWarning(data.warning);
- toast(data.warning, { icon: '', duration: 7000 });
-      } else {
-        setFetchWarning(null);
-      }
-      if (data.balance !== undefined && data.balance !== null) {
-        setProviderBalance(Number(data.balance));
-      }
-
-      const plans: any[] = (data.plans || []).filter((p: any) => (p.id || p.plan_id) && p.name && p.price > 0);
-
-      if (!plans.length) {
- toast(`No plans returned from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} — check your API token.`, { icon: '' });
+      if (!res.ok || !data?.success) {
+        const errMsg = data?.error || `Failed to fetch plans from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'MozoSubz'} (HTTP ${res.status})`;
+        setFetchError(errMsg);
+        setRows([]);
         setFetched(true);
+        setLastFetched(new Date());
+        toast.error(errMsg);
         return;
       }
 
+      const rawPlans: any[] = Array.isArray(data.plans) ? data.plans : [];
       const defaultMarkup = parseFloat(globalMarkup) || 10;
-      const newRows: PricingRow[] = plans.map((p: any) => {
-        const planKey = String(p.id || p.plan_id);
-        const existing = existingPrices[planKey] || existingPrices[String(p.plan_id)] || existingPrices[`${p.service}_${p.id}`];
-        const cost     = Number(p.price);
-        let markup     = defaultMarkup;
-        const costChanged = existing && existing.cost > 0 && Math.abs(existing.cost - cost) > 0.5;
 
-        if (existing && existing.selling > 0 && existing.cost > 0) {
-          markup = ((existing.selling - existing.cost) / existing.cost) * 100;
-        }
+      const newRows: PricingRow[] = rawPlans.map((p: any) => {
+        const planId = String(p.id).trim();
+        const existing = overridesMap[planId];
+        const cost = Number(p.provider_price || 0);
+        const manualOverride = existing?.manualOverride ? Number(existing.manualOverride) : null;
+        const sellingPrice = calculateCustomerPlanPrice(cost, manualOverride, defaultMarkup);
+        const markupPct = cost > 0 ? Math.round(((sellingPrice - cost) / cost) * 1000) / 10 : defaultMarkup;
 
-        // When provider wholesale cost changes (e.g. dropped to 400), don't stick to stale old selling price!
-        let sellingPrice = 0;
-        if (costChanged) {
-          sellingPrice = calcSelling(cost, markup);
-        } else if (existing?.selling && existing.selling > 0) {
-          sellingPrice = existing.selling;
-        } else {
-          sellingPrice = calcSelling(cost, markup);
-        }
-
-        const svc = SERVICE_MAP[p.service] || {
-          id: p.service || 'custom',
+        const svc = SERVICE_MAP[p.service_code] || {
+          id: p.service_code || 'custom',
           label: `${p.network} ${p.plan_type || 'Data'}`,
           network: p.network,
           color: '#818CF8',
@@ -643,32 +569,40 @@ function AdminPricingManagerInner() {
         };
 
         return {
-          planId:        planKey,
-          serviceId:     p.service as ServiceID,
-          network:       p.network || svc.network,
-          name:          String(p.name),
-          costPrice:     cost,
-          markupPct:     Math.round(markup * 10) / 10,
-          sellingPrice:  sellingPrice,
-          saved:         !costChanged && !!existing?.selling,
-          saving:        false,
-          dirty:         !!costChanged,
-          provider:      (p.provider || existing?.provider || selectedProvider) as ProviderSlug,
-          bigisubPlanId: existing?.bigisub_id || planKey,
-          isActive:      existing?.active !== false,
+          planId: planId,
+          serviceId: p.service_code as ServiceID,
+          network: p.network || svc.network,
+          name: String(p.name),
+          costPrice: cost,
+          markupPct: markupPct,
+          sellingPrice: sellingPrice,
+          saved: !!existing,
+          saving: false,
+          dirty: false,
+          provider: selectedProvider,
+          bigisubPlanId: planId,
+          isActive: existing ? existing.active : true,
+          manualOverride: manualOverride,
         };
       });
 
       setRows(newRows);
       setFetched(true);
       setLastFetched(new Date());
-      toast.success(`Loaded ${newRows.length} live plans from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`);
+      setFetchError(null);
+      const label = serviceToFetch ? `${selectedProvider} (${serviceToFetch})` : (selectedProvider === 'nifex' ? 'Nifex Data' : 'MozoSubz');
+      toast.success(`Loaded ${newRows.length} live plans from ${label}`);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to fetch plans');
+      const errMsg = err.message || 'Failed to fetch live plans';
+      setFetchError(errMsg);
+      setRows([]);
+      setFetched(true);
+      setLastFetched(new Date());
+      toast.error(errMsg);
     } finally {
       setLoading(false);
     }
-  }, [selectedProvider, globalMarkup, loadExistingPrices]);
+  }, [selectedProvider, globalMarkup, activeServiceCode, loadExistingOverrides]);
 
   // Step 2.3: Sync Plans from Provider handler
   const handleSyncFromProvider = useCallback(async () => {
@@ -703,7 +637,7 @@ function AdminPricingManagerInner() {
     setRows(prev => prev.map(r => {
       if (r.planId !== planId) return r;
       const pct = r.costPrice > 0 ? ((val - r.costPrice) / r.costPrice) * 100 : 0;
-      return { ...r, sellingPrice: val, markupPct: Math.round(pct * 10) / 10, dirty: true };
+      return { ...r, sellingPrice: val, manualOverride: val, markupPct: Math.round(pct * 10) / 10, dirty: true };
     }));
   }, []);
 
@@ -731,45 +665,22 @@ function AdminPricingManagerInner() {
     });
   }, []);
 
-  // ── Executed when user confirms inside the modal ──────────────────────────
+  // ── Executed when user confirms inside the modal (marks inactive, NEVER deletes) ─
   const handleExecuteConfirmedDelete = useCallback(async () => {
     if (deleteConfirmModal.type === 'all') {
       setIsDeletingAll(true);
       try {
-        const headers = await getAdminHeaders();
-
-        // 1. Backend delete endpoint
-        const res = await fetch('/api/admin/delete-all-plans', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ serviceType: 'data' })
-        });
-        const resData = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(resData.error || 'Server failed to delete all plans');
-        }
-
-        // 2. Direct Supabase fallback to guarantee complete clean database
+        await supabase.from('vtu_plans').update({ is_active: false }).eq('provider', selectedProvider);
         try {
-          await supabase.from('services_config').delete().eq('service_type', 'data');
-        } catch (_) {}
-        try {
-          await supabase.from('services_config').delete().ilike('service_type', 'data');
-        } catch (_) {}
-        try {
-          await supabase.from('services_config').delete().or('provider.eq.mozosubz,provider.eq.nifex');
-        } catch (_) {}
-        try {
-          await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          await supabase.from('services_config').update({ is_active: false }).eq('provider', selectedProvider);
         } catch (_) {}
 
-        setRows([]);
-        setFetched(false);
+        setRows(prev => prev.map(r => ({ ...r, isActive: false, dirty: true })));
         setDeleteConfirmModal({ isOpen: false, type: 'all' });
         window.dispatchEvent(new CustomEvent('plans-updated'));
- toast.success(' All data plans deleted successfully! You can now fetch fresh plans or add a new plan.');
+        toast.success(`Deactivated all ${selectedProvider === 'nifex' ? 'Nifex Data' : 'MozoSubz'} plans successfully.`);
       } catch (err: any) {
-        toast.error(err.message || 'Failed to delete all plans');
+        toast.error(err.message || 'Failed to deactivate plans');
       } finally {
         setIsDeletingAll(false);
       }
@@ -777,36 +688,22 @@ function AdminPricingManagerInner() {
       const planId = deleteConfirmModal.planId;
       const planName = deleteConfirmModal.planName;
 
-      // Remove from table immediately
-      setRows(prev => prev.filter(r => String(r.planId) !== String(planId)));
+      setRows(prev => prev.map(r => String(r.planId) === String(planId) ? { ...r, isActive: false, dirty: true } : r));
       setDeleteConfirmModal({ isOpen: false, type: 'all' });
 
       try {
-        const headers = await getAdminHeaders();
-        const res = await fetch('/api/admin/delete-plan', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ id: planId, name: planName, collectionName: 'services_config' }),
-        });
-        const resData = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(resData.error || 'Failed to delete plan from server');
-        }
-
-        // Direct Supabase fallback
-        if (planName) {
-          try { await supabase.from('services_config').delete().eq('item_name', planName); } catch (_) {}
-        }
-        try { await supabase.from('services_config').delete().eq('bigisub_identifier_id', planId); } catch (_) {}
-        try { await supabase.from('services_config').delete().eq('mozosubz_plan_id', planId); } catch (_) {}
+        await supabase.from('vtu_plans').update({ is_active: false }).eq('provider_plan_id', planId);
+        try {
+          await supabase.from('services_config').update({ is_active: false }).or(`bigisub_identifier_id.eq.${planId},mozosubz_plan_id.eq.${planId}`);
+        } catch (_) {}
 
         window.dispatchEvent(new CustomEvent('plans-updated'));
- toast.success(` Deleted "${planName || 'plan'}" successfully`);
+        toast.success(`Deactivated "${planName || 'plan'}" successfully.`);
       } catch (err: any) {
-        toast.error(err.message || 'Failed to delete plan');
+        toast.error(err.message || 'Failed to deactivate plan');
       }
     }
-  }, [deleteConfirmModal]);
+  }, [deleteConfirmModal, selectedProvider]);
 
   // ── Force Fetch All Plans from ALL Providers (Mozosubz + Nifex) ─────────────
   const forceFetchAllProviders = useCallback(async (autoPublish = false) => {
@@ -938,25 +835,26 @@ function AdminPricingManagerInner() {
     setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
     try {
       const headers = await getAdminHeaders();
-
-      // Persist manual price override to vtu_plans single source of truth
-      await fetch('/api/admin/vtu-plans/override', {
+      const res = await fetch('/api/admin/save-provider-plans', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          provider_plan_id: row.planId,
-          manual_price_override: row.sellingPrice,
-          is_active: row.isActive,
+          provider: selectedProvider,
+          marginPercent: parseFloat(globalMarkup) || 10,
+          plans: [{
+            provider_plan_id: row.planId,
+            name: row.name,
+            network: row.network,
+            service_code: row.serviceId,
+            provider_price: row.costPrice,
+            customer_price: row.sellingPrice,
+            manual_price_override: row.manualOverride || null,
+            margin_percent: row.markupPct,
+            is_active: row.isActive,
+          }],
         }),
-      }).catch(() => null);
-
-      const res = await fetch('/api/admin/create-plan', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(buildPayload(row)),
       });
-      let resData: any = {};
-      try { resData = await res.json(); } catch { /**/ }
+      const resData = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
       setRows(prev => prev.map(r => r.planId === planId
         ? { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: row.sellingPrice }
@@ -966,7 +864,7 @@ function AdminPricingManagerInner() {
       setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
       toast.error(err.message || 'Save failed');
     }
-  }, [rows]);
+  }, [rows, selectedProvider, globalMarkup]);
 
   const catalogue = useMemo(() => ({
     visible:  rows.filter(r => r.providerStatus !== 'removed' && r.isPriced).length,
@@ -988,7 +886,7 @@ function AdminPricingManagerInner() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Bulk pricing failed');
- toast.success(` Priced ${data.priced} plan${data.priced === 1 ? '' : 's'} — now live in store`);
+      toast.success(`Priced ${data.priced} plan${data.priced === 1 ? '' : 's'} — now live in store`);
       await fetchPlans();
     } catch (err: any) {
       toast.error(err.message || 'Bulk pricing failed');
@@ -1007,7 +905,7 @@ function AdminPricingManagerInner() {
       const res = await fetch('/api/admin/vtu-plans/prune-removed', { method: 'POST', headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Prune failed');
- toast.success(` Removed ${data.pruned} stale plan${data.pruned === 1 ? '' : 's'}`);
+      toast.success(`Removed ${data.pruned} stale plan${data.pruned === 1 ? '' : 's'}`);
       await fetchPlans();
     } catch (err: any) {
       toast.error(err.message || 'Prune failed');
@@ -1035,61 +933,61 @@ function AdminPricingManagerInner() {
     }
   }, []);
 
-  // ── Publish ALL visible unsaved/dirty rows in parallel ─────────────────────
+  // ── Publish ALL visible unsaved/dirty rows in batch ───────────────────────
   const publishAll = useCallback(async () => {
-    const targets = rows.filter(r => (r.dirty || !r.saved) && isRowVisible(r, networkTab, mtnSubTab, search));
+    const targets = rows.filter(r => (r.dirty || !r.saved) && isRowVisible(r, networkTab, mtnSubTab, search, activeServiceCode));
     if (!targets.length) { toast('No unsaved plans in current view'); return; }
 
     setPublishing(true);
     setRows(prev => prev.map(r => targets.find(t => t.planId === r.planId) ? { ...r, saving: true } : r));
 
-    let ok = 0, fail = 0;
     try {
       const headers = await getAdminHeaders();
-      const results = await Promise.allSettled(
-        targets.map(async row => {
-          if (row.sellingPrice < row.costPrice) throw new Error('Price below cost');
-          const res = await fetch('/api/admin/create-plan', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(buildPayload(row)),
-          });
-          let resData: any = {};
-          try { resData = await res.json(); } catch { /**/ }
-          if (!res.ok) throw new Error(resData?.error || `Error ${res.status}`);
-          return row.planId;
-        })
-      );
+      const payloadPlans = targets.map(row => ({
+        provider_plan_id: row.planId,
+        name: row.name,
+        network: row.network,
+        service_code: row.serviceId,
+        provider_price: row.costPrice,
+        customer_price: row.sellingPrice,
+        manual_price_override: row.manualOverride || null,
+        margin_percent: row.markupPct,
+        is_active: row.isActive,
+      }));
 
-      const successIds = new Set<string>();
-      results.forEach((r, i) => {
-        if (r.status === 'fulfilled') { ok++; successIds.add(targets[i].planId); }
-        else { fail++; console.warn('[publishAll fail]', targets[i].name, (r as any).reason?.message); }
+      const res = await fetch('/api/admin/save-provider-plans', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          provider: selectedProvider,
+          marginPercent: parseFloat(globalMarkup) || 10,
+          plans: payloadPlans,
+        }),
       });
 
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resData?.error || `Error ${res.status}`);
+
+      const savedIds = new Set(targets.map(t => t.planId));
       setRows(prev => prev.map(r => {
-        if (successIds.has(r.planId)) {
+        if (savedIds.has(r.planId)) {
           return { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: r.sellingPrice };
         }
-        if (targets.find(t => t.planId === r.planId)) return { ...r, saving: false };
         return r;
       }));
+      toast.success(`✅ Saved ${targets.length} plans to store`);
     } catch (err: any) {
       setRows(prev => prev.map(r => ({ ...r, saving: false })));
-      toast.error(err.message || 'Publish failed');
+      toast.error(err.message || 'Save failed');
+    } finally {
       setPublishing(false);
-      return;
     }
-
-    setPublishing(false);
- if (ok) toast.success(` Published ${ok} plan${ok !== 1 ? 's' : ''} to store`);
-    if (fail) toast.error(`${fail} plan${fail !== 1 ? 's' : ''} failed — check selling prices`);
-  }, [rows, networkTab, mtnSubTab, search]);
+  }, [rows, selectedProvider, globalMarkup, networkTab, mtnSubTab, search, activeServiceCode]);
 
   // ── Computed ───────────────────────────────────────────────────────────────
   const filtered = useMemo(
-    () => rows.filter(r => isRowVisible(r, networkTab, mtnSubTab, search)),
-    [rows, networkTab, mtnSubTab, search]
+    () => rows.filter(r => isRowVisible(r, networkTab, mtnSubTab, search, activeServiceCode)),
+    [rows, networkTab, mtnSubTab, search, activeServiceCode]
   );
 
   const stats = useMemo(() => ({
@@ -1171,7 +1069,15 @@ function AdminPricingManagerInner() {
               <Layers size={14} className="text-slate-400 ml-2 mr-1" />
               <select
                 value={selectedProvider}
-                onChange={e => setSelectedProvider(e.target.value as ProviderSlug)}
+                onChange={e => {
+                  const newProv = e.target.value as ProviderSlug;
+                  setSelectedProvider(newProv);
+                  setRows([]);
+                  setFetchError(null);
+                  setActiveServiceCode(null);
+                  setNetworkTab('all');
+                  setMtnSubTab('all_mtn');
+                }}
                 className="bg-transparent text-xs font-semibold text-white px-2 py-1.5 focus:outline-none cursor-pointer">
                 {PROVIDER_OPTIONS.map(p => (
                   <option key={p.value} value={p.value} className="bg-slate-900 text-white">
@@ -1225,7 +1131,7 @@ function AdminPricingManagerInner() {
               {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
             </button>
 
-            <button onClick={fetchPlans} disabled={loading}
+            <button onClick={() => fetchPlans(activeServiceCode || undefined)} disabled={loading}
               className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
               {loading ? 'Fetching…' : fetched ? 'Sync Live Plans' : `Fetch from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`}
@@ -1358,6 +1264,32 @@ function AdminPricingManagerInner() {
           </div>
         )}
       </div>
+
+      {/* Live Fetch Error Banner (Strict Requirement: Show Error + Last Fetch Time; No DB fallback; No mixed list) */}
+      {fetchError && (
+        <div className="rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-red-950/50">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 font-bold text-red-300">
+              <AlertTriangle size={18} className="text-red-400 shrink-0" />
+              <span>Provider Live Request Failed</span>
+            </div>
+            <p className="text-xs text-red-200/90 font-mono">{fetchError}</p>
+            {lastFetched && (
+              <p className="text-[11px] text-red-400">
+                Last attempt: {lastFetched.toLocaleTimeString('en-NG')}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchPlans(activeServiceCode || undefined)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 rounded-xl text-white font-semibold text-xs transition cursor-pointer self-start sm:self-auto shrink-0"
+          >
+            <RefreshCw size={13} />
+            <span>Retry Live Fetch</span>
+          </button>
+        </div>
+      )}
 
       {/* Main Service Category Navigation (Data, Cable, Electricity, Exam PINs) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
@@ -1521,7 +1453,7 @@ function AdminPricingManagerInner() {
         <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 scrollbar-none">
           {NETWORK_TABS.map(tab => (
             <button key={tab.id}
-              onClick={() => { setNetworkTab(tab.id); setMtnSubTab('all_mtn'); }}
+              onClick={() => { setNetworkTab(tab.id); setMtnSubTab('all_mtn'); setActiveServiceCode(null); }}
               className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all border"
               style={networkTab === tab.id
                 ? { background: tab.bg, borderColor: tab.border, color: tab.color, boxShadow: `0 4px 15px ${tab.color}25` }
@@ -1538,20 +1470,33 @@ function AdminPricingManagerInner() {
         </div>
       )}
 
-      {/* MTN Sub-Tabs */}
-      {fetched && networkTab === 'MTN' && (
+      {/* Service Sub-Tabs (Live Per-Service Fetching for all networks) */}
+      {fetched && networkTab !== 'all' && (
         <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 scrollbar-none pl-2">
           <Filter size={12} className="text-slate-500 self-center flex-shrink-0 mr-1" />
-          <span className="text-xs text-slate-500 self-center flex-shrink-0 mr-1">MTN Plans:</span>
-          {MTN_SUBTABS.map(tab => (
-            <button key={tab.id} onClick={() => setMtnSubTab(tab.id)}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${ mtnSubTab === tab.id
-                  ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300'
+          <span className="text-xs text-slate-500 self-center flex-shrink-0 mr-1">{networkTab} Services:</span>
+          {(SERVICE_SUBTABS[networkTab] || []).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                if (tab.serviceCode) {
+                  setActiveServiceCode(tab.serviceCode);
+                  fetchPlans(tab.serviceCode);
+                } else {
+                  setActiveServiceCode(null);
+                  fetchPlans('');
+                }
+              }}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                (tab.serviceCode ? activeServiceCode === tab.serviceCode : !activeServiceCode)
+                  ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 font-bold'
                   : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500'}`}>
               {tab.label}
-              <span className={`text-[10px] rounded-full px-1.5 font-bold ${mtnSubTab === tab.id ? 'bg-yellow-500/25 text-yellow-300' : 'bg-slate-700 text-slate-400'}`}>
-                {mtnSubCounts[tab.id] ?? 0}
-              </span>
+              {tab.serviceCode && (
+                <span className="text-[9px] bg-slate-900/60 px-1 py-0.5 rounded text-indigo-400 font-mono">
+                  live
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1573,7 +1518,7 @@ function AdminPricingManagerInner() {
               {isSyncingFromProvider ? 'Syncing Plans...' : 'Sync Plans from Provider'}
             </button>
 
-            <button onClick={fetchPlans} disabled={loading}
+            <button onClick={() => fetchPlans(activeServiceCode || undefined)} disabled={loading}
             className="flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50">
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
             {loading ? 'Fetching…' : `Fetch Plans from ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'}`}
