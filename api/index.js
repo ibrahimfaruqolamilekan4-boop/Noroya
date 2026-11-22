@@ -71,11 +71,273 @@ var getScopedSupabaseClient = (token) => {
   return supabase;
 };
 
+// src/lib/mozosubz-sync.ts
+import axios from "axios";
+var MOZOSUBZ_SERVICES = [
+  { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+  { id: "mtn_cg", network: "MTN", plan_type: "CG" },
+  { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
+  { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
+  { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
+  { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+  { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
+  { id: "glo_sme", network: "GLO", plan_type: "SME" },
+  { id: "glo_cg", network: "GLO", plan_type: "CG" },
+  { id: "glo_data", network: "GLO", plan_type: "DATA" },
+  { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+  { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
+  { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+  { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
+  { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
+];
+var MOZOSUBZ_BASE_URL = "https://mozosubz.xyz/api/v1";
+var MIN_PLANS_FOR_DEACTIVATION = 20;
+var isUsableSecret = (value) => {
+  const v = String(value || "").trim();
+  return v.length > 5 && !v.includes("PASTE_YOUR") && !v.includes("dummy");
+};
+async function fetchServicePlans(serviceId, connectKey, warnings) {
+  const out = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    try {
+      const url = page === 1 ? `${MOZOSUBZ_BASE_URL}/data/plans?service=${encodeURIComponent(serviceId)}` : `${MOZOSUBZ_BASE_URL}/data/plans?service=${encodeURIComponent(serviceId)}&page=${page}`;
+      const resp = await axios.get(url, {
+        headers: { "X-Connect-Key": connectKey, "Content-Type": "application/json" },
+        timeout: 12e3,
+        validateStatus: () => true
+      });
+      const d = resp.data || {};
+      if (resp.status === 401 || resp.status === 403) {
+        warnings.push(`${serviceId}: upstream rejected the connect key (HTTP ${resp.status})`);
+        break;
+      }
+      if (!d?.success || !Array.isArray(d.plans)) {
+        if (d?.error) warnings.push(`${serviceId}: ${d.error}`);
+        break;
+      }
+      out.push(...d.plans);
+      if (d.next || d.total_pages && page < Number(d.total_pages)) {
+        page += 1;
+        if (page > 20) break;
+      } else {
+        hasMore = false;
+      }
+    } catch (err) {
+      warnings.push(`${serviceId}: ${err?.message || "network error"}`);
+      break;
+    }
+  }
+  return out;
+}
+async function fetchNifexPlans(nifexKey, warnings) {
+  try {
+    const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
+    const resp = await axios.get("https://nifexdataapp.com.ng/api/data/", {
+      headers: { Authorization: `Token ${cleanKey}`, "Content-Type": "application/json" },
+      timeout: 15e3,
+      validateStatus: () => true
+    });
+    const d = resp.data;
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(d?.plans)) return d.plans;
+    if (Array.isArray(d?.data)) return d.data;
+    if (Array.isArray(d?.results)) return d.results;
+    if (d && typeof d === "object") {
+      const merged = [];
+      for (const key of Object.keys(d)) {
+        if (Array.isArray(d[key])) merged.push(...d[key]);
+      }
+      return merged;
+    }
+  } catch (err) {
+    warnings.push(`nifex: ${err?.message || "network error"}`);
+  }
+  return [];
+}
+async function syncVtuPlans(opts) {
+  const { supabase: supabase2, mozosubzKey, nifexKey = "", defaultMarginPct = 10, trigger = "manual" } = opts;
+  const warnings = [];
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const serviceCounts = {};
+  const livePlans = [];
+  const empty = (error) => ({
+    success: false,
+    added: 0,
+    updated: 0,
+    deactivated: 0,
+    unpriced: 0,
+    removed: 0,
+    total: 0,
+    service_counts: {},
+    price_changes_count: 0,
+    price_changes: [],
+    timestamp: nowIso,
+    trigger,
+    warnings,
+    ...error ? { error } : {}
+  });
+  if (!isUsableSecret(mozosubzKey) && !isUsableSecret(nifexKey)) {
+    return empty(
+      "No provider credentials configured. Set the Mozosubz Connect Key in Price Manager (or MOZOSUBZ_API_KEY)."
+    );
+  }
+  if (isUsableSecret(mozosubzKey)) {
+    for (const svc of MOZOSUBZ_SERVICES) {
+      const plans = await fetchServicePlans(svc.id, mozosubzKey, warnings);
+      if (plans.length === 0) continue;
+      serviceCounts[svc.id] = (serviceCounts[svc.id] || 0) + plans.length;
+      for (const p of plans) {
+        const cost = Number(p.price || 0);
+        const planId = String(p.id ?? "").trim();
+        if (!planId) continue;
+        livePlans.push({
+          network: svc.network,
+          plan_name: p.name || `${svc.network} ${svc.plan_type} Data`,
+          provider_plan_id: planId,
+          provider_price: cost,
+          price_to_user: Math.ceil(cost * 1.1),
+          is_active: true,
+          last_synced_at: nowIso,
+          provider: "mozosubz",
+          service: svc.id,
+          validity: "30 Days",
+          margin_percent: defaultMarginPct
+        });
+      }
+    }
+  }
+  if (isUsableSecret(nifexKey)) {
+    const list = await fetchNifexPlans(nifexKey, warnings);
+    serviceCounts.nifex = list.length;
+    for (const p of list) {
+      const rawNet = String(p.network || p.network_name || "MTN").toUpperCase();
+      const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
+      const cost = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
+      const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid ?? "").trim();
+      if (!planId) continue;
+      livePlans.push({
+        network: net,
+        plan_name: p.plan_name || p.name || `${net} Data`,
+        provider_plan_id: `nifex_${net.toLowerCase()}_${planId}`,
+        provider_price: cost,
+        price_to_user: Math.ceil(cost * 1.1),
+        is_active: true,
+        last_synced_at: nowIso,
+        provider: "nifex",
+        service: p.type || "DATA",
+        validity: p.validity || "30 Days",
+        margin_percent: defaultMarginPct
+      });
+    }
+  }
+  if (livePlans.length === 0) {
+    return empty("No plans retrieved from providers. Please verify the provider credentials.");
+  }
+  const { data: existingRows, error: readErr } = await supabase2.from("vtu_plans").select(
+    "provider_plan_id, price_to_user, provider_price, manual_price_override, margin_percent, is_active, is_priced, provider_status"
+  );
+  if (readErr) return empty(readErr.message);
+  const existingMap = /* @__PURE__ */ new Map();
+  for (const row of existingRows || []) {
+    existingMap.set(String(row.provider_plan_id).trim(), row);
+  }
+  let added = 0;
+  let updated = 0;
+  let unpriced = 0;
+  const priceChanges = [];
+  const uniquePlanMap = /* @__PURE__ */ new Map();
+  for (const p of livePlans) {
+    const key = String(p.provider_plan_id).trim();
+    if (!key) continue;
+    const ext = existingMap.get(key);
+    const margin = ext?.margin_percent !== void 0 && ext?.margin_percent !== null ? Number(ext.margin_percent) : defaultMarginPct;
+    const manualOverride = ext?.manual_price_override;
+    const hasOverride = manualOverride !== void 0 && manualOverride !== null && Number(manualOverride) > 0;
+    const isPriced = ext?.is_priced === true;
+    const computedPrice = hasOverride ? Math.ceil(Number(manualOverride)) : Math.ceil(Number(p.provider_price || 0) * (1 + margin / 100));
+    if (ext) {
+      updated += 1;
+      const oldPrice = Number(ext.price_to_user || 0);
+      if (Math.abs(oldPrice - computedPrice) > 0.01) {
+        priceChanges.push({
+          provider_plan_id: key,
+          old_customer_price: oldPrice,
+          new_customer_price: computedPrice
+        });
+      }
+    } else {
+      added += 1;
+    }
+    if (!isPriced) unpriced += 1;
+    uniquePlanMap.set(key, {
+      ...p,
+      provider_plan_id: key,
+      price_to_user: computedPrice,
+      manual_price_override: hasOverride ? Number(manualOverride) : null,
+      margin_percent: margin,
+      is_priced: isPriced,
+      provider_status: "live",
+      last_seen_at: nowIso,
+      // A sync must never resurrect a plan an admin deliberately switched off.
+      // New rows default to enabled; existing rows keep whatever kill-switch
+      // state the admin set.
+      is_active: ext ? ext.is_active !== false : true,
+      last_synced_at: nowIso
+    });
+  }
+  const upsertRows = Array.from(uniquePlanMap.values());
+  const { error: upsertErr } = await supabase2.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
+  if (upsertErr) return empty(upsertErr.message);
+  const liveSet = new Set(livePlans.map((p) => String(p.provider_plan_id).trim()));
+  let deactivated = 0;
+  let removed = 0;
+  const missing = existingRows.filter((r) => !liveSet.has(String(r.provider_plan_id).trim())).map((r) => String(r.provider_plan_id).trim()).filter(Boolean);
+  if (missing.length > 0) {
+    const comprehensive = livePlans.length >= MIN_PLANS_FOR_DEACTIVATION;
+    const { error: statusErr } = await supabase2.from("vtu_plans").update({ provider_status: "removed", last_synced_at: nowIso }).in("provider_plan_id", missing);
+    if (!statusErr) removed = missing.length;
+    if (comprehensive) {
+      const { error: deactErr } = await supabase2.from("vtu_plans").update({ is_active: false, last_synced_at: nowIso }).in("provider_plan_id", missing);
+      if (!deactErr) deactivated = missing.length;
+    } else {
+      warnings.push(
+        `Provider returned only ${livePlans.length} plans (<${MIN_PLANS_FOR_DEACTIVATION}); ${missing.length} missing plans flagged 'removed' but left active to avoid a partial-outage wipe.`
+      );
+    }
+  }
+  return {
+    success: true,
+    added,
+    updated,
+    deactivated,
+    unpriced,
+    removed,
+    total: livePlans.length,
+    service_counts: serviceCounts,
+    price_changes_count: priceChanges.length,
+    price_changes: priceChanges.slice(0, 50),
+    timestamp: nowIso,
+    trigger,
+    warnings
+  };
+}
+async function getPlanFreshness(supabase2) {
+  const { data } = await supabase2.from("vtu_plans").select("last_synced_at, is_active").order("last_synced_at", { ascending: false }).limit(5e3);
+  const rows = data || [];
+  return {
+    last_synced_at: rows[0]?.last_synced_at || null,
+    active_plans: rows.filter((r) => r.is_active).length,
+    total_plans: rows.length
+  };
+}
+
 // server.ts
-import axios2 from "axios";
+import axios3 from "axios";
 
 // src/lib/vtu-providers.ts
-import axios from "axios";
+import axios2 from "axios";
 var _supabase = null;
 function initProviders(supabaseClient) {
   _supabase = supabaseClient;
@@ -141,7 +403,7 @@ var mozosubzProvider = {
     const payload = p.type === "data" ? { service, plan_id: rawPlanId, phone: p.phone } : { network: net, amount: p.amount, phone: p.phone };
     console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
     try {
-      const resp = await axios.post(url, payload, {
+      const resp = await axios2.post(url, payload, {
         headers: {
           "Content-Type": "application/json",
           "X-Connect-Key": p.apiKey,
@@ -186,7 +448,7 @@ var nifexProvider = {
     };
     console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
     try {
-      const resp = await axios.post(url, payload, {
+      const resp = await axios2.post(url, payload, {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Token ${p.apiKey.replace(/^Token\s+/i, "").trim()}`
@@ -233,7 +495,7 @@ var bigisubProvider = {
     }
     console.log(`[Bigisub] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
     try {
-      const resp = await axios.post(url, payload, {
+      const resp = await axios2.post(url, payload, {
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${p.apiKey}` },
         timeout: 12e3
       });
@@ -280,7 +542,7 @@ async function purchaseMozosubzUtility(p) {
   };
   console.log(`[Mozosubz] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
   try {
-    const resp = await axios.post(url, payload, {
+    const resp = await axios2.post(url, payload, {
       headers: {
         "Content-Type": "application/json",
         "X-Connect-Key": p.apiKey,
@@ -327,7 +589,7 @@ async function purchaseNifexUtility(p) {
   };
   console.log(`[Nifex Data] ${p.type.toUpperCase()} purchase \u2192`, JSON.stringify(payload));
   try {
-    const resp = await axios.post(url, payload, {
+    const resp = await axios2.post(url, payload, {
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Token ${p.apiKey.replace(/^Token\s+/i, "").trim()}`
@@ -347,7 +609,7 @@ async function purchaseNifexUtility(p) {
 async function fetchNifexUser(apiKey2) {
   const base = process.env.NIFEX_BASE_URL || "https://nifexdataapp.com.ng/api";
   const cleanKey = apiKey2.replace(/^Token\s+/i, "").trim();
-  const resp = await axios.get(`${base}/user/`, {
+  const resp = await axios2.get(`${base}/user/`, {
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Token ${cleanKey}`
@@ -356,7 +618,7 @@ async function fetchNifexUser(apiKey2) {
   });
   return resp.data;
 }
-async function fetchNifexPlans(apiKey2) {
+async function fetchNifexPlans2(apiKey2) {
   const base = process.env.NIFEX_BASE_URL || "https://nifexdataapp.com.ng/api";
   const headers = {
     "Content-Type": "application/json"
@@ -366,24 +628,40 @@ async function fetchNifexPlans(apiKey2) {
     headers["Authorization"] = `Token ${cleanKey}`;
   }
   try {
-    const resp = await axios.get(`${base}/data/`, {
+    const resp = await axios2.get(`${base}/data/`, {
       headers,
       timeout: 15e3
     });
     const d = resp.data;
-    if (d?.status === "success" || Array.isArray(d?.plans)) {
+    let rawList = [];
+    if (Array.isArray(d)) {
+      rawList = d;
+    } else if (Array.isArray(d?.plans)) {
+      rawList = d.plans;
+    } else if (Array.isArray(d?.data)) {
+      rawList = d.data;
+    } else if (Array.isArray(d?.results)) {
+      rawList = d.results;
+    } else if (d && typeof d === "object") {
+      for (const k of Object.keys(d)) {
+        if (Array.isArray(d[k])) {
+          rawList.push(...d[k]);
+        }
+      }
+    }
+    if (rawList.length > 0 || d?.status === "success") {
       return {
         success: true,
-        plans: Array.isArray(d.plans) ? d.plans : [],
-        account_type: d.account_type || "Vendor",
-        count: d.count || (Array.isArray(d.plans) ? d.plans.length : 0),
+        plans: rawList,
+        account_type: d?.account_type || "Vendor",
+        count: rawList.length,
         raw: d
       };
     }
     return {
       success: false,
       plans: [],
-      error: d?.message || "Failed to retrieve plans from Nifex Data",
+      error: d?.message || d?.msg || d?.error || "Failed to retrieve plans from Nifex Data",
       raw: d
     };
   } catch (err) {
@@ -408,24 +686,28 @@ async function fetchNifexLivePlans(apiKey2) {
     } catch (_) {
     }
   }
-  const res = await fetchNifexPlans(apiKey2);
+  const res = await fetchNifexPlans2(apiKey2);
   if (!res.success) {
     throw new Error(res.error || "Failed to retrieve live plans from Nifex Data API.");
   }
   const mapped = (res.plans || []).map((p) => {
-    const netRaw = String(p.network || "MTN").toUpperCase();
+    const netRaw = String(p.network || p.network_name || "MTN").toUpperCase();
     const netUpper = netRaw.includes("MTN") ? "MTN" : netRaw.includes("AIRTEL") ? "AIRTEL" : netRaw.includes("GLO") ? "GLO" : "9MOBILE";
-    const planType = String(p.type || "SME").toUpperCase();
-    const service = netUpper === "MTN" ? planType.includes("CG") || planType.includes("CORPORATE") ? "mtn_cg" : planType.includes("GIFT") ? "mtn_gifting" : "mtn_sme" : netUpper === "AIRTEL" ? "airtel_data" : netUpper === "GLO" ? "glo_data" : "etisalat_data";
-    const planId = Number(p.plan_id ?? p.pId ?? p.id ?? 0);
+    const rawType = String(p.plan_type || p.type || "").toUpperCase();
+    const rawName = String(p.plan_name || p.name || p.plan || p.title || `${netUpper} Data`);
+    const planType = rawType || (rawName.toUpperCase().includes("CG") ? "CG" : rawName.toUpperCase().includes("GIFT") ? "GIFTING" : "SME");
+    const service = netUpper === "MTN" ? planType.includes("CG") || planType.includes("CORPORATE") ? "mtn_cg" : planType.includes("GIFT") ? "mtn_gifting" : "mtn_sme" : netUpper === "AIRTEL" ? planType.includes("CG") ? "airtel_cg" : "airtel_sme" : netUpper === "GLO" ? planType.includes("CG") ? "glo_cg" : "glo_data" : "etisalat_data";
+    const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid ?? Math.floor(Math.random() * 1e5));
+    const price = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
+    const validity = String(p.validity || p.month_validate || p.duration || "30 Days");
     return {
       id: `nifex_${netUpper.toLowerCase()}_${planId}`,
       plan_id: planId,
-      name: `${netUpper} ${p.plan_name} ${planType} (${p.validity || "30 Days"})`,
-      price: Number(p.price || 0),
+      name: `${netUpper} ${rawName} ${planType} (${validity})`,
+      price,
       network: netUpper,
       plan_type: planType,
-      validity: p.validity || "30 Days",
+      validity,
       service,
       provider: "nifex"
     };
@@ -445,6 +727,25 @@ var PROVIDERS = {
 };
 function getProvider(name) {
   return PROVIDERS[name?.toLowerCase()] || null;
+}
+
+// src/lib/fundingFee.ts
+var BACHS_GATEWAY_RATE = 0.015;
+function calculateFundingFee(amount, rate = BACHS_GATEWAY_RATE) {
+  const numericAmount = Math.max(0, Math.round(Number(amount) || 0));
+  const margin = numericAmount >= 5e3 ? 50 : 30;
+  const totalCharged = Math.ceil((numericAmount + margin) / (1 - rate));
+  const gatewayFee = totalCharged - numericAmount - margin;
+  const settlement = totalCharged - gatewayFee;
+  return {
+    amount: numericAmount,
+    margin,
+    norodataFee: margin,
+    gatewayFee,
+    totalCharged,
+    settlement,
+    rate
+  };
 }
 
 // server.ts
@@ -476,29 +777,34 @@ var ensureUUID = (strId) => {
   return `${part1}-${part2}-${part3}-${part4}-${part5}`;
 };
 var providerSecretsCache = /* @__PURE__ */ new Map();
+var sanitizeSecretValue = (raw = "") => {
+  return String(raw || "").trim().replace(/^[A-Za-z0-9_]+\s*=\s*/, "").replace(/^["'`]+|["'`]+$/g, "").replace(/^Bearer\s+/i, "").replace(/["'`\r\n\s]/g, "").trim();
+};
 var resolveProviderSecret = async (identifier, envKeys) => {
   if (providerSecretsCache.has(identifier)) {
-    const cached = providerSecretsCache.get(identifier);
+    const cached = sanitizeSecretValue(providerSecretsCache.get(identifier) || "");
     if (cached && !cached.includes("PASTE_YOUR") && !cached.includes("dummy") && cached.length > 5) return cached;
   }
   try {
     const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", identifier).maybeSingle();
-    if (data?.secret && !data.secret.includes("PASTE_YOUR") && !data.secret.includes("dummy") && data.secret.trim().length > 5) {
-      providerSecretsCache.set(identifier, data.secret.trim());
-      return data.secret.trim();
+    const dbVal = sanitizeSecretValue(data?.secret || "");
+    if (dbVal && !dbVal.includes("PASTE_YOUR") && !dbVal.includes("dummy") && dbVal.length > 5) {
+      providerSecretsCache.set(identifier, dbVal);
+      return dbVal;
     }
   } catch (_) {
   }
   try {
     const { data: legacy } = await supabase.from("services_config").select("item_name").or(`bigisub_identifier_id.eq.${identifier},mozosubz_plan_id.eq.${identifier}`).maybeSingle();
-    if (legacy?.item_name && !legacy.item_name.includes("PASTE_YOUR") && !legacy.item_name.includes("dummy") && legacy.item_name.trim().length > 5) {
-      providerSecretsCache.set(identifier, legacy.item_name.trim());
-      return legacy.item_name.trim();
+    const legVal = sanitizeSecretValue(legacy?.item_name || "");
+    if (legVal && !legVal.includes("PASTE_YOUR") && !legVal.includes("dummy") && legVal.length > 5) {
+      providerSecretsCache.set(identifier, legVal);
+      return legVal;
     }
   } catch (_) {
   }
   for (const envKey of envKeys) {
-    const val = (process.env[envKey] || "").trim();
+    const val = sanitizeSecretValue(process.env[envKey] || "");
     if (val && !val.includes("PASTE_YOUR") && !val.includes("dummy") && !val.includes("connect_030660") && val.length > 5) {
       return val;
     }
@@ -506,7 +812,7 @@ var resolveProviderSecret = async (identifier, envKeys) => {
   return "";
 };
 var setProviderSecret = async (identifier, secretValue) => {
-  const clean = secretValue.trim();
+  const clean = sanitizeSecretValue(secretValue);
   providerSecretsCache.set(identifier, clean);
   try {
     await supabase.from("provider_secrets").upsert({ identifier, secret: clean, updated_at: (/* @__PURE__ */ new Date()).toISOString() });
@@ -530,6 +836,37 @@ var setProviderSecret = async (identifier, secretValue) => {
   return true;
 };
 var resolveBigisubApiKey = async () => resolveProviderSecret("bigisub_api_key", ["BIGISUB_API_KEY", "VTU_API_KEY"]);
+var normalizeNigerianPhone = (raw) => {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.startsWith("234") && digits.length === 13) {
+    return digits;
+  }
+  if (digits.startsWith("0") && digits.length === 11) {
+    return `234${digits.slice(1)}`;
+  }
+  if (digits.length === 10 && /^[789][01]\d{8}$/.test(digits)) {
+    return `234${digits}`;
+  }
+  return digits;
+};
+var triggerMarketplaceAdminPushNotification = async (payload) => {
+  try {
+    const supabaseUrl2 = process.env.SUPABASE_URL || "https://sdbfuuxdquzvtcwryimh.supabase.co";
+    const edgeEndpoint = `${supabaseUrl2.replace(/\/+$/, "")}/functions/v1/notify-marketplace-admins`;
+    const serviceKey = await resolveProviderSecret("supabase_service_role_key", ["SUPABASE_SERVICE_ROLE_KEY"]);
+    await axios3.post(edgeEndpoint, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceKey}`
+      },
+      timeout: 5e3
+    }).catch((e) => {
+      console.warn("[notify-marketplace-admins edge error]:", e?.message || e);
+    });
+  } catch (err) {
+    console.warn("[triggerMarketplaceAdminPushNotification error]:", err?.message || err);
+  }
+};
 initProviders(supabase);
 var logVtuFailure = async (opts) => {
   const entry = {
@@ -555,34 +892,34 @@ var logVtuFailure = async (opts) => {
 };
 var resolveMozosubzApiKey = async () => resolveProviderSecret("mozosubz_api_key", ["MOZOSUBS_CONNECT_KEY", "MOZOSUBZ_CONNECT_KEY", "MOZOSUBZ_API_KEY", "MOZOSUBS_API_KEY"]);
 var resolveNifexApiKey = async () => resolveProviderSecret("nifex_api_key", ["NIFEX_API_KEY", "NIFEXDATA_API_KEY", "NIFEX_TOKEN"]);
-var sanitizeConfigValue = (val) => {
-  if (!val) return "";
-  let str = String(val).trim();
-  return str.replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
-};
-var resolveBachsSecretKey = async () => {
-  const raw = await resolveProviderSecret("bachs_secret_key", ["BACHS_SECRET_KEY", "BACHS_API_KEY", "BACHS_LIVE_SECRET_KEY", "BACHS_SANDBOX_SECRET_KEY"]);
-  return sanitizeConfigValue(raw).replace(/^Bearer\s+/i, "").trim();
-};
-var resolveBachsWebhookSecret = async () => {
-  const raw = await resolveProviderSecret("bachs_webhook_secret", ["BACHS_WEBHOOK_SECRET", "BACHS_SIGNING_SECRET"]);
-  return sanitizeConfigValue(raw);
-};
+var resolveBachsSecretKey = async () => resolveProviderSecret("bachs_secret_key", ["BACHS_SECRET_KEY", "BACHS_API_KEY", "BACHS_LIVE_SECRET_KEY", "BACHS_SANDBOX_SECRET_KEY"]);
+var resolveBachsWebhookSecret = async () => resolveProviderSecret("bachs_webhook_secret", ["BACHS_WEBHOOK_SECRET", "BACHS_SIGNING_SECRET"]);
 var resolveBachsBaseUrl = (secretKey = "") => {
-  const explicitUrl = sanitizeConfigValue(process.env.BACHS_BASE_URL);
-  if (explicitUrl) {
-    return explicitUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "").replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
-  }
-  const cleanKey = sanitizeConfigValue(secretKey).replace(/^Bearer\s+/i, "").trim();
+  const cleanKey = sanitizeSecretValue(secretKey);
   if (cleanKey.startsWith("sk_sandbox_") || cleanKey.startsWith("sk_test_")) {
     return "https://sandbox-api.bachs.io";
+  }
+  if (cleanKey.startsWith("sk_live_")) {
+    return "https://api.bachs.io";
+  }
+  const rawUrl = sanitizeSecretValue(process.env.BACHS_BASE_URL || "");
+  if (rawUrl) {
+    const stripped = rawUrl.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+    try {
+      const parsed = new URL(stripped.startsWith("http") ? stripped : `https://${stripped}`);
+      return parsed.origin;
+    } catch (_) {
+      if (stripped.toLowerCase().includes("sandbox")) return "https://sandbox-api.bachs.io";
+    }
   }
   return "https://api.bachs.io";
 };
 var getBachsEndpoint = (baseUrl, subPath) => {
-  let cleanBase = sanitizeConfigValue(baseUrl);
-  cleanBase = cleanBase.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "").replace(/^[\\"'`]+|[\\"'`]+$/g, "").trim();
-  if (!cleanBase || cleanBase.toLowerCase() === "undefined" || cleanBase.toLowerCase() === "null") {
+  let cleanBase = sanitizeSecretValue(baseUrl || "").replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+  try {
+    const parsed = new URL(cleanBase.startsWith("http") ? cleanBase : `https://${cleanBase}`);
+    cleanBase = parsed.origin;
+  } catch (_) {
     cleanBase = "https://api.bachs.io";
   }
   const cleanPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
@@ -753,8 +1090,12 @@ async function startServer() {
       res.status(401).json({ error: "Unauthorized: no valid session token." });
       return false;
     }
-    if (userEmail === "jeffholland299@gmail.com") {
-      res.status(403).json({ error: "Forbidden: eSIM agent access only. No administrative control." });
+    const FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS = [
+      "jeffholland299@gmail.com",
+      "triumphanttosin@gmail.com"
+    ];
+    if (FOREIGN_NUMBER_AND_ESIM_ONLY_ADMINS.includes(userEmail)) {
+      res.status(403).json({ error: "Forbidden: Foreign Number & eSIM agent access only. No general administrative control." });
       return false;
     }
     const ALLOWED_ADMINS = [
@@ -773,10 +1114,15 @@ async function startServer() {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
     const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
     let userEmail = "";
+    let isRoleAdmin = false;
     if (token) {
       try {
         const { data: { user } } = await supabase.auth.getUser(token);
         if (user?.email) userEmail = user.email.toLowerCase().trim();
+        if (user?.id) {
+          const { data: prof } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+          if (prof?.role === "admin") isRoleAdmin = true;
+        }
       } catch (_) {
       }
     }
@@ -784,11 +1130,13 @@ async function startServer() {
       userEmail = adminEmailHeader;
     }
     const ALLOWED_ESIM_ADMINS = [
-      ADMIN_EMAIL.toLowerCase(),
+      ADMIN_EMAIL.toLowerCase().trim(),
+      "ibrahimfaruqolamilekan4@gmail.com",
       "adewaleogunkeye200@gmail.com",
-      "jeffholland299@gmail.com"
-    ];
-    if (!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) {
+      "jeffholland299@gmail.com",
+      "triumphanttosin@gmail.com"
+    ].filter(Boolean);
+    if ((!userEmail || !ALLOWED_ESIM_ADMINS.includes(userEmail)) && !isRoleAdmin) {
       res.status(403).json({ error: "Forbidden: unauthorized eSIM admin access." });
       return false;
     }
@@ -1027,7 +1375,7 @@ async function startServer() {
   app.get(["/plans", "/api/plans"], async (req, res) => {
     try {
       const { network } = req.query;
-      const { data: rows, error: dbErr } = await supabase.from("services_config").select("id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active, provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id").eq("is_active", true).order("network");
+      const { data: rows, error: dbErr } = await supabase.from("services_config").select("id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active, provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id").eq("is_active", true).gt("selling_price", 0).order("network");
       if (dbErr) {
         console.error("[Plans] Supabase error:", dbErr.message);
         return res.status(503).json({ error: "Failed to load plans. Please try again." });
@@ -1066,7 +1414,7 @@ async function startServer() {
     if (!await requireAdmin(req, res)) return;
     try {
       const MOZOSUBZ_API_KEY = await resolveMozosubzApiKey();
-      const MOZOSUBZ_BASE_URL = "https://mozosubz.xyz/api/v1";
+      const MOZOSUBZ_BASE_URL2 = "https://mozosubz.xyz/api/v1";
       if (!MOZOSUBZ_API_KEY || MOZOSUBZ_API_KEY.includes("dummy") || MOZOSUBZ_API_KEY.includes("test")) {
         return res.status(503).json({ error: "Mozosubz provider not configured. Please set MOZOSUBZ_API_KEY." });
       }
@@ -1086,7 +1434,7 @@ async function startServer() {
       const failedServices = [];
       for (const { service, network, category } of DATA_SERVICES) {
         try {
-          const response = await axios2.get(`${MOZOSUBZ_BASE_URL}/data/plans`, {
+          const response = await axios3.get(`${MOZOSUBZ_BASE_URL2}/data/plans`, {
             params: { service },
             headers: { "X-Connect-Key": MOZOSUBZ_API_KEY },
             timeout: 1e4
@@ -1192,7 +1540,7 @@ async function startServer() {
     if (isNaN(finalAmount) || finalAmount <= 0) {
       return res.status(400).json({ error: "Invalid amount. Amount must be greater than zero." });
     }
-    const finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
+    let finalPlan = planId || plan || peyflex_variation_id || apiPlanId;
     let finalType = requestType || type;
     if (!finalType) {
       const pName = plan_name || planName || plan || "";
@@ -1222,30 +1570,19 @@ async function startServer() {
         return res.status(404).json({ error: "User profile not found in Supabase database." });
       }
       const currentBalance = Number(profile.wallet_balance || 0);
-
       let vtuPlan = null;
       if (finalType === "data" && finalPlan) {
         try {
-          const { data: vp } = await supabase
-            .from("vtu_plans")
-            .select("*")
-            .eq("provider_plan_id", String(finalPlan))
-            .maybeSingle();
-
+          const { data: vp } = await supabase.from("vtu_plans").select("*").eq("provider_plan_id", String(finalPlan)).maybeSingle();
           if (vp) {
             vtuPlan = vp;
           } else {
-            const { data: vpAlt } = await supabase
-              .from("vtu_plans")
-              .select("*")
-              .or(`id.eq.${pgSafeFilter(finalPlan)},provider_plan_id.eq.${pgSafeFilter(finalPlan)}`)
-              .maybeSingle();
+            const { data: vpAlt } = await supabase.from("vtu_plans").select("*").or(`id.eq.${pgSafeFilter(finalPlan)},provider_plan_id.eq.${pgSafeFilter(finalPlan)}`).maybeSingle();
             if (vpAlt) vtuPlan = vpAlt;
           }
         } catch (vtuErr) {
           console.warn("[vtu_plans query warning]:", vtuErr.message);
         }
-
         if (vtuPlan) {
           if (!vtuPlan.is_active) {
             return res.status(400).json({
@@ -1257,12 +1594,7 @@ async function startServer() {
             finalAmount = Number(vtuPlan.price_to_user);
           }
         } else {
-          const { data: deactPlan } = await supabase
-            .from("vtu_plans")
-            .select("provider_plan_id, is_active")
-            .eq("is_active", false)
-            .eq("provider_plan_id", String(finalPlan))
-            .maybeSingle();
+          const { data: deactPlan } = await supabase.from("vtu_plans").select("provider_plan_id, is_active").eq("is_active", false).eq("provider_plan_id", String(finalPlan)).maybeSingle();
           if (deactPlan) {
             return res.status(400).json({
               error: "This plan is no longer available. Please refresh and choose another."
@@ -1270,7 +1602,6 @@ async function startServer() {
           }
         }
       }
-
       let resolvedPlanCode = finalPlan;
       let dbPlan = null;
       if (finalType === "data" && finalPlan) {
@@ -1309,7 +1640,9 @@ async function startServer() {
       if (finalType !== "airtime") {
         let serverPrice = 0;
         const role = profile.role || "user";
-        if (planConfig) {
+        if (vtuPlan && Number(vtuPlan.price_to_user) > 0) {
+          serverPrice = Number(vtuPlan.price_to_user);
+        } else if (planConfig) {
           if (role === "agent" && planConfig.agent_price) serverPrice = planConfig.agent_price;
           else if (role === "reseller" && planConfig.reseller_price) serverPrice = planConfig.reseller_price;
           else if (planConfig.selling_price) serverPrice = planConfig.selling_price;
@@ -1393,7 +1726,7 @@ async function startServer() {
           apiKey: providerApiKey
         });
         apiResponseData = result.raw;
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ""}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
@@ -1580,7 +1913,7 @@ async function startServer() {
           mobile_number: phoneNumber,
           bypass_validator: true
         };
-        const response = await axios2.post("https://bigisub.ng/api/v1/data", bigisubPayload, {
+        const response = await axios3.post("https://bigisub.ng/api/v1/data", bigisubPayload, {
           headers: {
             "Authorization": `Bearer ${BIGISUB_API_KEY}`,
             "Content-Type": "application/json"
@@ -1737,7 +2070,7 @@ async function startServer() {
       const endpoint = type === "airtime" ? "airtime" : "data";
       const mozoUrl = `${mozoBaseUrl}/${endpoint}/`;
       try {
-        const response = await axios2.post(mozoUrl, mozoPayload, {
+        const response = await axios3.post(mozoUrl, mozoPayload, {
           headers: {
             "Authorization": `Token ${MOZOSUBZ_API_KEY}`,
             "Content-Type": "application/json"
@@ -1791,6 +2124,85 @@ async function startServer() {
         success: false,
         message: `Transaction Failed: ${apiErr}. Verify your Bigisub KYC state & API Balance.`
       });
+    }
+  });
+  app.get("/api/admin/fetch-vtu-plans", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    try {
+      const { data, error } = await supabase.from("vtu_plans").select("*").eq("is_active", true).order("network", { ascending: true }).order("price_to_user", { ascending: true });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ plans: data || [] });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/admin/sync-vtu-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const mozoKey = await resolveMozosubzApiKey();
+      const nifexKey = await resolveNifexApiKey();
+      const result = await syncVtuPlans({
+        supabase,
+        mozosubzKey: mozoKey,
+        nifexKey,
+        trigger: "admin"
+      });
+      if (!result.success) {
+        return res.status(result.total === 0 && result.warnings.length === 0 ? 503 : 500).json(result);
+      }
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message, warnings: [] });
+    }
+  });
+  app.all(["/api/cron/sync-vtu-plans", "/api/cron/sync-plans"], async (req, res) => {
+    const cronSecret = (process.env.CRON_SECRET || "").trim();
+    const authHeader = String(req.headers.authorization || "");
+    const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const querySecret = String(req.query?.secret || "").trim();
+    const cronAuthorized = !!cronSecret && (bearer === cronSecret || querySecret === cronSecret);
+    if (!cronAuthorized && !await requireAdmin(req, res)) return;
+    try {
+      const mozoKey = await resolveMozosubzApiKey();
+      const nifexKey = await resolveNifexApiKey();
+      const result = await syncVtuPlans({
+        supabase,
+        mozosubzKey: mozoKey,
+        nifexKey,
+        trigger: cronAuthorized ? "cron" : "admin"
+      });
+      if (!result.success) {
+        console.warn("[cron/sync-vtu-plans] sync unsuccessful:", result.error || (result.warnings || []).join("; "));
+        return res.status(502).json(result);
+      }
+      console.log(
+        `[cron/sync-vtu-plans] ok +${result.added} ~${result.updated} -${result.deactivated} total=${result.total}`
+      );
+      return res.json(result);
+    } catch (err) {
+      console.error("[cron/sync-vtu-plans] exception:", err);
+      return res.status(500).json({ success: false, error: err.message, warnings: [] });
+    }
+  });
+  app.get("/api/admin/plans-freshness", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const freshness = await getPlanFreshness(supabase);
+      return res.json({ success: true, ...freshness });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.get("/api/admin/failure-log", async (req, res) => {
+    try {
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1e3).toISOString();
+      const { data, error } = await supabase.from("vtu_failure_log").select("*").gte("created_at", yesterday).order("created_at", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ failures: data || [] });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
     }
   });
   app.post("/api/admin/generate-plans", async (req, res) => {
@@ -1867,14 +2279,19 @@ async function startServer() {
       }
       const SERVICES = [
         { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+        { id: "mtn_cg", network: "MTN", plan_type: "CG" },
         { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
         { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
         { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
         { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+        { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
         { id: "glo_sme", network: "GLO", plan_type: "SME" },
+        { id: "glo_cg", network: "GLO", plan_type: "CG" },
         { id: "glo_data", network: "GLO", plan_type: "DATA" },
         { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+        { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
         { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+        { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
         { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
       ];
       const results = await Promise.allSettled(
@@ -1935,21 +2352,177 @@ async function startServer() {
           error: `Mozosubz returned: "${firstErr}". Please check your Mozosubz Connect Key in the Price Manager above and click 'Save Key'.`
         });
       }
-      const { data: dbRows } = await supabase.from("services_config").select("mozosubz_plan_id, bigisub_identifier_id, selling_price");
+      const { data: dbRows } = await supabase.from("services_config").select("mozosubz_plan_id, bigisub_identifier_id, selling_price, cost_price");
       const priceMap = {};
       (dbRows || []).forEach((r) => {
         const k = String(r.mozosubz_plan_id || r.bigisub_identifier_id || "");
-        if (k) priceMap[k] = Number(r.selling_price || 0);
+        if (k) priceMap[k] = { selling: Number(r.selling_price || 0), cost: Number(r.cost_price || 0) };
       });
-      const enriched = allPlans.map((p) => ({
-        ...p,
-        selling_price: priceMap[p.id] || 0
-      }));
+      const enriched = allPlans.map((p) => {
+        const ext = priceMap[p.id];
+        let selling = 0;
+        if (ext) {
+          if (ext.cost > 0 && Math.abs(ext.cost - p.price) > 0.5) {
+            selling = Math.ceil(p.price * 1.1);
+          } else {
+            selling = ext.selling || Math.ceil(p.price * 1.1);
+          }
+        } else {
+          selling = Math.ceil(p.price * 1.1);
+        }
+        return {
+          ...p,
+          selling_price: selling,
+          cost_changed: ext && ext.cost > 0 && Math.abs(ext.cost - p.price) > 0.5
+        };
+      });
       console.log(`[fetch-mozosubz-plans] Returning ${enriched.length} plans across ${SERVICES.length} services`);
       return res.json({ plans: enriched });
     } catch (err) {
       console.error("[POST /api/admin/fetch-mozosubz-plans Exception]:", err);
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
+    }
+  });
+  app.post("/api/admin/fetch-utility-catalog", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { serviceType = "cable", provider = "mozosubz" } = req.body;
+      const cleanType = String(serviceType).toLowerCase();
+      if (cleanType === "cable") {
+        const { data: dbRows } = await supabase.from("services_config").select("*").eq("service_type", "cable").order("provider_or_network", { ascending: true }).order("selling_price", { ascending: true });
+        const dbMap = /* @__PURE__ */ new Map();
+        (dbRows || []).forEach((r) => {
+          const k = `${String(r.provider_or_network).toUpperCase()}_${String(r.item_name).toLowerCase().trim()}`;
+          dbMap.set(k, r);
+          if (r.bigisub_plan_id) dbMap.set(String(r.bigisub_plan_id), r);
+          if (r.mozosubz_plan_id) dbMap.set(String(r.mozosubz_plan_id), r);
+        });
+        const baseCable = [
+          { provider: "GOTV", plan_id: "gotv_smallie", name: "GOtv Smallie", cost: 1575, defaultSelling: 1750, duration: "30 Days" },
+          { provider: "GOTV", plan_id: "gotv_jinja", name: "GOtv Jinja", cost: 3300, defaultSelling: 3500, duration: "30 Days" },
+          { provider: "GOTV", plan_id: "gotv_jolli", name: "GOtv Jolli", cost: 4850, defaultSelling: 5100, duration: "30 Days" },
+          { provider: "GOTV", plan_id: "gotv_max", name: "GOtv Max", cost: 7200, defaultSelling: 7500, duration: "30 Days" },
+          { provider: "GOTV", plan_id: "gotv_supa", name: "GOtv Supa", cost: 9600, defaultSelling: 9900, duration: "30 Days" },
+          { provider: "GOTV", plan_id: "gotv_supaplus", name: "GOtv Supa Plus", cost: 15700, defaultSelling: 16100, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_padi", name: "DStv Padi", cost: 3600, defaultSelling: 3850, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_yanga", name: "DStv Yanga", cost: 5100, defaultSelling: 5400, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_confam", name: "DStv Confam", cost: 9300, defaultSelling: 9650, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_compact", name: "DStv Compact", cost: 15700, defaultSelling: 16200, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_compactplus", name: "DStv Compact Plus", cost: 25e3, defaultSelling: 25700, duration: "30 Days" },
+          { provider: "DSTV", plan_id: "dstv_premium", name: "DStv Premium", cost: 37e3, defaultSelling: 38e3, duration: "30 Days" },
+          { provider: "STARTIMES", plan_id: "startimes_nova", name: "Nova", cost: 1700, defaultSelling: 1900, duration: "30 Days" },
+          { provider: "STARTIMES", plan_id: "startimes_basic", name: "Basic", cost: 3e3, defaultSelling: 3250, duration: "30 Days" },
+          { provider: "STARTIMES", plan_id: "startimes_smart", name: "Smart", cost: 3800, defaultSelling: 4100, duration: "30 Days" },
+          { provider: "STARTIMES", plan_id: "startimes_classic", name: "Classic", cost: 4500, defaultSelling: 4800, duration: "30 Days" },
+          { provider: "STARTIMES", plan_id: "startimes_super", name: "Super", cost: 7e3, defaultSelling: 7400, duration: "30 Days" },
+          { provider: "SHOWMAX", plan_id: "showmax_mobile", name: "Showmax Mobile Only", cost: 1600, defaultSelling: 1800, duration: "30 Days" },
+          { provider: "SHOWMAX", plan_id: "showmax_pro", name: "Showmax Pro", cost: 3200, defaultSelling: 3500, duration: "30 Days" }
+        ];
+        const plans = baseCable.map((item) => {
+          const match = dbMap.get(item.plan_id) || dbMap.get(`${item.provider}_${item.name.toLowerCase()}`);
+          const cost = Number(match?.cost_price || item.cost);
+          const selling = Number(match?.selling_price || match?.retail_price || item.defaultSelling);
+          const markup = cost > 0 ? Math.round((selling - cost) / cost * 1e3) / 10 : 10;
+          return {
+            id: match?.id || item.plan_id,
+            plan_id: item.plan_id,
+            name: match?.item_name || item.name,
+            provider_or_network: item.provider,
+            network: item.provider,
+            cost_price: cost,
+            selling_price: selling,
+            markup_pct: markup,
+            validity_days: match?.validity_days || item.duration,
+            is_active: match ? match.is_active !== false : true,
+            service_type: "cable",
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+        return res.json({ success: true, serviceType: "cable", plans });
+      }
+      if (cleanType === "electricity") {
+        const { data: dbRows } = await supabase.from("services_config").select("*").eq("service_type", "electricity");
+        const dbMap = /* @__PURE__ */ new Map();
+        (dbRows || []).forEach((r) => {
+          const k = String(r.provider_or_network).toUpperCase().trim();
+          dbMap.set(k, r);
+        });
+        const discos = [
+          ["IKEDC", "Ikeja Electric"],
+          ["EKEDC", "Eko Electric"],
+          ["AEDC", "Abuja Electric"],
+          ["PHED", "Port Harcourt Electric"],
+          ["IBEDC", "Ibadan Electric"],
+          ["KAEDCO", "Kaduna Electric"],
+          ["KEDCO", "Kano Electric"],
+          ["JED", "Jos Electric"],
+          ["EEDC", "Enugu Electric"],
+          ["BEDC", "Benin Electric"],
+          ["YEDC", "Yola Electric"],
+          ["BAEDC", "Bauchi Electric"]
+        ];
+        const plans = discos.map(([code, name]) => {
+          const match = dbMap.get(code);
+          const cost = Number(match?.cost_price || 0);
+          const fee = Number(match?.selling_price || 100);
+          return {
+            id: match?.id || `disco_${code.toLowerCase()}`,
+            plan_id: `disco_${code.toLowerCase()}`,
+            name,
+            provider_or_network: code,
+            network: code,
+            cost_price: cost,
+            selling_price: fee,
+            markup_pct: 0,
+            minimum_amount: 1e3,
+            is_active: match ? match.is_active !== false : true,
+            service_type: "electricity",
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+        return res.json({ success: true, serviceType: "electricity", plans });
+      }
+      if (cleanType === "exam" || cleanType === "exam_pin") {
+        const { data: dbRows } = await supabase.from("services_config").select("*").or("service_type.eq.exam,service_type.eq.exam_pin");
+        const dbMap = /* @__PURE__ */ new Map();
+        (dbRows || []).forEach((r) => {
+          const k = String(r.provider_or_network).toUpperCase().trim();
+          dbMap.set(k, r);
+          if (r.bigisub_plan_id) dbMap.set(String(r.bigisub_plan_id), r);
+        });
+        const defaultExams = [
+          { code: "WAEC", name: "WAEC Result Checker PIN", cost: 3e3, defaultSelling: 3400 },
+          { code: "NECO", name: "NECO Result Token", cost: 2600, defaultSelling: 2900 },
+          { code: "NABTEB", name: "NABTEB Result Card PIN", cost: 2800, defaultSelling: 3200 }
+        ];
+        const plans = defaultExams.map((item) => {
+          const match = dbMap.get(item.code);
+          const cost = Number(match?.cost_price || item.cost);
+          const selling = Number(match?.selling_price || match?.retail_price || item.defaultSelling);
+          const markup = cost > 0 ? Math.round((selling - cost) / cost * 1e3) / 10 : 10;
+          return {
+            id: match?.id || `exam_${item.code.toLowerCase()}`,
+            plan_id: `exam_${item.code.toLowerCase()}`,
+            name: match?.item_name || item.name,
+            provider_or_network: item.code,
+            network: item.code,
+            cost_price: cost,
+            selling_price: selling,
+            markup_pct: markup,
+            is_active: match ? match.is_active !== false : true,
+            service_type: "exam_pin",
+            provider: match?.provider || provider,
+            saved: !!match
+          };
+        });
+        return res.json({ success: true, serviceType: "exam", plans });
+      }
+      return res.status(400).json({ error: `Unsupported utility serviceType: ${serviceType}` });
+    } catch (err) {
+      console.error("[fetch-utility-catalog Exception]:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
   app.get("/api/services/all", async (req, res) => {
@@ -1975,19 +2548,12 @@ async function startServer() {
   });
   app.get("/api/services/data", async (req, res) => {
     try {
-      const { data: vtuPlans, error: vtuErr } = await supabase
-        .from('vtu_plans')
-        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, last_synced_at, provider, service, validity')
-        .eq('is_active', true)
-        .order('network', { ascending: true })
-        .order('price_to_user', { ascending: true });
-
+      const { data: vtuPlans, error: vtuErr } = await supabase.from("vtu_plans").select("id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, is_priced, provider_status, last_synced_at, provider, service, validity").eq("is_active", true).eq("is_priced", true).eq("provider_status", "live").gt("price_to_user", 0).order("network", { ascending: true }).order("price_to_user", { ascending: true });
       if (!vtuErr && vtuPlans && vtuPlans.length > 0) {
         const formatted = vtuPlans.map((item) => {
-          const rawName = String(item.plan_name || '');
+          const rawName = String(item.plan_name || "");
           const pPrice = Number(item.price_to_user || 0);
           const pId = String(item.provider_plan_id || item.id).trim();
-
           let planCategory = "GIFTING";
           const pNameUpper = rawName.toUpperCase();
           if (pNameUpper.includes("SME")) {
@@ -2001,7 +2567,6 @@ async function startServer() {
           } else if (pNameUpper.includes("DATA") || pNameUpper.includes("SHARE")) {
             planCategory = "DATA";
           }
-
           return {
             id: pId,
             provider_plan_id: pId,
@@ -2016,93 +2581,58 @@ async function startServer() {
             retail_price: pPrice,
             selling_price: pPrice,
             amount: pPrice,
-            network_type: String(item.network || 'MTN').toUpperCase(),
-            network: String(item.network || 'MTN').toUpperCase(),
-            type: 'data',
-            service_type: 'data',
-            provider: item.provider || 'mozosubz',
-            mozosubz_service: item.service || '',
-            service: item.service || '',
-            duration: item.validity || '30 Days',
-            validity_days: item.validity || '30 Days',
+            network_type: String(item.network || "MTN").toUpperCase(),
+            network: String(item.network || "MTN").toUpperCase(),
+            type: "data",
+            service_type: "data",
+            provider: item.provider || "mozosubz",
+            mozosubz_service: item.service || "",
+            service: item.service || "",
+            duration: item.validity || "30 Days",
+            validity_days: item.validity || "30 Days",
             plan_category: planCategory,
             planType: planCategory,
             is_active: true,
-            last_synced_at: item.last_synced_at,
+            last_synced_at: item.last_synced_at
           };
         });
-
         return res.status(200).json(formatted);
       }
-
       const { data: services, error: queryErr } = await supabase.from("services_config").select("*").eq("service_type", "data").eq("is_active", true).order("provider_or_network", { ascending: true }).order("selling_price", { ascending: true });
       if (queryErr) {
         console.warn("[Supabase GET /api/services/data Warning]:", queryErr.message);
         return res.json([]);
       }
-      const items = (services || []).filter((r) => !isProviderSecretRow(r));
-      const seenPlanKeys = /* @__PURE__ */ new Set();
-      const dedupedItems = items.filter((r) => {
-        const k = (r.bigisub_identifier_id || r.mozosubz_plan_id || r.id || `${r.provider_or_network}_${r.item_name}`).toLowerCase().trim();
-        if (seenPlanKeys.has(k)) return false;
-        seenPlanKeys.add(k);
-        return true;
-      });
-      const formattedPlans = dedupedItems.map((item) => {
-        const pPrice = Number(item.selling_price || 0);
-        const rawName = String(item.item_name || "");
-        let planCategory = "GIFTING";
-        let planDays = item.validity_days || item.duration || "30 Days";
-        let displayName = rawName;
-        const parts = rawName.split(" - ");
-        if (parts.length >= 3) {
-          displayName = parts[0].trim();
-          planCategory = parts[1].trim().toUpperCase();
-          planDays = parts[2].trim();
-        } else {
-          const pNameUpper = rawName.toUpperCase();
-          if (pNameUpper.includes("SME")) {
-            planCategory = "SME";
-          } else if (pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE")) {
-            planCategory = "CG";
-          } else if (pNameUpper.includes("AWOOF")) {
-            planCategory = "AWOOF";
-          } else if (pNameUpper.includes("GIFTING") || pNameUpper.includes("DIRECT") || pNameUpper.includes("GIFT")) {
-            planCategory = "GIFTING";
-          }
-          const match = rawName.match(/(\d+)\s*(Days|Day|Hours|Hour)/i);
-          if (match) {
-            planDays = `${match[1]} ${match[2]}`;
-          }
-        }
+      const items = (services || []).filter((r) => !isProviderSecretRow(r)).filter((r) => Number(r.selling_price || r.retail_price || 0) > 0);
+      const formattedPlans = items.map((item) => {
+        const pPrice = Number(item.selling_price || item.retail_price || 0);
+        const rawName = String(item.item_name || item.plan_name || item.name || "");
+        const pId = String(item.mozosubz_plan_id || item.mozosubs_plan_id || item.bigisub_identifier_id || item.id).trim();
         return {
-          id: item.id,
-          ...item,
-          item_name: displayName,
-          plan_name: displayName,
-          name: displayName,
-          planName: displayName,
+          id: pId,
+          provider_plan_id: pId,
+          peyflex_variation_id: pId,
+          peyflex_id: pId,
+          apiPlanId: pId,
+          item_name: rawName,
+          plan_name: rawName,
+          name: rawName,
           price: pPrice,
           retail_price: pPrice,
-          reseller_price: Number(item.cost_price || pPrice),
-          resellerPrice: Number(item.cost_price || pPrice),
+          selling_price: pPrice,
           amount: pPrice,
-          network_type: String(item.provider_or_network || "MTN").toUpperCase(),
-          network: String(item.provider_or_network || "MTN").toUpperCase(),
+          network_type: String(item.network || item.provider_or_network || "MTN").toUpperCase(),
+          network: String(item.network || item.provider_or_network || "MTN").toUpperCase(),
           type: "data",
-          peyflex_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          peyflex_variation_id: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          apiPlanId: item.mozosubs_plan_id || item.mozosubz_plan_id || item.bigisub_plan_id,
-          mozosubs_plan_id: item.mozosubs_plan_id || item.mozosubz_plan_id || "",
+          service_type: "data",
+          provider: item.provider || "mozosubz",
           mozosubz_service: item.mozosubz_service || "",
-          duration: planDays,
-          validity_days: planDays,
-          plan_category: planCategory,
-          planType: planCategory
+          service: item.mozosubz_service || "",
+          duration: item.validity_days || item.duration || "30 Days",
+          validity_days: item.validity_days || item.duration || "30 Days",
+          is_active: true,
+          last_synced_at: item.updated_at || item.created_at
         };
-      });
-      formattedPlans.forEach((p) => {
-        delete p.cost_price;
       });
       return res.status(200).json(formattedPlans);
     } catch (err) {
@@ -2110,94 +2640,251 @@ async function startServer() {
       return res.status(500).json({ error: `Internal server error: ${err.message}` });
     }
   });
-
   app.get("/api/admin/vtu-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const { data: plans, error } = await supabase
-        .from('vtu_plans')
-        .select('*')
-        .order('network', { ascending: true })
-        .order('price_to_user', { ascending: true });
-
+      const { data: plans, error } = await supabase.from("vtu_plans").select("*").order("network", { ascending: true }).order("price_to_user", { ascending: true });
       if (error) return res.status(500).json({ error: error.message });
+      const rows = plans || [];
+      const totalCount = rows.length;
+      const activeCount = rows.filter((p) => p.is_active).length;
+      const liveCount = rows.filter((p) => p.provider_status !== "removed").length;
+      const pricedCount = rows.filter((p) => p.is_priced === true).length;
+      const removedCount = rows.filter((p) => p.provider_status === "removed").length;
+      const sellableCount = rows.filter(
+        (p) => p.is_active && p.is_priced === true && p.provider_status !== "removed"
+      ).length;
       return res.json({
         success: true,
-        total: plans?.length || 0,
-        active: plans?.filter((p) => p.is_active).length || 0,
-        plans: plans || [],
+        total: totalCount,
+        active: activeCount,
+        live: liveCount,
+        priced: pricedCount,
+        removed: removedCount,
+        sellable: sellableCount,
+        plans: rows
       });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
   });
-
   app.post("/api/admin/vtu-plans/override", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
       const { provider_plan_id, manual_price_override, is_active } = req.body;
-      if (!provider_plan_id) return res.status(400).json({ error: "Missing provider_plan_id" });
-      const updateData = { updated_at: new Date().toISOString() };
-      if (manual_price_override !== undefined) {
-        const numOverride = manual_price_override === null || manual_price_override === '' ? null : Number(manual_price_override);
-        updateData.manual_price_override = numOverride;
-        if (numOverride && numOverride > 0) updateData.price_to_user = Math.ceil(numOverride);
+      if (!provider_plan_id) {
+        return res.status(400).json({ error: "Missing provider_plan_id" });
       }
-      if (is_active !== undefined) updateData.is_active = Boolean(is_active);
-      const { data, error } = await supabase.from('vtu_plans').update(updateData).eq('provider_plan_id', String(provider_plan_id).trim()).select().maybeSingle();
+      const updateData = { updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+      if (manual_price_override !== void 0) {
+        const numOverride = manual_price_override === null || manual_price_override === "" ? null : Number(manual_price_override);
+        updateData.manual_price_override = numOverride;
+        if (numOverride && numOverride > 0) {
+          updateData.price_to_user = Math.ceil(numOverride);
+          updateData.is_priced = true;
+        } else {
+          updateData.is_priced = false;
+        }
+      }
+      if (is_active !== void 0) {
+        updateData.is_active = Boolean(is_active);
+      }
+      const { data, error } = await supabase.from("vtu_plans").update(updateData).eq("provider_plan_id", String(provider_plan_id).trim()).select().maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.json({ success: true, plan: data });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
   });
-
-  // ─── STEP 2: debug-provider-live Endpoint ───
+  app.post("/api/admin/vtu-plans/set-priced", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { provider_plan_id, is_priced } = req.body || {};
+      if (!provider_plan_id) {
+        return res.status(400).json({ error: "Missing provider_plan_id" });
+      }
+      if (typeof is_priced !== "boolean") {
+        return res.status(400).json({ error: "is_priced must be a boolean" });
+      }
+      const { error } = await supabase.from("vtu_plans").update({ is_priced, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("provider_plan_id", String(provider_plan_id).trim());
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, provider_plan_id, is_priced });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/admin/vtu-plans/price-all-unpriced", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const marginPct = Number(req.body?.margin_percent ?? 10);
+      const margin = Number.isFinite(marginPct) && marginPct >= 0 ? marginPct : 10;
+      const { data: unpricedRows, error: readErr } = await supabase.from("vtu_plans").select("provider_plan_id, provider_price, margin_percent").eq("is_priced", false).neq("provider_status", "removed");
+      if (readErr) return res.status(500).json({ error: readErr.message });
+      const rows = unpricedRows || [];
+      if (rows.length === 0) {
+        return res.json({ success: true, priced: 0, message: "Every live plan is already priced." });
+      }
+      let priced = 0;
+      for (const row of rows) {
+        const cost = Number(row.provider_price || 0);
+        const rowMargin = Number(row.margin_percent ?? margin);
+        const selling = Math.ceil(cost * (1 + (Number.isFinite(rowMargin) ? rowMargin : margin) / 100));
+        if (selling <= 0) continue;
+        const { error } = await supabase.from("vtu_plans").update({
+          price_to_user: selling,
+          is_priced: true,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        }).eq("provider_plan_id", row.provider_plan_id);
+        if (!error) priced += 1;
+      }
+      return res.json({ success: true, priced, candidates: rows.length });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/admin/vtu-plans/prune-removed", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { error, count } = await supabase.from("vtu_plans").delete({ count: "exact" }).eq("provider_status", "removed");
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, pruned: count || 0 });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/debug-provider-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const CONNECT_KEY = await resolveMozosubzApiKey();
+      const MOZO_BASE = "https://mozosubz.xyz/api/v1";
+      const candidateServices = [
+        "mtn_sme",
+        "mtn_cg",
+        "mtn_gifting",
+        "mtn_datashare",
+        "mtn_awoof",
+        "mtn_awoof2",
+        "mtn_coupon",
+        "glo_sme",
+        "glo_cg",
+        "glo_data",
+        "airtel_sme",
+        "airtel_cg",
+        "airtel_gifting",
+        "etisalat_sme",
+        "etisalat_data"
+      ];
+      const report = {};
+      let totalPlans = 0;
+      const allPlans = [];
+      for (const svc of candidateServices) {
+        try {
+          const resp = await fetch(`${MOZO_BASE}/data/plans?service=${svc}`, {
+            headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
+          });
+          const d = await resp.json().catch(() => ({}));
+          const plans = Array.isArray(d?.plans) ? d.plans : [];
+          totalPlans += plans.length;
+          report[svc] = {
+            status: resp.status,
+            success: d?.success ?? false,
+            count: plans.length,
+            sample: plans.slice(0, 2),
+            plans: plans.map((p) => ({
+              id: p.id,
+              id_type: typeof p.id,
+              name: p.name,
+              price: Number(p.price),
+              plan_type: p.plan_type
+            }))
+          };
+          for (const p of plans) {
+            allPlans.push({
+              service: svc,
+              id: p.id,
+              id_type: typeof p.id,
+              name: p.name,
+              price: Number(p.price)
+            });
+          }
+        } catch (e) {
+          report[svc] = { error: e?.message || String(e) };
+        }
+      }
+      const target1gbPlans = allPlans.filter(
+        (p) => p.price === 399 || p.price === 494 || p.price >= 390 && p.price <= 410 || String(p.name).toLowerCase().includes("1gb")
+      );
+      return res.json({
+        provider: "mozosubz",
+        endpoint: "GET /api/v1/data/plans?service={service}",
+        auth_header: "X-Connect-Key: ****",
+        total_plans_returned: totalPlans,
+        target_plans: target1gbPlans,
+        services: report
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
   const handleDebugProviderLive = async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const providerParam = (req.body?.provider || req.query?.provider || 'mozosubz').toString().toLowerCase().trim();
-
-      if (providerParam === 'mozosubz') {
+      const providerParam = (req.body?.provider || req.query?.provider || "mozosubz").toString().toLowerCase().trim();
+      const requestedService = (req.body?.service || req.query?.service || "").toString().toLowerCase().trim();
+      if (providerParam === "mozosubz") {
         const CONNECT_KEY = await resolveMozosubzApiKey();
-        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes('PASTE_YOUR')) {
-          return res.status(503).json({ error: "Mozosubz key is not configured.", key_configured: false });
+        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes("PASTE_YOUR")) {
+          return res.status(503).json({ error: "Mozosubz Connect Key is not configured.", key_configured: false });
         }
-
+        const MOZO_BASE = "https://mozosubz.xyz/api/v1";
         const candidateServices = [
-          "mtn_sme", "mtn_cg", "mtn_gifting", "mtn_datashare", "mtn_awoof", "mtn_awoof2", "mtn_coupon",
-          "glo_sme", "glo_cg", "glo_data",
-          "airtel_sme", "airtel_cg", "airtel_gifting",
-          "etisalat_sme", "etisalat_data"
+          "mtn_sme",
+          "mtn_cg",
+          "mtn_gifting",
+          "mtn_datashare",
+          "mtn_awoof",
+          "mtn_awoof2",
+          "mtn_coupon",
+          "glo_sme",
+          "glo_cg",
+          "glo_data",
+          "airtel_sme",
+          "airtel_cg",
+          "airtel_gifting",
+          "etisalat_sme",
+          "etisalat_data"
         ];
-
-        let totalPlans = 0;
+        const targetServices = requestedService ? [requestedService] : candidateServices;
         const report = {};
+        let totalPlans = 0;
         const allPlans = [];
-
         let noParamResponse = null;
-        try {
-          const baseResp = await fetch("https://mozosubz.xyz/api/v1/data/plans", {
-            headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
-          });
-          noParamResponse = await baseResp.json().catch(() => null);
-        } catch (e) {
-          noParamResponse = { error: e.message };
-        }
-
-        for (const svc of candidateServices) {
+        if (!requestedService) {
           try {
-            const resp = await fetch(`https://mozosubz.xyz/api/v1/data/plans?service=${svc}`, {
+            const noParamResp = await fetch(`${MOZO_BASE}/data/plans`, {
               headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
             });
-            const json = await resp.json().catch(() => null);
-            const plans = json && Array.isArray(json.plans) ? json.plans : [];
+            noParamResponse = {
+              status: noParamResp.status,
+              body: await noParamResp.json().catch(() => null)
+            };
+          } catch (e) {
+            noParamResponse = { error: e.message };
+          }
+        }
+        for (const svc of targetServices) {
+          try {
+            const resp = await fetch(`${MOZO_BASE}/data/plans?service=${svc}`, {
+              headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
+            });
+            const d = await resp.json().catch(() => null);
+            const plans = Array.isArray(d?.plans) ? d.plans : [];
             totalPlans += plans.length;
             report[svc] = {
-              status: resp.status,
-              success: json?.success ?? false,
+              http_status: resp.status,
+              raw_response: d,
               plan_count: plans.length,
-              plans: plans.map(p => ({
+              plans: plans.map((p) => ({
                 id: String(p.id),
                 name: p.name,
                 price: Number(p.price),
@@ -2217,40 +2904,33 @@ async function startServer() {
             report[svc] = { error: e?.message || String(e) };
           }
         }
-
-        const target1gbPlans = allPlans.filter(p =>
-          p.price === 399 || p.price === 450 || p.price === 494 ||
-          String(p.name).toLowerCase().includes("1gb") ||
-          String(p.name).toLowerCase().includes("1.0 gb") ||
-          String(p.name).toLowerCase().includes("1.0gb")
+        const target1gbPlans = allPlans.filter(
+          (p) => p.price === 399 || p.price === 450 || p.price === 494 || String(p.name).toLowerCase().includes("1gb") || String(p.name).toLowerCase().includes("1.0 gb") || String(p.name).toLowerCase().includes("1.0gb")
         );
-
         return res.json({
           provider: "mozosubz",
           endpoint_pattern: "GET /api/v1/data/plans?service={service_code}",
           auth_header: "X-Connect-Key: ****",
           total_plans_returned: totalPlans,
           response_wrapper: "{ success: boolean, plans: Array<{ id, name, price, plan_type }> }",
-          services_present: Object.keys(report).filter(s => (report[s]?.plan_count || 0) > 0),
+          services_present: Object.keys(report).filter((s) => (report[s]?.plan_count || 0) > 0),
           all_services_queried: Object.keys(report),
           target_1gb_or_notable_plans: target1gbPlans,
           base_endpoint_no_param: noParamResponse,
           service_breakdown: report
         });
       }
-
-      if (providerParam === 'nifex') {
+      if (providerParam === "nifex") {
         const nifexKey = await resolveNifexApiKey();
         if (!nifexKey || nifexKey.length < 5) {
           return res.status(503).json({ error: "Nifex key is not configured.", key_configured: false });
         }
-        const cleanKey = nifexKey.replace(/^Token\s+/i, '').trim();
+        const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
         const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
           headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" }
         });
         const raw = await resp.json().catch(() => null);
-        const plansList = Array.isArray(raw?.plans) ? raw.plans : (Array.isArray(raw) ? raw : []);
-
+        const plansList = Array.isArray(raw?.plans) ? raw.plans : Array.isArray(raw) ? raw : [];
         return res.json({
           provider: "nifex",
           endpoint: "GET https://nifexdataapp.com.ng/api/data/",
@@ -2260,102 +2940,83 @@ async function startServer() {
           raw_response: raw
         });
       }
-
       return res.status(400).json({ error: `Unsupported provider: ${providerParam}` });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
   };
-
   app.get("/api/admin/debug-provider-live", handleDebugProviderLive);
   app.post("/api/admin/debug-provider-live", handleDebugProviderLive);
   app.get("/api/debug-provider-live", handleDebugProviderLive);
   app.post("/api/debug-provider-live", handleDebugProviderLive);
-
-  // ─── STEP 3: get-provider-plans (Live Wholesale Per-Provider Fetch Endpoint) ───
   const handleGetProviderPlans = async (req, res) => {
     if (!await requireAdmin(req, res)) return;
-    const fetchStartTime = new Date().toISOString();
+    const fetchStartTime = (/* @__PURE__ */ new Date()).toISOString();
     try {
-      const providerParam = (req.body?.provider || req.query?.provider || 'mozosubz').toString().toLowerCase().trim();
-      const serviceCode = (req.body?.service_code || req.body?.service || req.query?.service_code || req.query?.service || '').toString().toLowerCase().trim();
-
-      if (providerParam !== 'mozosubz' && providerParam !== 'nifex') {
+      const providerParam = (req.body?.provider || req.query?.provider || "mozosubz").toString().toLowerCase().trim();
+      const serviceCode = (req.body?.service_code || req.body?.service || req.query?.service_code || req.query?.service || "").toString().toLowerCase().trim();
+      if (providerParam !== "mozosubz" && providerParam !== "nifex") {
         return res.status(400).json({
           success: false,
           error: `Invalid provider: '${providerParam}'. Must be 'mozosubz' or 'nifex'.`,
-          fetch_time: fetchStartTime,
+          fetch_time: fetchStartTime
         });
       }
-
-      if (providerParam === 'mozosubz') {
+      if (providerParam === "mozosubz") {
         const CONNECT_KEY = await resolveMozosubzApiKey();
-        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes('PASTE_YOUR')) {
+        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes("PASTE_YOUR")) {
           return res.status(503).json({
             success: false,
             error: "Mozosubz Connect Key is not configured on the server. Please configure your key in the Pricing Manager.",
-            fetch_time: fetchStartTime,
+            fetch_time: fetchStartTime
           });
         }
-
         const MOZO_BASE = "https://mozosubz.xyz/api/v1";
         const candidateServices = [
-          { id: "mtn_sme",       network: "MTN",    plan_type: "SME"       },
-          { id: "mtn_cg",        network: "MTN",    plan_type: "CG"        },
-          { id: "mtn_gifting",   network: "MTN",    plan_type: "GIFTING"   },
-          { id: "mtn_datashare", network: "MTN",    plan_type: "DATASHARE" },
-          { id: "mtn_awoof",     network: "MTN",    plan_type: "AWOOF"     },
-          { id: "mtn_awoof2",    network: "MTN",    plan_type: "AWOOF"     },
-          { id: "mtn_coupon",    network: "MTN",    plan_type: "COUPON"    },
-          { id: "glo_sme",       network: "GLO",    plan_type: "SME"       },
-          { id: "glo_cg",        network: "GLO",    plan_type: "CG"        },
-          { id: "glo_data",      network: "GLO",    plan_type: "DATA"      },
-          { id: "airtel_sme",    network: "AIRTEL", plan_type: "SME"       },
-          { id: "airtel_cg",     network: "AIRTEL", plan_type: "CG"        },
-          { id: "airtel_gifting",network: "AIRTEL", plan_type: "GIFTING"   },
-          { id: "etisalat_sme",  network: "9MOBILE",plan_type: "SME"       },
-          { id: "etisalat_data", network: "9MOBILE",plan_type: "DATA"      },
+          { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+          { id: "mtn_cg", network: "MTN", plan_type: "CG" },
+          { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
+          { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
+          { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
+          { id: "glo_sme", network: "GLO", plan_type: "SME" },
+          { id: "glo_cg", network: "GLO", plan_type: "CG" },
+          { id: "glo_data", network: "GLO", plan_type: "DATA" },
+          { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+          { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
+          { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+          { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
+          { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
         ];
-
-        const targetServices = serviceCode
-          ? candidateServices.filter(s => s.id === serviceCode)
-          : candidateServices;
-
+        const targetServices = serviceCode ? candidateServices.filter((s) => s.id === serviceCode) : candidateServices;
         if (serviceCode && targetServices.length === 0) {
           targetServices.push({
             id: serviceCode,
-            network: serviceCode.includes("glo") ? "GLO" : serviceCode.includes("airtel") ? "AIRTEL" : (serviceCode.includes("9mobile") || serviceCode.includes("etisalat")) ? "9MOBILE" : "MTN",
+            network: serviceCode.includes("glo") ? "GLO" : serviceCode.includes("airtel") ? "AIRTEL" : serviceCode.includes("9mobile") || serviceCode.includes("etisalat") ? "9MOBILE" : "MTN",
             plan_type: "DATA"
           });
         }
-
         const allPlans = [];
         const groupedByService = {};
         const serviceErrors = {};
-
         for (const svc of targetServices) {
           groupedByService[svc.id] = [];
           let page = 1;
           let hasMore = true;
-
           while (hasMore) {
             try {
-              const url = page === 1
-                ? `${MOZO_BASE}/data/plans?service=${svc.id}`
-                : `${MOZO_BASE}/data/plans?service=${svc.id}&page=${page}`;
-
+              const url = page === 1 ? `${MOZO_BASE}/data/plans?service=${svc.id}` : `${MOZO_BASE}/data/plans?service=${svc.id}&page=${page}`;
               const resp = await fetch(url, {
                 headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
-                signal: AbortSignal.timeout(12000),
+                signal: AbortSignal.timeout(12e3)
               });
-
               if (!resp.ok) {
                 const errJson = await resp.json().catch(() => null);
                 serviceErrors[svc.id] = errJson?.error || errJson?.message || `HTTP ${resp.status}`;
                 hasMore = false;
                 break;
               }
-
               const data = await resp.json().catch(() => null);
               if (!data || !data.success || !Array.isArray(data.plans)) {
                 if (data && !data.success) {
@@ -2364,7 +3025,6 @@ async function startServer() {
                 hasMore = false;
                 break;
               }
-
               for (const p of data.plans) {
                 const validityMatch = String(p.name || "").match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
                 const planObj = {
@@ -2374,13 +3034,12 @@ async function startServer() {
                   service_code: svc.id,
                   provider_price: Number(p.price || 0),
                   plan_type: p.plan_type || svc.plan_type,
-                  validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days"),
+                  validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days")
                 };
                 allPlans.push(planObj);
                 groupedByService[svc.id].push(planObj);
               }
-
-              if (data.next || (data.total_pages && page < data.total_pages)) {
+              if (data.next || data.total_pages && page < data.total_pages) {
                 page++;
               } else {
                 hasMore = false;
@@ -2391,10 +3050,7 @@ async function startServer() {
             }
           }
         }
-
-        // Audit log: provider, count, time, no keys
         console.log(`[get-provider-plans] provider: mozosubz, count: ${allPlans.length}, time: ${fetchStartTime}`);
-
         if (serviceCode && allPlans.length === 0 && serviceErrors[serviceCode]) {
           return res.status(502).json({
             success: false,
@@ -2403,10 +3059,9 @@ async function startServer() {
             error: `MozoSubz returned: ${serviceErrors[serviceCode]}`,
             fetch_time: fetchStartTime,
             count: 0,
-            plans: [],
+            plans: []
           });
         }
-
         return res.json({
           success: true,
           provider: "mozosubz",
@@ -2415,39 +3070,32 @@ async function startServer() {
           fetch_time: fetchStartTime,
           plans: allPlans,
           grouped_by_service: groupedByService,
-          errors: Object.keys(serviceErrors).length > 0 ? serviceErrors : undefined,
+          errors: Object.keys(serviceErrors).length > 0 ? serviceErrors : void 0
         });
       }
-
-      if (providerParam === 'nifex') {
+      if (providerParam === "nifex") {
         const nifexKey = await resolveNifexApiKey();
         if (!nifexKey || nifexKey.length < 5) {
           return res.status(503).json({
             success: false,
             error: "Nifex API Token is not configured on the server. Please configure your key in the Pricing Manager.",
-            fetch_time: fetchStartTime,
+            fetch_time: fetchStartTime
           });
         }
-
-        const cleanKey = nifexKey.replace(/^Token\s+/i, '').trim();
+        const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
         let page = 1;
         let hasMore = true;
         const allNifexPlans = [];
         const groupedByService = {};
-
         while (hasMore) {
-          const nifexUrl = page === 1
-            ? "https://nifexdataapp.com.ng/api/data/"
-            : `https://nifexdataapp.com.ng/api/data/?page=${page}`;
-
+          const nifexUrl = page === 1 ? "https://nifexdataapp.com.ng/api/data/" : `https://nifexdataapp.com.ng/api/data/?page=${page}`;
           const resp = await fetch(nifexUrl, {
             headers: {
               "Authorization": `Token ${cleanKey}`,
-              "Content-Type": "application/json",
+              "Content-Type": "application/json"
             },
-            signal: AbortSignal.timeout(12000),
+            signal: AbortSignal.timeout(12e3)
           });
-
           if (!resp.ok) {
             hasMore = false;
             if (page === 1) {
@@ -2455,28 +3103,20 @@ async function startServer() {
                 success: false,
                 provider: "nifex",
                 error: `Nifex API error HTTP ${resp.status}`,
-                fetch_time: fetchStartTime,
+                fetch_time: fetchStartTime
               });
             }
             break;
           }
-
           const rawJson = await resp.json().catch(() => null);
-          const rawList = Array.isArray(rawJson?.plans)
-            ? rawJson.plans
-            : (Array.isArray(rawJson) ? rawJson : (Array.isArray(rawJson?.results) ? rawJson.results : []));
-
+          const rawList = Array.isArray(rawJson?.plans) ? rawJson.plans : Array.isArray(rawJson) ? rawJson : Array.isArray(rawJson?.results) ? rawJson.results : [];
           for (const p of rawList) {
             const rawNet = String(p.network || "MTN").toUpperCase();
-            const net = rawNet.includes("GLO") ? "GLO"
-              : rawNet.includes("AIRTEL") ? "AIRTEL"
-              : (rawNet.includes("9MOBILE") || rawNet.includes("ETISALAT")) ? "9MOBILE"
-              : "MTN";
+            const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") || rawNet.includes("ETISALAT") ? "9MOBILE" : "MTN";
             const rawId = String(p.plan_id ?? p.pId ?? p.id);
             const pId = `nifex_${net.toLowerCase()}_${rawId}`;
             const svcType = String(p.type || p.plan_type || "DATA").toLowerCase();
             const validityMatch = String(p.plan_name || "").match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
-
             const planObj = {
               id: pId,
               name: String(p.plan_name || p.name || `${net} Data`),
@@ -2484,32 +3124,26 @@ async function startServer() {
               service_code: svcType,
               provider_price: Number(p.price || 0),
               plan_type: svcType.toUpperCase(),
-              validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days"),
+              validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days")
             };
-
             if (!groupedByService[svcType]) groupedByService[svcType] = [];
             groupedByService[svcType].push(planObj);
             allNifexPlans.push(planObj);
           }
-
           if (rawJson?.next && rawList.length > 0) {
             page++;
           } else {
             hasMore = false;
           }
         }
-
         let filteredPlans = allNifexPlans;
         if (serviceCode) {
           const sc = serviceCode.toLowerCase();
-          filteredPlans = allNifexPlans.filter(p =>
-            p.service_code.toLowerCase().includes(sc) ||
-            p.network.toLowerCase().includes(sc)
+          filteredPlans = allNifexPlans.filter(
+            (p) => p.service_code.toLowerCase().includes(sc) || p.network.toLowerCase().includes(sc)
           );
         }
-
         console.log(`[get-provider-plans] provider: nifex, count: ${filteredPlans.length}, time: ${fetchStartTime}`);
-
         return res.json({
           success: true,
           provider: "nifex",
@@ -2517,7 +3151,7 @@ async function startServer() {
           count: filteredPlans.length,
           fetch_time: fetchStartTime,
           plans: filteredPlans,
-          grouped_by_service: groupedByService,
+          grouped_by_service: groupedByService
         });
       }
     } catch (err) {
@@ -2525,288 +3159,120 @@ async function startServer() {
       return res.status(500).json({ success: false, error: err.message, fetch_time: fetchStartTime });
     }
   };
-
   app.get("/api/admin/get-provider-plans", handleGetProviderPlans);
   app.post("/api/admin/get-provider-plans", handleGetProviderPlans);
   app.get("/api/get-provider-plans", handleGetProviderPlans);
   app.post("/api/get-provider-plans", handleGetProviderPlans);
-
-  // ─── STEP 4: Save Prices endpoint (keeps live view separate from saved DB) ─
   app.post("/api/admin/save-provider-plans", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const { plans, provider = 'mozosubz', marginPercent = 10 } = req.body;
+      const { plans, provider = "mozosubz", marginPercent = 10 } = req.body;
       if (!Array.isArray(plans) || plans.length === 0) {
         return res.status(400).json({ error: "Missing or empty plans array to save." });
       }
-
-      // 1. Fetch existing manual overrides so saving NEVER overwrites them!
-      const planIds = plans.map(p => String(p.provider_plan_id || p.id).trim()).filter(Boolean);
-      const { data: existingRows } = await supabase
-        .from('vtu_plans')
-        .select('provider_plan_id, manual_price_override, margin_percent, price_to_user, is_active')
-        .in('provider_plan_id', planIds);
-
-      const existingMap = new Map();
-      (existingRows || []).forEach(r => {
+      const planIds = plans.map((p) => String(p.provider_plan_id || p.id).trim()).filter(Boolean);
+      const { data: existingRows } = await supabase.from("vtu_plans").select("provider_plan_id, manual_price_override, margin_percent, price_to_user, is_active").in("provider_plan_id", planIds);
+      const existingMap = /* @__PURE__ */ new Map();
+      (existingRows || []).forEach((r) => {
         existingMap.set(String(r.provider_plan_id).trim(), r);
       });
-
-      const nowIso = new Date().toISOString();
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const upsertRows = [];
       let savedCount = 0;
-
       for (const p of plans) {
         const pId = String(p.provider_plan_id || p.id).trim();
         if (!pId) continue;
-
-        const cost = Number(p.provider_price !== undefined ? p.provider_price : p.cost_price || 0);
+        const cost = Number(p.provider_price !== void 0 ? p.provider_price : p.cost_price || 0);
         const existing = existingMap.get(pId);
-
-        // Rule 2 of Step 4: Saving never overwrites a manual price override.
         let finalCustomerPrice = 0;
         let finalManualOverride = existing?.manual_price_override ?? null;
-
-        if (p.manual_price_override !== undefined && p.manual_price_override !== null && Number(p.manual_price_override) > 0) {
+        if (p.manual_price_override !== void 0 && p.manual_price_override !== null && Number(p.manual_price_override) > 0) {
           finalManualOverride = Number(p.manual_price_override);
           finalCustomerPrice = Math.ceil(finalManualOverride);
         } else if (finalManualOverride && Number(finalManualOverride) > 0) {
-          // Preserve existing manual price override intact!
           finalCustomerPrice = Math.ceil(Number(finalManualOverride));
         } else if (p.customer_price && Number(p.customer_price) > 0) {
           finalCustomerPrice = Math.ceil(Number(p.customer_price));
         } else {
-          // Provider price + NORODATA margin computed by shared formula
-          const margin = p.margin_percent ? Number(p.margin_percent) : (existing?.margin_percent ? Number(existing.margin_percent) : Number(marginPercent || 10));
+          const margin = p.margin_percent ? Number(p.margin_percent) : existing?.margin_percent ? Number(existing.margin_percent) : Number(marginPercent || 10);
           finalCustomerPrice = Math.ceil(cost * (1 + margin / 100));
         }
-
-        const isActive = p.is_active !== undefined ? Boolean(p.is_active) : (existing ? existing.is_active !== false : true);
-
+        const isActive = p.is_active !== void 0 ? Boolean(p.is_active) : existing ? existing.is_active !== false : true;
         upsertRows.push({
           provider_plan_id: pId,
-          plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
-          network: String(p.network || 'MTN').toUpperCase().trim(),
+          plan_name: String(p.name || p.plan_name || "Data Plan").trim(),
+          network: String(p.network || "MTN").toUpperCase().trim(),
           provider_price: cost,
           price_to_user: finalCustomerPrice,
           manual_price_override: finalManualOverride,
-          margin_percent: p.margin_percent ? Number(p.margin_percent) : (existing?.margin_percent ? Number(existing.margin_percent) : 10),
+          margin_percent: p.margin_percent ? Number(p.margin_percent) : existing?.margin_percent ? Number(existing.margin_percent) : 10,
           provider: p.provider || provider,
-          service: p.service_code || p.service || '',
-          validity: p.validity || '30 Days',
+          service: p.service_code || p.service || "",
+          validity: p.validity || "30 Days",
           is_active: isActive,
-          last_synced_at: nowIso,
+          last_synced_at: nowIso
         });
-
-        // Also sync services_config for backward compatibility
         try {
-          await supabase.from('services_config').upsert({
+          await supabase.from("services_config").upsert({
             mozosubz_plan_id: pId,
             bigisub_identifier_id: pId,
             bigisub_plan_id: pId,
-            mozosubz_service: p.service_code || p.service || '',
-            name: String(p.name || p.plan_name || 'Data Plan').trim(),
-            item_name: String(p.name || p.plan_name || 'Data Plan').trim(),
-            plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
+            mozosubz_service: p.service_code || p.service || "",
+            name: String(p.name || p.plan_name || "Data Plan").trim(),
+            item_name: String(p.name || p.plan_name || "Data Plan").trim(),
+            plan_name: String(p.name || p.plan_name || "Data Plan").trim(),
             selling_price: finalCustomerPrice,
             retail_price: finalCustomerPrice,
             cost_price: cost,
-            network: String(p.network || 'MTN').toUpperCase().trim(),
-            service_type: 'data',
+            network: String(p.network || "MTN").toUpperCase().trim(),
+            service_type: "data",
             is_active: isActive,
             provider: p.provider || provider,
-            updated_at: nowIso,
-          }, { onConflict: 'bigisub_identifier_id' });
-        } catch (_) {}
-
+            updated_at: nowIso
+          }, { onConflict: "bigisub_identifier_id" });
+        } catch (_) {
+        }
         savedCount++;
       }
-
       if (upsertRows.length > 0) {
-        const { error: upsertErr } = await supabase
-          .from('vtu_plans')
-          .upsert(upsertRows, { onConflict: 'provider_plan_id' });
-
+        const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
         if (upsertErr) throw upsertErr;
       }
-
       return res.json({
         success: true,
         saved_count: savedCount,
-        message: `Successfully saved ${savedCount} plan(s) to store with NORODATA pricing.`,
+        message: `Saved ${savedCount} plans to customer store.`
       });
     } catch (err) {
-      console.error("[save-provider-plans Error]:", err);
-      return res.status(500).json({ error: err.message || "Failed to save provider plans." });
-    }
-  });
-
-  app.post("/api/admin/sync-vtu-plans", async (req, res) => {
-    try {
-      const mozoKey = await resolveMozosubzApiKey();
-      const nifexKey = await resolveNifexApiKey();
-      const livePlans = [];
-      const nowIso = new Date().toISOString();
-      const serviceCounts = {};
-
-      if (mozoKey && mozoKey.length > 5) {
-        const MOZO_SERVICES = [
-          { id: "mtn_sme", network: "MTN" }, { id: "mtn_cg", network: "MTN" }, { id: "mtn_gifting", network: "MTN" },
-          { id: "mtn_datashare", network: "MTN" }, { id: "mtn_awoof", network: "MTN" }, { id: "mtn_awoof2", network: "MTN" },
-          { id: "mtn_coupon", network: "MTN" }, { id: "glo_sme", network: "GLO" }, { id: "glo_cg", network: "GLO" },
-          { id: "glo_data", network: "GLO" }, { id: "airtel_sme", network: "AIRTEL" }, { id: "airtel_cg", network: "AIRTEL" },
-          { id: "airtel_gifting", network: "AIRTEL" }, { id: "etisalat_sme", network: "9MOBILE" }, { id: "etisalat_data", network: "9MOBILE" }
-        ];
-
-        for (const svc of MOZO_SERVICES) {
-          try {
-            const resp = await fetch(`https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}`, {
-              headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" },
-              signal: AbortSignal.timeout(12000),
-            });
-            const d = await resp.json().catch(() => ({}));
-            if (d && d.success && Array.isArray(d.plans)) {
-              serviceCounts[svc.id] = d.plans.length;
-              for (const p of d.plans) {
-                const cost = Number(p.price || 0);
-                const pId = String(p.id).trim();
-                livePlans.push({
-                  network: svc.network,
-                  plan_name: p.name || (`${svc.network} Data`),
-                  provider_plan_id: pId,
-                  provider_price: cost,
-                  price_to_user: Math.ceil(cost * 1.10),
-                  is_active: true,
-                  last_synced_at: nowIso,
-                  provider: "mozosubz",
-                  service: svc.id,
-                  validity: "30 Days",
-                  margin_percent: 10,
-                });
-              }
-            }
-          } catch (_) {}
-        }
-      }
-
-      if (nifexKey && nifexKey.length > 5) {
-        try {
-          const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
-          const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
-            headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" },
-            signal: AbortSignal.timeout(15000),
-          });
-          const d = await resp.json().catch(() => ({}));
-          let list = [];
-          if (Array.isArray(d)) list = d;
-          else if (Array.isArray(d?.plans)) list = d.plans;
-          else if (Array.isArray(d?.data)) list = d.data;
-          else if (Array.isArray(d?.results)) list = d.results;
-          serviceCounts["nifex"] = list.length;
-          for (const p of list) {
-            const rawNet = String(p.network || "MTN").toUpperCase();
-            const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
-            const cost = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
-            const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid);
-            livePlans.push({
-              network: net,
-              plan_name: p.plan_name || p.name || (net + " Data"),
-              provider_plan_id: `nifex_${net.toLowerCase()}_${planId}`,
-              provider_price: cost,
-              price_to_user: Math.ceil(cost * 1.10),
-              is_active: true,
-              last_synced_at: nowIso,
-              provider: "nifex",
-              service: p.type || "DATA",
-              validity: p.validity || "30 Days",
-              margin_percent: 10,
-            });
-          }
-        } catch (_) {}
-      }
-
-      if (livePlans.length === 0) return res.status(400).json({ success: false, error: "No plans retrieved from providers." });
-
-      const { data: existingRows } = await supabase.from("vtu_plans").select("provider_plan_id, price_to_user, provider_price, manual_price_override, margin_percent, is_active");
-      const existingMap = new Map();
-      if (existingRows) {
-        for (const row of existingRows) existingMap.set(String(row.provider_plan_id).trim(), row);
-      }
-
-      let added = 0, updated = 0;
-      const priceChanges = [];
-      const uniquePlanMap = new Map();
-
-      for (const p of livePlans) {
-        const key = String(p.provider_plan_id).trim();
-        if (!key) continue;
-        const ext = existingMap.get(key);
-        const margin = ext?.margin_percent ? Number(ext.margin_percent) : 10;
-        const manualOverride = ext?.manual_price_override;
-        const computedPrice = (manualOverride !== undefined && manualOverride !== null && Number(manualOverride) > 0)
-          ? Math.ceil(Number(manualOverride))
-          : Math.ceil(p.provider_price * (1 + margin / 100));
-
-        if (ext) {
-          updated++;
-          if (Math.abs(Number(ext.provider_price) - p.provider_price) > 0.01 || Math.abs(Number(ext.price_to_user) - computedPrice) > 0.01) {
-            priceChanges.push({
-              provider_plan_id: key,
-              plan_name: p.plan_name,
-              old_provider_price: Number(ext.provider_price || 0),
-              new_provider_price: p.provider_price,
-              old_customer_price: Number(ext.price_to_user || 0),
-              new_customer_price: computedPrice,
-            });
-          }
-        } else {
-          added++;
-        }
-
-        uniquePlanMap.set(key, {
-          ...p,
-          provider_plan_id: key,
-          provider_price: p.provider_price,
-          price_to_user: computedPrice,
-          manual_price_override: manualOverride ?? null,
-          margin_percent: margin,
-          is_active: true,
-          last_synced_at: nowIso,
-        });
-      }
-
-      const upsertRows = Array.from(uniquePlanMap.values());
-      const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
-      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
-
-      const liveSet = new Set(livePlans.map(p => p.provider_plan_id));
-      let deactivated = 0;
-      if (existingRows && livePlans.length >= 20) {
-        const missing = existingRows.filter(r => r.is_active && !liveSet.has(r.provider_plan_id)).map(r => r.provider_plan_id);
-        if (missing.length > 0) {
-          const { error: deactErr } = await supabase.from("vtu_plans").update({ is_active: false, last_synced_at: nowIso }).in("provider_plan_id", missing);
-          if (!deactErr) deactivated = missing.length;
-        }
-      }
-
-      return res.json({
-        success: true, added, updated, deactivated, total: livePlans.length,
-        service_counts: serviceCounts, price_changes_count: priceChanges.length,
-        price_changes: priceChanges.slice(0, 50), timestamp: nowIso
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      console.error("[POST /api/admin/save-provider-plans Exception]:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
   app.get("/api/services/:type", async (req, res) => {
     try {
       const { type } = req.params;
       const { group, provider, network } = req.query;
-      const allowedTypes = ["data", "airtime", "cable", "electricity", "exam_pin"];
+      const allowedTypes = ["data", "airtime", "cable", "electricity", "exam_pin", "exam"];
       if (!allowedTypes.includes(type)) {
         return res.status(400).json({ error: `Invalid service type: ${type}. Must be one of: ${allowedTypes.join(", ")}` });
       }
+      if (type === "exam" || type === "exam_pin") {
+        const { data: dbExams, error: examErr } = await supabase.from("services_config").select("*").or("service_type.eq.exam,service_type.eq.exam_pin").eq("is_active", true).order("selling_price", { ascending: true });
+        if (!examErr && dbExams && dbExams.length > 0) {
+          return res.json(sanitizePublicPlans(dbExams));
+        }
+        const defaultExams = [
+          { id: "exam_waec", provider_or_network: "WAEC", item_name: "WAEC Result Checker PIN", cost_price: 3e3, selling_price: 3400, retail_price: 3400, service_type: "exam_pin", is_active: true },
+          { id: "exam_neco", provider_or_network: "NECO", item_name: "NECO Result Token", cost_price: 2600, selling_price: 2900, retail_price: 2900, service_type: "exam_pin", is_active: true },
+          { id: "exam_nabteb", provider_or_network: "NABTEB", item_name: "NABTEB Result Card PIN", cost_price: 2800, selling_price: 3200, retail_price: 3200, service_type: "exam_pin", is_active: true }
+        ];
+        return res.json(defaultExams);
+      }
       if (type === "electricity") {
+        const { data: dbDiscos } = await supabase.from("services_config").select("*").eq("service_type", "electricity").eq("is_active", true);
+        if (dbDiscos && dbDiscos.length > 0) {
+          return res.json(sanitizePublicPlans(dbDiscos));
+        }
         const discos = [
           ["IKEDC", "Ikeja Electric"],
           ["EKEDC", "Eko Electric"],
@@ -2840,6 +3306,28 @@ async function startServer() {
       if (queryErr) {
         console.error("[Supabase GET Services Error]:", queryErr);
         return res.status(500).json({ error: `Database error: ${queryErr.message}` });
+      }
+      if (type === "cable" && (!services || services.length === 0)) {
+        const defaultCable = [
+          { id: "cable_gotv_smallie", provider_or_network: "GOTV", item_name: "GOtv Smallie", cost_price: 1575, selling_price: 1750, retail_price: 1750, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_gotv_jinja", provider_or_network: "GOTV", item_name: "GOtv Jinja", cost_price: 3300, selling_price: 3500, retail_price: 3500, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_gotv_jolli", provider_or_network: "GOTV", item_name: "GOtv Jolli", cost_price: 4850, selling_price: 5100, retail_price: 5100, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_gotv_max", provider_or_network: "GOTV", item_name: "GOtv Max", cost_price: 7200, selling_price: 7500, retail_price: 7500, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_gotv_supa", provider_or_network: "GOTV", item_name: "GOtv Supa", cost_price: 9600, selling_price: 9900, retail_price: 9900, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_gotv_supaplus", provider_or_network: "GOTV", item_name: "GOtv Supa Plus", cost_price: 15700, selling_price: 16100, retail_price: 16100, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_padi", provider_or_network: "DSTV", item_name: "DStv Padi", cost_price: 3600, selling_price: 3850, retail_price: 3850, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_yanga", provider_or_network: "DSTV", item_name: "DStv Yanga", cost_price: 5100, selling_price: 5400, retail_price: 5400, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_confam", provider_or_network: "DSTV", item_name: "DStv Confam", cost_price: 9300, selling_price: 9650, retail_price: 9650, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_compact", provider_or_network: "DSTV", item_name: "DStv Compact", cost_price: 15700, selling_price: 16200, retail_price: 16200, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_compactplus", provider_or_network: "DSTV", item_name: "DStv Compact Plus", cost_price: 2500, selling_price: 25700, retail_price: 25700, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_dstv_premium", provider_or_network: "DSTV", item_name: "DStv Premium", cost_price: 37e3, selling_price: 38e3, retail_price: 38e3, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_startimes_nova", provider_or_network: "STARTIMES", item_name: "Nova", cost_price: 1700, selling_price: 1900, retail_price: 1900, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_startimes_basic", provider_or_network: "STARTIMES", item_name: "Basic", cost_price: 3e3, selling_price: 3250, retail_price: 3250, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_startimes_smart", provider_or_network: "STARTIMES", item_name: "Smart", cost_price: 3800, selling_price: 4100, retail_price: 4100, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_startimes_classic", provider_or_network: "STARTIMES", item_name: "Classic", cost_price: 4500, selling_price: 4800, retail_price: 4800, validity_days: "30 Days", service_type: "cable", is_active: true },
+          { id: "cable_startimes_super", provider_or_network: "STARTIMES", item_name: "Super", cost_price: 7e3, selling_price: 7400, retail_price: 7400, validity_days: "30 Days", service_type: "cable", is_active: true }
+        ];
+        return res.json(defaultCable);
       }
       if (group === "true") {
         const grouped = {};
@@ -3027,7 +3515,7 @@ async function startServer() {
       try {
         const bigisubUrl = `${BIGISUB_BASE_URL}/${endpoint}`;
         console.log(`[Bigisub Outbound HTTP Request] URL: ${bigisubUrl}, Payload:`, JSON.stringify(payload));
-        const response = await axios2.post(bigisubUrl, payload, {
+        const response = await axios3.post(bigisubUrl, payload, {
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${BIGISUB_API_KEY}`
@@ -3280,18 +3768,18 @@ async function startServer() {
         duration,
         peyflex_variation_id
       } = req.body;
-      const rawNet = String(network || "MTN").trim().toUpperCase();
-      let finalNet = rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("GLO") ? "GLO" : rawNet.includes("9MOBILE") || rawNet.includes("ETISALAT") ? "9MOBILE" : "MTN";
+      const rawType = String(type || "data").toLowerCase();
+      const rawNet = String(network || req.body.provider || req.body.provider_or_network || "MTN").trim().toUpperCase();
+      let finalNet = rawNet;
+      if (rawType === "data" || rawType === "airtime") {
+        finalNet = rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("GLO") ? "GLO" : rawNet.includes("9MOBILE") || rawNet.includes("ETISALAT") ? "9MOBILE" : "MTN";
+      }
       const pNameUpper = String(name || "").toUpperCase();
       let planCat = plan_category?.toUpperCase() || (pNameUpper.includes("SME") ? "SME" : pNameUpper.includes("CG") || pNameUpper.includes("CORPORATE") ? "CG" : "GIFTING");
       const sellingPrice = Number(selling_price || price || 0);
       const costPrice = Number(cost_price || 0);
       const planId = String(mozosubz_plan_id || id || `plan_${Date.now()}`);
       const record = {
-        // Core identifiers — upsert on mozosubz_plan_id when available, else bigisub_identifier_id.
-        // bigisub_plan_id is a separate legacy NOT NULL column on services_config (distinct from
-        // bigisub_identifier_id) -- must always be populated or inserts of new plans fail with
-        // "null value in column bigisub_plan_id violates not-null constraint".
         mozosubz_plan_id: planId,
         bigisub_identifier_id: planId,
         bigisub_plan_id: planId,
@@ -3308,13 +3796,15 @@ async function startServer() {
         network: finalNet,
         network_type: finalNet,
         provider_or_network: finalNet,
-        service_type: String(type || "data").toLowerCase(),
+        service_type: rawType === "exam" ? "exam_pin" : rawType,
         plan_category: planCat,
-        type: String(type || "data").toLowerCase(),
+        type: rawType === "exam" ? "exam_pin" : rawType,
         validity_days: validity_days || duration || "30 Days",
+        // Provider
+        provider: req.body.provider || "mozosubz",
         // Legacy / compat
         peyflex_variation_id: peyflex_variation_id || planId,
-        is_active: true,
+        is_active: req.body.is_active !== void 0 ? req.body.is_active : true,
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
       record.bigisub_identifier_id = planId;
@@ -3327,6 +3817,34 @@ async function startServer() {
       } else {
         const { error: insErr } = await supabase.from("services_config").insert(record);
         if (insErr) throw new Error(insErr.message);
+      }
+      if (rawType === "data") {
+        try {
+          const { data: existingVtu } = await supabase.from("vtu_plans").select("manual_price_override").eq("provider_plan_id", planId).maybeSingle();
+          let finalOverride = existingVtu?.manual_price_override ?? null;
+          let finalCustomerPrice = sellingPrice;
+          if (req.body.manual_price_override !== void 0 && req.body.manual_price_override !== null && Number(req.body.manual_price_override) > 0) {
+            finalOverride = Number(req.body.manual_price_override);
+            finalCustomerPrice = Math.ceil(finalOverride);
+          } else if (finalOverride && Number(finalOverride) > 0) {
+            finalCustomerPrice = Math.ceil(Number(finalOverride));
+          }
+          await supabase.from("vtu_plans").upsert({
+            provider_plan_id: planId,
+            plan_name: String(name || "").trim(),
+            network: finalNet,
+            provider_price: costPrice,
+            price_to_user: finalCustomerPrice,
+            manual_price_override: finalOverride,
+            provider: req.body.provider || "mozosubz",
+            service: mozosubz_service || service || "",
+            validity: validity_days || duration || "30 Days",
+            is_active: req.body.is_active !== void 0 ? Boolean(req.body.is_active) : true,
+            last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
+          }, { onConflict: "provider_plan_id" });
+        } catch (vtuErr) {
+          console.warn("[create-plan vtu_plans upsert warning]:", vtuErr.message);
+        }
       }
       return res.json({ success: true, message: "Plan published successfully!" });
     } catch (err) {
@@ -3666,7 +4184,7 @@ async function startServer() {
     } = req.body;
     const finalType = requestType || type || "data";
     const finalNetwork = networkId || network;
-    const finalPlan = planId || plan;
+    let finalPlan = planId || plan;
     const finalPhone = phone || phoneNumber;
     let finalAmount = Number(amount !== void 0 ? amount : req.body.amount);
     if (isNaN(finalAmount) || finalAmount <= 0) return res.status(400).json({ error: "Invalid amount. Must be greater than zero." });
@@ -3698,33 +4216,43 @@ async function startServer() {
       if (currentBalance < finalAmount) {
         return res.status(400).json({ error: `Insufficient wallet balance. You need \u20A6${finalAmount.toLocaleString()} but currently have \u20A6${currentBalance.toLocaleString()}.` });
       }
-      let planConfig = null;
       let vtuPlan = null;
+      let planConfig = null;
       if (finalType === "data" && finalPlan) {
         try {
           const safePlan = pgSafeFilter(finalPlan);
-          const { data: vp } = await supabase
-            .from("vtu_plans")
-            .select("*")
-            .or(`provider_plan_id.eq.${safePlan},id.eq.${safePlan},plan_name.eq.${safePlan}`)
-            .maybeSingle();
-          if (vp) vtuPlan = vp;
+          const { data: vp } = await supabase.from("vtu_plans").select("*").eq("provider_plan_id", String(finalPlan)).maybeSingle();
+          if (vp) {
+            vtuPlan = vp;
+          } else {
+            const { data: vpAlt } = await supabase.from("vtu_plans").select("*").or(`id.eq.${safePlan},provider_plan_id.eq.${safePlan}`).maybeSingle();
+            if (vpAlt) vtuPlan = vpAlt;
+          }
         } catch (vtuErr) {
-          console.warn("[vtu_plans purchase check warning]:", vtuErr.message);
+          console.warn("[VTU/purchase vtu_plans query warning]:", vtuErr.message);
         }
-
         if (vtuPlan) {
-          if (vtuPlan.is_active === false) {
-            return res.status(400).json({ error: "This data plan is currently inactive. Please choose an active plan." });
+          if (!vtuPlan.is_active) {
+            return res.status(400).json({ error: "This plan is no longer available. Please refresh and select an active plan." });
           }
           finalPlan = vtuPlan.provider_plan_id;
-        }
-
-        try {
-          const safePlan = pgSafeFilter(finalPlan);
-          const { data: pc } = await supabase.from("services_config").select("provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name, selling_price, retail_price, cost_price, reseller_price, agent_price").or(`mozosubz_plan_id.eq.${safePlan},bigisub_identifier_id.eq.${safePlan},bigisub_plan_id.eq.${safePlan},item_name.eq.${safePlan},plan_name.eq.${safePlan},name.eq.${safePlan}`).maybeSingle();
-          planConfig = pc;
-        } catch (_) {
+          if (vtuPlan.price_to_user && Number(vtuPlan.price_to_user) > 0) {
+            finalAmount = Number(vtuPlan.price_to_user);
+          }
+        } else {
+          const { data: deactPlan } = await supabase.from("vtu_plans").select("provider_plan_id, is_active").eq("is_active", false).eq("provider_plan_id", String(finalPlan)).maybeSingle();
+          if (deactPlan) {
+            return res.status(400).json({ error: "This plan is no longer active. Please choose another." });
+          }
+          try {
+            const safePlan = pgSafeFilter(finalPlan);
+            const { data: pc } = await supabase.from("services_config").select("provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name, selling_price, retail_price, cost_price, reseller_price, agent_price, is_active").or(`mozosubz_plan_id.eq.${safePlan},bigisub_identifier_id.eq.${safePlan},bigisub_plan_id.eq.${safePlan},item_name.eq.${safePlan},plan_name.eq.${safePlan},name.eq.${safePlan}`).maybeSingle();
+            planConfig = pc;
+            if (planConfig && planConfig.is_active === false) {
+              return res.status(400).json({ error: "This plan is no longer active. Please choose another." });
+            }
+          } catch (_) {
+          }
         }
       }
       const chosenProvider = vtuPlan?.provider || planConfig?.provider || "mozosubz";
@@ -3742,9 +4270,6 @@ async function startServer() {
         const role = profile?.role || "user";
         if (vtuPlan && Number(vtuPlan.price_to_user) > 0) {
           serverPrice = Number(vtuPlan.price_to_user);
-          if (role === "reseller" || isResellerActive(profile)) {
-            serverPrice = applyResellerPricing(serverPrice, profile, "data");
-          }
         } else if (planConfig) {
           if (role === "agent" && planConfig.agent_price) serverPrice = Number(planConfig.agent_price);
           else if (role === "reseller" && planConfig.reseller_price) serverPrice = Number(planConfig.reseller_price);
@@ -3801,12 +4326,13 @@ async function startServer() {
           network: finalNetwork,
           phone: finalPhone,
           amount: finalAmount,
-          planId: resolvedPlanCode,
-          providerPlanId: planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService: planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || "",
+          planId: vtuPlan?.provider_plan_id || resolvedPlanCode,
+          providerPlanId: vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
+          mozosubzService: vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || "",
           apiKey: providerApiKey
         });
         apiResponseData = result.raw;
+        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ""}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
         if (result.success) {
           apiSuccess = true;
           purchaseOutcome = "success";
@@ -4026,7 +4552,7 @@ async function startServer() {
         payload.cablename = cableTvCode;
         payload.smartcard_number = number;
       }
-      const response = await axios2.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
+      const response = await axios3.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${BIGISUB_API_KEY}`
@@ -4068,7 +4594,7 @@ async function startServer() {
       } else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) {
         cableTvCode = 3;
       }
-      const response = await axios2.post(`${BIGISUB_BASE_URL}/cable/validate`, {
+      const response = await axios3.post(`${BIGISUB_BASE_URL}/cable/validate`, {
         cablename: cableTvCode,
         smartcard_number
       }, {
@@ -4114,7 +4640,7 @@ async function startServer() {
       } else if (!isNaN(Number(disco_name))) {
         discoCode = Number(disco_name);
       }
-      const response = await axios2.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
+      const response = await axios3.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
         disco_name: discoCode,
         meter_number
       }, {
@@ -4160,7 +4686,7 @@ async function startServer() {
         } else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) {
           cableTvCode = 3;
         }
-        const response = await axios2.post(`${BIGISUB_BASE_URL}/cable/validate`, {
+        const response = await axios3.post(`${BIGISUB_BASE_URL}/cable/validate`, {
           cablename: cableTvCode,
           smartcard_number: account_number
         }, {
@@ -4205,7 +4731,7 @@ async function startServer() {
         } else if (!isNaN(Number(provider_name))) {
           discoCode = Number(provider_name);
         }
-        const response = await axios2.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
+        const response = await axios3.post(`${BIGISUB_BASE_URL}/electricity/validate`, {
           disco_name: discoCode,
           meter_number: account_number
         }, {
@@ -4406,7 +4932,7 @@ async function startServer() {
         } else {
           return res.status(400).json({ error: `Unsupported utility type: ${type}` });
         }
-        const response = await axios2.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
+        const response = await axios3.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${BIGISUB_API_KEY}`
@@ -4724,8 +5250,8 @@ AI:`;
     } catch (e) {
       console.warn("[Bachs Credit Tier 2 warning]:", e?.message || e);
     }
-    const { data: existingTx } = await supabase.from("transactions").select("id").eq("reference", cleanRef).maybeSingle();
-    if (existingTx) {
+    const { data: existingTx } = await supabase.from("transactions").select("id, status").eq("reference", cleanRef).maybeSingle();
+    if (existingTx && existingTx.status === "completed") {
       return { status: "already_processed", message: "Transaction already processed.", userId: profile.id };
     }
     await supabase.from("processed_payments").insert({
@@ -4742,20 +5268,25 @@ AI:`;
       available_balance: newBalance,
       last_funding_at: (/* @__PURE__ */ new Date()).toISOString()
     }).eq("id", profile.id);
-    await supabase.from("transactions").insert({
-      user_id: profile.id,
-      user_email: cleanEmail || profile.email || "",
-      amount: numericAmount,
-      type: "funding",
-      status: "completed",
-      reference: cleanRef,
-      platform: "bachs",
-      payment_method: "bachs",
-      gateway: "bachs",
-      description: desc,
-      metadata: opts.metadata || {},
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
-    });
+    if (existingTx) {
+      await supabase.from("transactions").update({
+        status: "completed"
+      }).eq("id", existingTx.id);
+    } else {
+      await supabase.from("transactions").insert({
+        user_id: profile.id,
+        user_email: cleanEmail || profile.email || "",
+        amount: numericAmount,
+        type: "funding",
+        status: "completed",
+        reference: cleanRef,
+        platform: "bachs",
+        payment_method: "bachs",
+        gateway: "bachs",
+        description: desc,
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
     return { status: "success", userId: profile.id };
   };
   app.post(["/api/payments/bachs/checkout", "/api/v1/payments/bachs/checkout"], async (req, res) => {
@@ -4777,17 +5308,39 @@ AI:`;
       }
       const reference = `NRY-BACHS-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const appOrigin = String(redirectUrl || "").trim() || String(req.headers.origin || "").trim() || String(process.env.APP_URL || "").trim() || `${req.protocol}://${req.get("host")}`;
-      const cleanOrigin = appOrigin.replace(/\/+$/, "");
-      const amountDecimalString = numericAmount.toFixed(2);
+      const rawOrigin = sanitizeSecretValue(String(redirectUrl || "")) || sanitizeSecretValue(String(req.headers.origin || "")) || sanitizeSecretValue(String(process.env.APP_URL || "")) || `${req.protocol}://${req.get("host")}`;
+      let cleanOrigin = rawOrigin.replace(/\/+$/, "");
+      try {
+        cleanOrigin = new URL(cleanOrigin.startsWith("http") ? cleanOrigin : `https://${cleanOrigin}`).origin;
+      } catch (_) {
+        cleanOrigin = "https://noroya.vercel.app";
+      }
+      const feeBreakdown = calculateFundingFee(numericAmount);
+      const totalCharged = feeBreakdown.totalCharged;
+      const norodataFee = feeBreakdown.margin;
+      const gatewayFee = feeBreakdown.gatewayFee;
+      const totalChargedDecimalString = totalCharged.toFixed(2);
       const customerPayload = { email: customerEmail };
-      if (name && String(name).trim()) customerPayload.name = String(name).trim();
-      if (phone && String(phone).trim()) customerPayload.phone_number = String(phone).trim();
+      if (name && String(name).trim()) {
+        customerPayload.name = String(name).trim();
+      }
+      if (phone && String(phone).trim()) {
+        const digits = String(phone).replace(/[^\d+]/g, "");
+        let e164 = digits;
+        if (/^0[789][01]\d{8}$/.test(digits)) {
+          e164 = `+234${digits.slice(1)}`;
+        } else if (/^234[789][01]\d{8}$/.test(digits)) {
+          e164 = `+${digits}`;
+        }
+        if (/^\+[1-9]\d{7,14}$/.test(e164)) {
+          customerPayload.phone_number = e164;
+        }
+      }
       const checkoutPayload = {
         customer: customerPayload,
         pricing: {
           currency: "NGN",
-          amount: amountDecimalString,
+          amount: totalChargedDecimalString,
           price_type: "fixed"
         },
         billing_currency: "NGN",
@@ -4798,50 +5351,66 @@ AI:`;
           user_id: String(userId || ""),
           email: customerEmail,
           reference,
-          purpose: "wallet_funding"
+          purpose: "wallet_funding",
+          amount: String(numericAmount),
+          norodata_fee: String(norodataFee),
+          gateway_fee: String(gatewayFee),
+          total_charged: String(totalCharged)
         }
       };
-      const cleanKey = sanitizeConfigValue(secretKey).replace(/^Bearer\s+/i, "").trim();
+      const cleanKey = sanitizeSecretValue(secretKey);
       const checkoutEndpoint = getBachsEndpoint(baseUrl, "/v1/checkout-sessions");
-      let respData = null;
-      let respStatus = 200;
-      try {
-        const resp = await axios.post(checkoutEndpoint, checkoutPayload, {
-          headers: {
-            Authorization: `Bearer ${cleanKey}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": reference,
-            Accept: "application/json"
-          },
-          timeout: 15000
-        });
-        respData = resp.data;
-        respStatus = resp.status;
-      } catch (axiosErr) {
-        respData = axiosErr.response?.data;
-        respStatus = axiosErr.response?.status || 500;
-        const errDetail = respData?.detail || respData?.message || respData?.error || axiosErr.message || `Bachs API returned HTTP ${respStatus}`;
-        console.error("[Bachs Checkout Error]:", respStatus, errDetail, respData);
-        return res.status(respStatus >= 400 && respStatus < 600 ? respStatus : 502).json({
-          error: typeof errDetail === "string" ? errDetail : JSON.stringify(errDetail),
+      const resp = await fetch(checkoutEndpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cleanKey}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": reference
+        },
+        body: JSON.stringify(checkoutPayload)
+      });
+      const respData = await resp.json().catch(() => ({}));
+      if (!resp.ok || !respData?.checkout_url) {
+        let errDetail = respData?.detail || respData?.message || respData?.error || `Bachs API returned HTTP ${resp.status}`;
+        if (resp.status === 404) {
+          errDetail = `Bachs API endpoint not found (HTTP 404). Ensure BACHS_BASE_URL is https://api.bachs.io (without /v1). Detail: ${respData?.detail || "Not Found"}`;
+        }
+        console.error("[Bachs Checkout Error]:", resp.status, respData);
+        return res.status(resp.status >= 400 && resp.status < 600 ? resp.status : 502).json({
+          error: errDetail,
           error_code: respData?.error_code || null
         });
       }
-      const checkoutUrl = respData?.checkout_url || respData?.url;
-      if (!checkoutUrl) {
-        console.error("[Bachs Checkout] Missing checkout_url in response:", respData);
-        return res.status(502).json({
-          error: "Bachs payment gateway did not return a checkout URL.",
-          details: respData
+      try {
+        await supabase.from("transactions").insert({
+          user_id: String(userId || ""),
+          user_email: customerEmail,
+          amount: numericAmount,
+          // Desired wallet credit
+          norodata_fee: norodataFee,
+          gateway_fee: gatewayFee,
+          total_charged: totalCharged,
+          status: "pending",
+          reference,
+          platform: "bachs",
+          gateway: "bachs",
+          description: `Wallet Top-Up via Bachs.io (Credit: \u20A6${numericAmount.toLocaleString()}, Charged: \u20A6${totalCharged.toLocaleString()})`,
+          created_at: (/* @__PURE__ */ new Date()).toISOString()
         });
+      } catch (txErr) {
+        console.warn("[Bachs Checkout pending tx warning]:", txErr?.message || txErr);
       }
       return res.status(201).json({
         success: true,
-        checkout_id: respData.checkout_id || respData.id,
-        checkout_url: checkoutUrl,
+        checkout_id: respData.checkout_id,
+        checkout_url: respData.checkout_url,
         reference: respData.reference || reference,
         status: respData.status || "open",
-        expires_at: respData.expires_at
+        expires_at: respData.expires_at,
+        amount: numericAmount,
+        norodata_fee: norodataFee,
+        gateway_fee: gatewayFee,
+        total_charged: totalCharged
       });
     } catch (err) {
       console.error("[POST /api/payments/bachs/checkout Exception]:", err);
@@ -4936,12 +5505,20 @@ AI:`;
       if (verifiedCurrency !== "NGN") {
         return res.status(400).json({ error: `Unsupported settlement currency ${verifiedCurrency}. Expected NGN.` });
       }
+      let finalCreditAmount = verifiedAmount;
+      try {
+        const { data: storedTx } = await supabase.from("transactions").select("amount, norodata_fee, gateway_fee, total_charged").eq("reference", verifiedRef).maybeSingle();
+        if (storedTx && Number(storedTx.amount) > 0) {
+          finalCreditAmount = Number(storedTx.amount);
+        }
+      } catch (_) {
+      }
       const creditOutcome = await creditUserWalletAtomically({
         reference: verifiedRef,
         email: verifiedEmail,
         userId: verifiedUserId,
-        amount: verifiedAmount,
-        description: `Wallet Top-Up via Bachs.io (\u20A6${verifiedAmount.toLocaleString()})`
+        amount: finalCreditAmount,
+        description: `Wallet Top-Up via Bachs.io (\u20A6${finalCreditAmount.toLocaleString()})`
       });
       if (creditOutcome.status === "error") {
         return res.status(400).json({ error: creditOutcome.message || "Could not credit wallet." });
@@ -5036,46 +5613,76 @@ AI:`;
       return res.status(500).json({ error: err.message });
     }
   });
-  const verifyBachsWebhookSignature = (rawBodyBuffer, headers, secret, toleranceSeconds = 300) => {
-    const cleanSecret = String(secret || "").trim();
-    if (!cleanSecret) return false;
+  const verifyBachsWebhookSignature = (rawBodyBuffer, headers, secrets, toleranceSeconds = 600) => {
+    const secretList = (Array.isArray(secrets) ? secrets : [secrets]).map((s) => String(s || "").trim()).filter(Boolean);
+    if (secretList.length === 0) return false;
     const rawBodyStr = rawBodyBuffer.toString("utf8");
-    const v2Header = String(headers["x-bachs-signature-v2"] || "").trim();
-    const v1Signature = String(headers["x-bachs-signature"] || "").trim();
-    const v1Timestamp = String(headers["x-bachs-timestamp"] || "").trim();
-    if (v2Header) {
-      const parts = v2Header.split(",").map((p) => p.trim()).filter(Boolean);
-      let timestampStr = "";
-      const signatures = [];
-      for (const part of parts) {
-        const eqIdx = part.indexOf("=");
-        if (eqIdx === -1) continue;
-        const k = part.slice(0, eqIdx).trim();
-        const v = part.slice(eqIdx + 1).trim();
-        if (k === "t") timestampStr = v;
-        if (k === "v1" && v) signatures.push(v);
-      }
-      const ts = parseInt(timestampStr, 10);
-      if (isNaN(ts) || signatures.length === 0) return false;
-      if (Math.abs(Date.now() / 1e3 - ts) > toleranceSeconds) return false;
-      const expected = crypto.createHmac("sha256", cleanSecret).update(`${ts}.${rawBodyStr}`, "utf8").digest("hex");
-      const expectedBuf = Buffer.from(expected, "utf8");
-      for (const sig of signatures) {
-        const sigBuf = Buffer.from(sig, "utf8");
-        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf)) {
+    const headerCandidates = [
+      headers["x-bachs-signature-v2"],
+      headers["x-bachs-signature"],
+      headers["x-signature"],
+      headers["signature"],
+      headers["bachs-signature"],
+      headers["x-bachs-webhook-signature"]
+    ].filter(Boolean).map((h) => String(h).trim());
+    const timestampCandidate = String(
+      headers["x-bachs-timestamp"] || headers["x-timestamp"] || headers["timestamp"] || ""
+    ).trim();
+    for (const secret of secretList) {
+      for (const sigHeader of headerCandidates) {
+        if (sigHeader.includes("t=") && (sigHeader.includes("v1=") || sigHeader.includes("v2="))) {
+          const parts = sigHeader.split(",").map((p) => p.trim()).filter(Boolean);
+          let timestampStr = "";
+          const signatures = [];
+          for (const part of parts) {
+            const eqIdx = part.indexOf("=");
+            if (eqIdx === -1) continue;
+            const k = part.slice(0, eqIdx).trim();
+            const v = part.slice(eqIdx + 1).trim();
+            if (k === "t") timestampStr = v;
+            if ((k === "v1" || k === "v2") && v) signatures.push(v);
+          }
+          const ts = parseInt(timestampStr, 10);
+          if (!isNaN(ts) && signatures.length > 0) {
+            if (toleranceSeconds <= 0 || Math.abs(Date.now() / 1e3 - ts) <= toleranceSeconds) {
+              const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBodyStr}`, "utf8").digest("hex");
+              const expectedBuf = Buffer.from(expected, "utf8");
+              for (const sig of signatures) {
+                const sigBuf2 = Buffer.from(sig, "utf8");
+                if (sigBuf2.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf2)) {
+                  return true;
+                }
+              }
+            }
+          }
+        }
+        if (timestampCandidate) {
+          const ts = parseInt(timestampCandidate, 10);
+          if (!isNaN(ts) && (toleranceSeconds <= 0 || Math.abs(Date.now() / 1e3 - ts) <= toleranceSeconds)) {
+            const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBodyStr}`, "utf8").digest("hex");
+            const expectedBuf = Buffer.from(expected, "utf8");
+            const sigBuf2 = Buffer.from(sigHeader, "utf8");
+            if (sigBuf2.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf2)) {
+              return true;
+            }
+          }
+        }
+        const expDirect256 = crypto.createHmac("sha256", secret).update(rawBodyBuffer).digest("hex");
+        const expDirectBuf256 = Buffer.from(expDirect256, "utf8");
+        const sigBuf = Buffer.from(sigHeader, "utf8");
+        if (sigBuf.length === expDirectBuf256.length && crypto.timingSafeEqual(expDirectBuf256, sigBuf)) {
+          return true;
+        }
+        const expDirect512 = crypto.createHmac("sha512", secret).update(rawBodyBuffer).digest("hex");
+        const expDirectBuf512 = Buffer.from(expDirect512, "utf8");
+        if (sigBuf.length === expDirectBuf512.length && crypto.timingSafeEqual(expDirectBuf512, sigBuf)) {
+          return true;
+        }
+        const secretBuf = Buffer.from(secret, "utf8");
+        if (sigBuf.length === secretBuf.length && crypto.timingSafeEqual(secretBuf, sigBuf)) {
           return true;
         }
       }
-      return false;
-    }
-    if (v1Signature && v1Timestamp) {
-      const ts = parseInt(v1Timestamp, 10);
-      if (isNaN(ts)) return false;
-      if (Math.abs(Date.now() / 1e3 - ts) > toleranceSeconds) return false;
-      const expected = crypto.createHmac("sha256", cleanSecret).update(`${ts}.${rawBodyStr}`, "utf8").digest("hex");
-      const expectedBuf = Buffer.from(expected, "utf8");
-      const sigBuf = Buffer.from(v1Signature, "utf8");
-      return sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf);
     }
     return false;
   };
@@ -5113,38 +5720,31 @@ AI:`;
     try {
       const webhookSecret = await resolveBachsWebhookSecret();
       const bachsSecretKey = await resolveBachsSecretKey();
-
-      if (!webhookSecret) {
-        console.error("[Bachs Webhook] BACHS_WEBHOOK_SECRET is not configured. Rejecting delivery.");
+      const secretsToCheck = [webhookSecret, bachsSecretKey].filter(Boolean);
+      if (secretsToCheck.length === 0) {
+        console.error("[Bachs Webhook] Neither BACHS_WEBHOOK_SECRET nor BACHS_SECRET_KEY is configured. Rejecting delivery.");
         return res.status(503).json({ error: "Bachs webhook signing secret not configured." });
       }
-
-      const rawBody = Buffer.isBuffer(req.rawBody)
-        ? req.rawBody
-        : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
-
-      // Verify webhook signature (V2 / V1 per official docs). Reject invalid with 401.
-      const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, webhookSecret);
+      const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(typeof req.rawBody === "string" ? req.rawBody : safeJsonStringify(req.body || {}), "utf8");
+      const isValidSig = verifyBachsWebhookSignature(rawBody, req.headers || {}, secretsToCheck);
       if (!isValidSig) {
-        console.warn("[Bachs Webhook] Invalid X-Bachs-Signature / X-Bachs-Signature-V2.");
+        console.warn("[Bachs Webhook] Invalid webhook signature. Headers received:", {
+          hasV2: Boolean(req.headers["x-bachs-signature-v2"]),
+          hasV1: Boolean(req.headers["x-bachs-signature"]),
+          hasSig: Boolean(req.headers["x-signature"]),
+          hasTs: Boolean(req.headers["x-bachs-timestamp"]),
+          contentType: req.headers["content-type"]
+        });
         return res.status(401).json({ error: "Invalid webhook signature" });
       }
-
       const eventPayload = req.body || {};
-      const eventId = String(eventPayload.id || "").trim();
-      const eventType = String(eventPayload.type || "").toLowerCase().trim();
-      const data = eventPayload.data || {};
-
+      const data = eventPayload.data && typeof eventPayload.data === "object" ? eventPayload.data : eventPayload;
+      const eventId = String(eventPayload.id || data.id || "").trim();
+      const eventType = String(
+        eventPayload.type || eventPayload.event || eventPayload.event_type || data.type || data.event || (data.status === "succeeded" || data.status === "completed" || data.payment_status === "paid" ? "collection.succeeded" : "") || ""
+      ).toLowerCase().trim();
       console.log(`[Bachs Webhook] Verified event received: id=${eventId}, type=${eventType}`);
-
-      // Handle pending or failed statuses (do NOT credit wallet, record in unmatched_payments for audit)
-      if (
-        eventType.includes("failed") || 
-        eventType.includes("pending") || 
-        data.status === "failed" || 
-        data.status === "pending" ||
-        data.charge?.status === "failed"
-      ) {
+      if (eventType.includes("failed") || eventType.includes("pending") || data.status === "failed" || data.status === "pending" || data.charge?.status === "failed") {
         const ref = String(data.id || data.reference || data.charge_id || eventId).trim();
         if (ref) {
           await supabase.from("unmatched_payments").upsert({
@@ -5153,14 +5753,14 @@ AI:`;
             amount: Number(data.amount || data.charge?.amount || 0),
             raw_payload: eventPayload,
             status: "ignored_status",
-            notes: `Ignored non-success event: ${eventType} (status: ${data.status || data.charge?.status || 'unknown'})`,
-          }, { onConflict: "reference" }).catch(() => {});
+            notes: `Ignored non-success event: ${eventType} (status: ${data.status || data.charge?.status || "unknown"})`
+          }, { onConflict: "reference" }).catch(() => {
+          });
         }
         return res.status(200).json({ received: true, status: "ignored_status", eventType });
       }
-
-      // Handle `collection.succeeded` and `checkout.completed`
-      if (eventType === "collection.succeeded" || eventType === "checkout.completed") {
+      const isSuccessEvent = eventType === "collection.succeeded" || eventType === "checkout.completed" || eventType.includes("succeeded") || eventType.includes("completed") || eventType.includes("paid") || eventType.includes("successful") || data.status === "succeeded" || data.status === "completed" || data.payment_status === "paid";
+      if (isSuccessEvent) {
         if (eventType === "checkout.completed") {
           const payStatus = String(data.payment_status || "").toLowerCase();
           const chargeStatus = String(data.charge?.status || "").toLowerCase();
@@ -5168,38 +5768,33 @@ AI:`;
             return res.status(200).json({ received: true, status: "ignored_no_payment" });
           }
         }
-
-        const chargeId = String(data.charge_id || data.charge?.id || "").trim();
-        const checkoutId = String(data.checkout_id || "").trim();
-        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId).trim();
-        const currency = String(data.currency || data.charge?.currency || "NGN").toUpperCase();
-        let amount = Number(data.amount ?? data.charge?.amount ?? 0);
-
+        const chargeId = String(data.charge_id || data.charge?.id || eventPayload.charge_id || "").trim();
+        const checkoutId = String(data.checkout_id || eventPayload.checkout_id || "").trim();
+        const reference = String(data.id || data.reference || chargeId || checkoutId || eventId || eventPayload.reference).trim();
+        const currency = String(data.currency || data.charge?.currency || eventPayload.currency || "NGN").toUpperCase();
+        let amount = Number(data.amount ?? data.charge?.amount ?? eventPayload.amount ?? 0);
         if (currency !== "NGN" || isNaN(amount) || amount <= 0) {
           return res.status(200).json({ received: true, status: "ignored_invalid_amount_or_currency" });
         }
-
-        const bankTransfer = data.payment_method_details?.bank_transfer;
-        const accountNumber = String(bankTransfer?.virtual_account?.account_number || data.account_number || "").trim();
-        const senderName = String(bankTransfer?.sender_name || "").trim();
-        const senderBank = String(bankTransfer?.sender_bank || "").trim();
-        const senderAccountNumber = String(bankTransfer?.sender_account_number || "").trim();
-        const rawNarration = String(bankTransfer?.narration || "").trim();
-
-        // Multi-tiered Matching Engine
+        const bankTransfer = data.payment_method_details?.bank_transfer || eventPayload.payment_method_details?.bank_transfer || data.bank_transfer || data;
+        const accountNumber = String(
+          bankTransfer?.virtual_account?.account_number || bankTransfer?.account_number || data.account_number || eventPayload.account_number || ""
+        ).trim();
+        const senderName = String(
+          bankTransfer?.sender_name || data.sender_name || data.customer?.name || data.customer_details?.name || ""
+        ).trim();
+        const senderBank = String(bankTransfer?.sender_bank || data.sender_bank || "").trim();
+        const senderAccountNumber = String(bankTransfer?.sender_account_number || data.sender_account_number || "").trim();
+        const rawNarration = String(
+          bankTransfer?.narration || data.narration || data.description || eventPayload.narration || eventPayload.description || ""
+        ).trim();
         let matchedProfile = null;
         let matchMethod = "";
         let candidateProfile = null;
         let candidateReason = "";
-
-        // Tier 1: Dedicated Virtual Account Match (profiles.virtual_account_number)
         if (accountNumber) {
           try {
-            const { data: vaProfiles } = await supabase
-              .from("profiles")
-              .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-              .eq("virtual_account_number", accountNumber);
-
+            const { data: vaProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").eq("virtual_account_number", accountNumber);
             if (vaProfiles && vaProfiles.length === 1) {
               matchedProfile = vaProfiles[0];
               matchMethod = "virtual_account_number";
@@ -5210,112 +5805,79 @@ AI:`;
             console.warn("[Bachs VA match error]:", e.message);
           }
         }
-
-        // Tier 2: Direct Customer Email or User ID in Webhook Metadata
         if (!matchedProfile) {
           const metaUserId = String(data.metadata?.user_id || "").trim();
           const directEmail = String(
-            data.customer?.email ||
-            data.customer_details?.email ||
-            data.metadata?.email ||
-            ""
+            data.customer?.email || data.customer_details?.email || data.metadata?.email || ""
           ).toLowerCase().trim();
-
           if (metaUserId) {
             try {
-              const { data: pById } = await supabase
-                .from("profiles")
-                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                .eq("id", ensureUUID(metaUserId))
-                .maybeSingle();
+              const { data: pById } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").eq("id", ensureUUID(metaUserId)).maybeSingle();
               if (pById) {
                 matchedProfile = pById;
                 matchMethod = "metadata_user_id";
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           } else if (directEmail && directEmail.includes("@")) {
             try {
-              const { data: pByEmail } = await supabase
-                .from("profiles")
-                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                .ilike("email", directEmail);
+              const { data: pByEmail } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").ilike("email", directEmail);
               if (pByEmail && pByEmail.length === 1) {
                 matchedProfile = pByEmail[0];
                 matchMethod = "payload_customer_email";
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           }
         }
-
-        // Tier 1.5: User Referral Code / UID in Narration
         if (!matchedProfile && rawNarration) {
           const refCodeMatch = rawNarration.match(/\b(NORODATA-[A-Z0-9]{4,12})\b/i);
           if (refCodeMatch) {
             try {
               const code = refCodeMatch[1].toUpperCase().trim();
-              const { data: codeProfiles } = await supabase
-                .from("profiles")
-                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                .ilike("referral_code", code);
+              const { data: codeProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").ilike("referral_code", code);
               if (codeProfiles && codeProfiles.length === 1) {
                 matchedProfile = codeProfiles[0];
                 matchMethod = "narration_referral_code";
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           }
         }
-
-        // Tier 3: Normalized Narration Match (Email, Truncated Domain, Nigerian Phone)
         if (!matchedProfile && rawNarration) {
-          // Strip extensive list of Nigerian bank & NIP prefixes
-          const cleanedNarration = rawNarration
-            .replace(/^(TRF|NIP|TRANSFER|DEP|DEPOSIT|FT|REF|OPAY|KUDA|PALMPAY|MONIEPOINT|ACCESS|GTB|FBN|ZENITH|UBA|STANBIC|WEMA|PROVIDUS|ECOBANK|STERLING|FCMB|KEYSTONE|UNION|JAIS|TAJ|RUBIES|VFD|CARBON|FAIRMONEY|PAYCOM|NOM)[\/\s:_-]+/i, "")
-            .trim();
-
-          // 3a. Normalized Full Email Extraction
+          const cleanedNarration = rawNarration.replace(/^(TRF|NIP|TRANSFER|DEP|DEPOSIT|FT|REF|OPAY|KUDA|PALMPAY|MONIEPOINT|ACCESS|GTB|FBN|ZENITH|UBA|STANBIC|WEMA|PROVIDUS|ECOBANK|STERLING|FCMB|KEYSTONE|UNION|JAIS|TAJ|RUBIES|VFD|CARBON|FAIRMONEY|PAYCOM|NOM)[\/\s:_-]+/i, "").trim();
           const collapsedForEmail = cleanedNarration.replace(/\s*([@.])\s*/g, "$1");
           const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
           const emailMatches = collapsedForEmail.match(emailRegex);
-
           if (emailMatches && emailMatches.length === 1) {
             const extractedEmail = emailMatches[0].toLowerCase().trim().replace(/^[<(\[]+|[>)\].,;]+$/g, "");
             try {
-              const { data: emailProfiles } = await supabase
-                .from("profiles")
-                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                .ilike("email", extractedEmail);
-
+              const { data: emailProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").ilike("email", extractedEmail);
               if (emailProfiles && emailProfiles.length === 1) {
                 matchedProfile = emailProfiles[0];
                 matchMethod = "narration_normalized_email";
               } else if (emailProfiles && emailProfiles.length > 1) {
                 candidateReason = `Ambiguous: ${emailProfiles.length} profiles have email ${extractedEmail}`;
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           }
-
-          // 3b. Truncated Email Fallback (when NIP cuts narration to 30 chars, e.g. user@gm)
           if (!matchedProfile) {
             const partialEmailMatch = collapsedForEmail.match(/([a-zA-Z0-9._%+-]{3,})@/);
             if (partialEmailMatch) {
               const userPrefix = partialEmailMatch[1].toLowerCase().trim();
               try {
-                const { data: prefixProfiles } = await supabase
-                  .from("profiles")
-                  .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                  .ilike("email", `${userPrefix}@%`);
-
+                const { data: prefixProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").ilike("email", `${userPrefix}@%`);
                 if (prefixProfiles && prefixProfiles.length === 1) {
                   matchedProfile = prefixProfiles[0];
                   matchMethod = "narration_truncated_email_prefix";
                 } else if (prefixProfiles && prefixProfiles.length > 1) {
                   candidateReason = `Ambiguous prefix: ${prefixProfiles.length} profiles start with ${userPrefix}@`;
                 }
-              } catch (_) {}
+              } catch (_) {
+              }
             }
           }
-
-          // 3c. Phone Number in Narration (handling spaces, +234, 0..., or 10-digit)
           if (!matchedProfile) {
             const collapsedForPhone = cleanedNarration.replace(/[\s-]/g, "");
             const phoneRegex = /(?:(?:\+?234)|0)?([789][01]\d{8})/g;
@@ -5325,54 +5887,40 @@ AI:`;
               const localPhone = `0${standardDigits}`;
               const intlPhone = `+234${standardDigits}`;
               try {
-                const { data: phoneProfiles } = await supabase
-                  .from("profiles")
-                  .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                  .or(`phone_number.eq.${localPhone},phone_number.eq.${intlPhone},phone_number.ilike.%${standardDigits}%`);
-
+                const { data: phoneProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").or(`phone_number.eq.${localPhone},phone_number.eq.${intlPhone},phone_number.ilike.%${standardDigits}%`);
                 if (phoneProfiles && phoneProfiles.length === 1) {
                   matchedProfile = phoneProfiles[0];
                   matchMethod = "narration_phone_number";
                 } else if (phoneProfiles && phoneProfiles.length > 1) {
                   candidateReason = `Ambiguous: ${phoneProfiles.length} profiles match phone ${localPhone}`;
                 }
-              } catch (_) {}
+              } catch (_) {
+              }
             }
           }
         }
-
-        // Tier 4: Sender Name Match (Candidate for Admin Review or Exact Match)
         if (!matchedProfile && senderName) {
           const cleanSender = senderName.trim().toUpperCase();
-          const tokens = cleanSender.split(/\s+/).filter(t => t.length > 2);
+          const tokens = cleanSender.split(/\s+/).filter((t) => t.length > 2);
           if (tokens.length >= 2) {
             try {
-              const { data: nameProfiles } = await supabase
-                .from("profiles")
-                .select("id, email, full_name, name, phone_number, wallet_balance, balance")
-                .ilike("full_name", `%${tokens[0]}%${tokens[1]}%`);
+              const { data: nameProfiles } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, wallet_balance, balance").ilike("full_name", `%${tokens[0]}%${tokens[1]}%`);
               if (nameProfiles && nameProfiles.length === 1) {
                 candidateProfile = nameProfiles[0];
                 candidateReason = `Sender name match: "${senderName}" matches profile "${candidateProfile.full_name || candidateProfile.name}"`;
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           }
         }
-
-        // Read stored AMOUNT from funding transaction to ensure fees are never credited to the wallet
         let webhookCreditAmount = amount;
         try {
-          const { data: storedTx } = await supabase
-            .from("transactions")
-            .select("amount, norodata_fee, gateway_fee, total_charged")
-            .eq("reference", reference)
-            .maybeSingle();
+          const { data: storedTx } = await supabase.from("transactions").select("amount, norodata_fee, gateway_fee, total_charged").eq("reference", reference).maybeSingle();
           if (storedTx && Number(storedTx.amount) > 0) {
             webhookCreditAmount = Number(storedTx.amount);
           }
-        } catch (_) {}
-
-        // Execution: If matched unambiguously, credit wallet atomically via RPC
+        } catch (_) {
+        }
         if (matchedProfile) {
           try {
             const { data: rpcRes, error: rpcErr } = await supabase.rpc("credit_virtual_account_deposit", {
@@ -5385,16 +5933,15 @@ AI:`;
               p_sender_bank: senderBank || null,
               p_sender_account_number: senderAccountNumber || null,
               p_narration: rawNarration || null,
-              p_raw_payload: eventPayload,
+              p_raw_payload: eventPayload
             });
-
             if (!rpcErr && rpcRes) {
               if (rpcRes.status === "already_processed") {
                 console.log(`[Bachs Webhook] Reference ${reference} already processed.`);
                 return res.status(200).json({ received: true, status: "already_processed", reference });
               }
               if (rpcRes.status === "success") {
-                console.log(`[Bachs Webhook] Credited ₦${webhookCreditAmount} to user ${matchedProfile.email} via ${matchMethod}.`);
+                console.log(`[Bachs Webhook] Credited \u20A6${webhookCreditAmount} to user ${matchedProfile.email} via ${matchMethod}.`);
                 return res.status(200).json({
                   received: true,
                   status: "credited",
@@ -5407,24 +5954,19 @@ AI:`;
           } catch (rpcEx) {
             console.warn("[credit_virtual_account_deposit RPC Exception]:", rpcEx.message);
           }
-
-          // Fallback to creditUserWalletAtomically if RPC had an issue
           const creditRes = await creditUserWalletAtomically({
             reference,
             email: matchedProfile.email,
             userId: matchedProfile.id,
             amount: webhookCreditAmount,
-            description: bankTransfer
-              ? `Wallet Deposit via Bachs Bank Transfer (${senderName || "Bank Transfer"})`
-              : `Wallet Top-Up via Bachs.io (₦${webhookCreditAmount.toLocaleString()})`,
+            description: bankTransfer ? `Wallet Deposit via Bachs Bank Transfer (${senderName || "Bank Transfer"})` : `Wallet Top-Up via Bachs.io (\u20A6${webhookCreditAmount.toLocaleString()})`,
             metadata: {
               event_id: eventId,
               event_type: eventType,
               charge_id: chargeId || null,
-              checkout_id: checkoutId || null,
-            },
+              checkout_id: checkoutId || null
+            }
           });
-
           if (creditRes.status === "success" || creditRes.status === "already_processed") {
             await supabase.from("virtual_account_payments").insert({
               reference,
@@ -5438,13 +5980,11 @@ AI:`;
               sender_account_number: senderAccountNumber || null,
               narration: rawNarration || null,
               status: "completed",
-              raw_payload: eventPayload,
-            }).catch(() => {});
-
+              raw_payload: eventPayload
+            }).catch(() => {
+            });
             return res.status(200).json({ received: true, status: creditRes.status, reference });
           }
-
-          // If even fallback failed, route to unmatched_payments
           await supabase.from("unmatched_payments").upsert({
             reference,
             event_id: eventId || null,
@@ -5457,13 +5997,11 @@ AI:`;
             raw_payload: eventPayload,
             status: "pending",
             candidate_user_id: matchedProfile.id,
-            candidate_reason: `Matched ${matchedProfile.email} but crediting failed: ${creditRes.message}`,
-          }, { onConflict: "reference" }).catch(() => {});
-
+            candidate_reason: `Matched ${matchedProfile.email} but crediting failed: ${creditRes.message}`
+          }, { onConflict: "reference" }).catch(() => {
+          });
           return res.status(200).json({ received: true, status: "unmatched_saved_for_review", reference });
         }
-
-        // UNMATCHED DEPOSIT: Save to unmatched_payments (NEVER SILENTLY DROP MONEY!)
         console.warn(`[Bachs Webhook] Deposit unmatched: ref=${reference}, amount=${amount}, sender="${senderName}", narration="${rawNarration}". Saving to unmatched_payments.`);
         await supabase.from("unmatched_payments").upsert({
           reference,
@@ -5477,11 +6015,10 @@ AI:`;
           raw_payload: eventPayload,
           status: "pending",
           candidate_user_id: candidateProfile?.id || null,
-          candidate_reason: candidateReason || null,
+          candidate_reason: candidateReason || null
         }, { onConflict: "reference" }).catch((e) => {
           console.error("[Unmatched Payments Upsert Error]:", e.message);
         });
-
         return res.status(200).json({
           received: true,
           status: "unmatched_saved_for_review",
@@ -5489,7 +6026,6 @@ AI:`;
           reason: candidateReason || "No matching user profile found from account number, email, or phone."
         });
       }
-
       return res.status(200).json({ received: true, status: "ignored", type: eventType });
     } catch (err) {
       console.error("[Bachs Webhook Exception]:", err.message || err);
@@ -5608,17 +6144,10 @@ AI:`;
       return res.status(500).json({ error: err.message });
     }
   });
-
-  // ─── Super Admin: Bachs.io Unmatched Deposits & Reconciliation ───
   app.get("/api/admin/bachs/unmatched-payments", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const { data, error } = await supabase
-        .from("unmatched_payments")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(200);
-
+      const { data, error } = await supabase.from("unmatched_payments").select("*").order("created_at", { ascending: false }).limit(200);
       if (error) throw error;
       return res.json({ success: true, payments: data || [] });
     } catch (err) {
@@ -5626,7 +6155,6 @@ AI:`;
       return res.status(500).json({ error: err.message });
     }
   });
-
   app.post("/api/admin/bachs/resolve-unmatched", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5634,16 +6162,15 @@ AI:`;
       if (!unmatchedId || !targetUserId) {
         return res.status(400).json({ error: "Missing unmatchedId or targetUserId." });
       }
-
       const adminEmail = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
       const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
       let adminUserId = null;
-
       if (token) {
         try {
           const { data: { user: authUser } } = await supabase.auth.getUser(token);
           if (authUser?.id) adminUserId = authUser.id;
-        } catch (_) {}
+        } catch (_) {
+        }
       }
       if (!adminUserId && adminEmail) {
         const { data: p } = await supabase.from("profiles").select("id").ilike("email", adminEmail).maybeSingle();
@@ -5652,29 +6179,24 @@ AI:`;
       if (!adminUserId) {
         adminUserId = targetUserId;
       }
-
       const { data: rpcRes, error: rpcErr } = await supabase.rpc("resolve_unmatched_payment", {
         p_unmatched_id: unmatchedId,
         p_target_user_id: targetUserId,
         p_admin_user_id: adminUserId,
-        p_notes: notes || null,
+        p_notes: notes || null
       });
-
       if (rpcErr) {
         throw new Error(`RPC Error: ${rpcErr.message}`);
       }
-
       if (rpcRes?.status === "error") {
         return res.status(400).json({ error: rpcRes.message || "Failed to resolve unmatched payment." });
       }
-
       return res.json(rpcRes || { success: true, message: "Payment credited successfully." });
     } catch (err) {
       console.error("[POST /api/admin/bachs/resolve-unmatched Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });
-
   app.post("/api/admin/bachs/sync-deposits", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5683,81 +6205,55 @@ AI:`;
         return res.status(503).json({ error: "Bachs secret key not configured." });
       }
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
-
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, "").trim();
       const paymentsUrl = getBachsEndpoint(baseUrl, "/v1/payments?limit=100");
       const pResp = await fetch(paymentsUrl, {
         method: "GET",
-        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" }
       });
-
       if (!pResp.ok) {
         const errBody = await pResp.json().catch(() => ({}));
         return res.status(pResp.status).json({
           error: errBody?.detail || errBody?.message || `Bachs API returned status ${pResp.status}`
         });
       }
-
       const pData = await pResp.json();
       const items = Array.isArray(pData) ? pData : Array.isArray(pData?.data) ? pData.data : Array.isArray(pData?.items) ? pData.items : [];
-
       let newlyAdded = 0;
       let alreadyCredited = 0;
-
       for (const item of items) {
         const isSuccessful = item.status === "succeeded" || item.status === "completed" || item.payment_status === "paid";
         if (!isSuccessful) continue;
-
         const ref = String(item.payment_id || item.charge_id || item.id || item.reference || "").trim();
         if (!ref) continue;
-
-        const { data: existingVa } = await supabase
-          .from("virtual_account_payments")
-          .select("reference")
-          .eq("reference", ref)
-          .maybeSingle();
-
-        const { data: existingProc } = await supabase
-          .from("processed_payments")
-          .select("reference")
-          .eq("reference", ref)
-          .maybeSingle();
-
+        const { data: existingVa } = await supabase.from("virtual_account_payments").select("reference").eq("reference", ref).maybeSingle();
+        const { data: existingProc } = await supabase.from("processed_payments").select("reference").eq("reference", ref).maybeSingle();
         if (existingVa || existingProc) {
           alreadyCredited++;
           continue;
         }
-
-        const { data: existingUnmatched } = await supabase
-          .from("unmatched_payments")
-          .select("id")
-          .eq("reference", ref)
-          .maybeSingle();
-
+        const { data: existingUnmatched } = await supabase.from("unmatched_payments").select("id").eq("reference", ref).maybeSingle();
         if (!existingUnmatched) {
           let bt = item.payment_method_details?.bank_transfer || item.payment_method?.bank_transfer;
-          
           if (!bt?.narration && (item.payment_id || item.id)) {
             try {
               const detailUrl = getBachsEndpoint(baseUrl, `/v1/payments/${encodeURIComponent(item.payment_id || item.id)}`);
               const dResp = await fetch(detailUrl, {
                 method: "GET",
-                headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+                headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" }
               });
               if (dResp.ok) {
                 const dData = await dResp.json();
                 bt = dData.payment_method_details?.bank_transfer || dData.payment_method?.bank_transfer || bt;
               }
-            } catch (_) {}
+            } catch (_) {
+            }
           }
-
           const rawNarration = String(bt?.narration || item.narration || item.description || "").trim();
           const senderName = String(bt?.sender_name || item.sender_name || item.customer?.name || "").trim();
           const rawAmount = Number(item.amount ?? item.net ?? 0);
-
           let candidateUserId = null;
           let candidateReason = null;
-
           if (rawNarration) {
             const emailMatch = rawNarration.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i);
             if (emailMatch) {
@@ -5779,9 +6275,8 @@ AI:`;
               }
             }
           }
-
           if (!candidateUserId && senderName) {
-            const tokens = senderName.split(/\s+/).filter(t => t.length > 2);
+            const tokens = senderName.split(/\s+/).filter((t) => t.length > 2);
             if (tokens.length >= 2) {
               const { data: cand } = await supabase.from("profiles").select("id, email, full_name").ilike("full_name", `%${tokens[0]}%${tokens[1]}%`).maybeSingle();
               if (cand?.id) {
@@ -5790,7 +6285,6 @@ AI:`;
               }
             }
           }
-
           await supabase.from("unmatched_payments").insert({
             reference: ref,
             event_id: item.event_id || null,
@@ -5803,25 +6297,24 @@ AI:`;
             raw_payload: item,
             status: "pending",
             candidate_user_id: candidateUserId,
-            candidate_reason: candidateReason,
-          }).catch(() => {});
+            candidate_reason: candidateReason
+          }).catch(() => {
+          });
           newlyAdded++;
         }
       }
-
       return res.json({
         success: true,
         message: `Reconciliation complete: ${items.length} payments analyzed. ${alreadyCredited} already credited, ${newlyAdded} new unmatched deposits added to review queue.`,
         totalFetched: items.length,
         alreadyCredited,
-        newlyAdded,
+        newlyAdded
       });
     } catch (err) {
       console.error("[POST /api/admin/bachs/sync-deposits Error]:", err.message);
       return res.status(500).json({ error: err.message });
     }
   });
-
   app.get("/api/admin/bachs/diagnostics", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
@@ -5831,13 +6324,12 @@ AI:`;
         return res.status(503).json({ error: "Bachs secret key not configured." });
       }
       const baseUrl = resolveBachsBaseUrl(secretKey);
-      const cleanKey = secretKey.replace(/^Bearer\s+/i, '').trim();
-
+      const cleanKey = secretKey.replace(/^Bearer\s+/i, "").trim();
       let endpoints = [];
       let endpointsError = null;
       try {
         const epResp = await fetch(getBachsEndpoint(baseUrl, "/v1/webhooks/endpoints"), {
-          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" }
         });
         if (epResp.ok) {
           const epData = await epResp.json();
@@ -5848,17 +6340,16 @@ AI:`;
       } catch (e) {
         endpointsError = e.message;
       }
-
       let virtualAccount = null;
       try {
         const vaResp = await fetch(getBachsEndpoint(baseUrl, "/v1/virtual-accounts?currency=NGN"), {
-          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${cleanKey}`, "Content-Type": "application/json" }
         });
         if (vaResp.ok) {
           virtualAccount = await vaResp.json();
         }
-      } catch (_) {}
-
+      } catch (_) {
+      }
       const safeEndpoints = endpoints.map((ep) => ({
         id: ep.id,
         url: ep.url,
@@ -5866,9 +6357,8 @@ AI:`;
         events: ep.events,
         status: ep.status,
         created_at: ep.created_at,
-        updated_at: ep.updated_at,
+        updated_at: ep.updated_at
       }));
-
       return res.json({
         gateway: "bachs",
         mode: secretKey.startsWith("sk_sandbox_") || secretKey.startsWith("sk_test_") ? "sandbox" : "live",
@@ -5882,9 +6372,9 @@ AI:`;
           account_number: virtualAccount.account_number,
           bank_name: virtualAccount.bank_name,
           account_name: virtualAccount.account_name,
-          status: virtualAccount.status,
+          status: virtualAccount.status
         } : null,
-        timestamp: new Date().toISOString(),
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     } catch (err) {
       console.error("[GET /api/admin/bachs/diagnostics Error]:", err.message);
@@ -5896,8 +6386,17 @@ AI:`;
     if (!authUser) return;
     try {
       const userId = authUser.id;
-      const { data: profile, error: profErr } = await supabase.from("profiles").select("id, wallet_balance, balance, available_balance, updated_at").eq("id", userId).maybeSingle();
+      const { data: profile, error: profErr } = await supabase.from("profiles").select("id, email, full_name, name, phone_number, referral_code, wallet_balance, balance, available_balance, updated_at").eq("id", userId).maybeSingle();
       if (profErr) throw new Error(profErr.message);
+      if (profile && !profile.referral_code) {
+        const generatedCode = `NORODATA-${String(userId).replace(/-/g, "").substring(0, 6).toUpperCase()}`;
+        try {
+          await supabase.from("profiles").update({ referral_code: generatedCode }).eq("id", userId);
+          profile.referral_code = generatedCode;
+        } catch (_) {
+          profile.referral_code = generatedCode;
+        }
+      }
       const { data: recent, error: txErr } = await supabase.from("transactions").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(10);
       if (txErr) console.warn("[Wallet Snapshot] transactions warning:", txErr.message);
       return res.json({
@@ -5922,6 +6421,96 @@ AI:`;
     } catch (err) {
       console.error("[Wallet Transactions Error]:", err.message);
       return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/wallet/lookup-recipient", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const rawPhone = String(req.body?.phone || req.body?.query || "").trim();
+      if (!rawPhone) {
+        return res.status(400).json({ error: "Please enter recipient phone number." });
+      }
+      const normalized = normalizeNigerianPhone(rawPhone);
+      if (!normalized || normalized.length < 10) {
+        return res.status(400).json({ error: "Please enter a valid Nigerian phone number." });
+      }
+      const { data: matchedRows, error: lookupErr } = await supabase.from("profiles").select("id, full_name, name, email, phone_number").or(`phone_number.eq.${pgSafeFilter(normalized)},phone_number.eq.0${pgSafeFilter(normalized.slice(3))},phone_number.eq.+${pgSafeFilter(normalized)}`).limit(2);
+      const recipient = matchedRows && matchedRows.length > 0 ? matchedRows[0] : null;
+      if (lookupErr || !recipient) {
+        return res.status(404).json({ error: "No NORODATA account uses this number." });
+      }
+      if (String(recipient.id) === String(authUser.id)) {
+        return res.status(400).json({ error: "You cannot transfer money to your own wallet." });
+      }
+      const displayName = recipient.full_name || recipient.name || (recipient.email ? recipient.email.split("@")[0] : "NORODATA User");
+      return res.json({
+        recipient: {
+          id: recipient.id,
+          display_name: displayName
+        }
+      });
+    } catch (err) {
+      console.error("[Wallet Lookup Recipient Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to look up recipient." });
+    }
+  });
+  app.post("/api/wallet/transfer", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const senderId = authUser.id;
+      const recipientId = String(req.body?.recipientId || req.body?.recipient_uid || "").trim();
+      const rawAmount = Number(req.body?.amount ?? req.body?.p_amount ?? 0);
+      const transferKey = String(req.body?.transferKey || req.body?.transfer_key || "").trim();
+      const note = String(req.body?.note ?? req.body?.p_note ?? "").trim();
+      if (!recipientId) {
+        return res.status(400).json({ status: "error", error: "Recipient ID is required." });
+      }
+      if (recipientId === senderId) {
+        return res.status(400).json({ status: "error", error: "You cannot transfer money to yourself." });
+      }
+      if (!Number.isFinite(rawAmount) || rawAmount < 100) {
+        return res.status(400).json({ status: "error", error: "Minimum transfer amount is \u20A6100.00." });
+      }
+      if (!transferKey) {
+        return res.status(400).json({ status: "error", error: "Unique transfer key is required for idempotency." });
+      }
+      const amount = Number(rawAmount.toFixed(2));
+      const { data: senderProf } = await supabase.from("profiles").select("phone_number, wallet_balance").eq("id", senderId).maybeSingle();
+      if (!senderProf?.phone_number) {
+        return res.status(400).json({
+          status: "error",
+          error: "You must add a phone number to your profile before you can send wallet transfers."
+        });
+      }
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc("execute_wallet_transfer_v2", {
+        p_sender_id: senderId,
+        p_recipient_id: recipientId,
+        p_amount: amount,
+        p_transfer_key: transferKey,
+        p_note: note || null
+      });
+      if (rpcErr) {
+        console.error("[Wallet Transfer RPC Error]:", rpcErr.message);
+        return res.status(500).json({ status: "error", error: rpcErr.message || "Failed to execute transfer." });
+      }
+      if (rpcRes.status !== "success") {
+        return res.status(rpcRes.status === "insufficient_funds" ? 400 : 500).json(rpcRes);
+      }
+      return res.json({
+        status: "success",
+        amount: rpcRes.amount,
+        fee: rpcRes.fee,
+        total_debited: rpcRes.total_debited,
+        reference: rpcRes.reference,
+        recipient_name: rpcRes.recipient_name,
+        newBalance: rpcRes.new_balance,
+        message: `\u20A6${amount.toLocaleString()} sent successfully to ${rpcRes.recipient_name || "recipient"}.`
+      });
+    } catch (err) {
+      console.error("[Wallet Transfer Endpoint Error]:", err.message);
+      return res.status(500).json({ status: "error", error: err.message || "Transfer processing failed." });
     }
   });
   app.get("/api/admin/users", async (req, res) => {
@@ -6109,7 +6698,7 @@ AI:`;
   app.get("/api/admin/mozosubz-status", async (req, res) => {
     if (!await requireAdmin(req, res)) return;
     try {
-      const MOZOSUBZ_SERVICES = [
+      const MOZOSUBZ_SERVICES3 = [
         { id: "mtn_sme", label: "MTN SME" },
         { id: "mtn_datashare", label: "MTN DataShare" },
         { id: "mtn_gifting", label: "MTN Gifting" },
@@ -6127,7 +6716,7 @@ AI:`;
       const checkOne = async (svc) => {
         const start = Date.now();
         try {
-          const resp = await axios2.get(`${base}/data/plans`, {
+          const resp = await axios3.get(`${base}/data/plans`, {
             params: { service: svc.id },
             headers: { "X-Connect-Key": apiKey2 },
             timeout: 8e3,
@@ -6149,7 +6738,7 @@ AI:`;
           return { ...svc, status: isTimeout ? "timeout" : "error", httpStatus: e.response?.status || 0, latencyMs: latency, message: e.message };
         }
       };
-      const results = await Promise.all(MOZOSUBZ_SERVICES.map(checkOne));
+      const results = await Promise.all(MOZOSUBZ_SERVICES3.map(checkOne));
       const healthy = results.filter((r) => r.status === "ok").length;
       const dbStart = Date.now();
       let dbStatus = "ok";
@@ -6160,9 +6749,9 @@ AI:`;
       }
       const dbLatency = Date.now() - dbStart;
       return res.json({
-        summary: `${healthy}/${MOZOSUBZ_SERVICES.length} services healthy`,
+        summary: `${healthy}/${MOZOSUBZ_SERVICES3.length} services healthy`,
         healthyCount: healthy,
-        totalCount: MOZOSUBZ_SERVICES.length,
+        totalCount: MOZOSUBZ_SERVICES3.length,
         services: results,
         supabase: { status: dbStatus, latencyMs: dbLatency },
         checkedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -6269,14 +6858,19 @@ AI:`;
         const MOZO_BASE = "https://mozosubz.xyz/api/v1";
         const MOZO_SERVICES = [
           { id: "mtn_sme", network: "MTN", plan_type: "SME" },
+          { id: "mtn_cg", network: "MTN", plan_type: "CG" },
           { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
           { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
           { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
           { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
+          { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
           { id: "glo_sme", network: "GLO", plan_type: "SME" },
+          { id: "glo_cg", network: "GLO", plan_type: "CG" },
           { id: "glo_data", network: "GLO", plan_type: "DATA" },
           { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
+          { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
           { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
+          { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
           { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
         ];
         if (CONNECT_KEY && CONNECT_KEY.length > 5 && !CONNECT_KEY.includes("PASTE_YOUR")) {
@@ -6357,11 +6951,18 @@ AI:`;
             updated_at: (/* @__PURE__ */ new Date()).toISOString()
           };
         });
+        const uniqueById = /* @__PURE__ */ new Map();
+        for (const row of rowsToUpsert) {
+          const key = String(row.bigisub_identifier_id || "").trim();
+          if (key) uniqueById.set(key, row);
+        }
+        const dedupedRowsToUpsert = Array.from(uniqueById.values());
         const db = getScopedSupabaseClient(req.headers.authorization);
-        for (let i = 0; i < rowsToUpsert.length; i += 50) {
-          const chunk = rowsToUpsert.slice(i, i + 50);
+        for (let i = 0; i < dedupedRowsToUpsert.length; i += 50) {
+          const chunk = dedupedRowsToUpsert.slice(i, i + 50);
           const { error } = await db.from("services_config").upsert(chunk, { onConflict: "bigisub_identifier_id" });
           if (!error) publishedCount += chunk.length;
+          else console.warn("[fetch-all-providers-plans chunk upsert error]:", error.message);
         }
       }
       return res.json({
@@ -6562,17 +7163,161 @@ AI:`;
     }
   } catch (_) {
   }
-  const saveEsimInquiries = () => {
+  const loadEsimInquiriesStore = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_inquiries_store_v2").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          serverEsimInquiries = parsed;
+          return serverEsimInquiries;
+        }
+      }
+    } catch (_) {
+    }
+    return serverEsimInquiries;
+  };
+  const saveEsimInquiries = async (inquiriesToSave) => {
+    if (Array.isArray(inquiriesToSave)) {
+      serverEsimInquiries = inquiriesToSave;
+    }
     try {
       const dataDir = path.join(process.cwd(), ".data");
       if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
       fs.writeFileSync(path.join(dataDir, "esim_inquiries.json"), JSON.stringify(serverEsimInquiries, null, 2));
     } catch (_) {
     }
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "esim_inquiries_store_v2",
+        secret: JSON.stringify(serverEsimInquiries),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.warn("[saveEsimInquiries Supabase warning]:", err?.message || err);
+    }
   };
+  let serverEsimPlans = [];
+  try {
+    const dataDir = path.join(process.cwd(), ".data");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const plansFile = path.join(dataDir, "esim_plans.json");
+    if (fs.existsSync(plansFile)) {
+      serverEsimPlans = JSON.parse(fs.readFileSync(plansFile, "utf-8"));
+    }
+  } catch (_) {
+  }
+  const loadEsimPlansStore = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "esim_plans_store_v1").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          serverEsimPlans = parsed.filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
+          return serverEsimPlans;
+        }
+      }
+    } catch (_) {
+    }
+    serverEsimPlans = (serverEsimPlans || []).filter((p) => !["us-5gb", "us-10gb", "uk-10gb", "global-5gb"].includes(p?.id));
+    return serverEsimPlans;
+  };
+  const saveEsimPlans = async (plansToSave) => {
+    serverEsimPlans = plansToSave;
+    try {
+      const dataDir = path.join(process.cwd(), ".data");
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "esim_plans.json"), JSON.stringify(serverEsimPlans, null, 2));
+    } catch (_) {
+    }
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "esim_plans_store_v1",
+        secret: JSON.stringify(serverEsimPlans),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.warn("[saveEsimPlans warning]:", err?.message || err);
+    }
+  };
+  app.get("/api/esim/plans", async (_req, res) => {
+    try {
+      const plans = await loadEsimPlansStore();
+      return res.json({ plans });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/esim/plans", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const {
+        title,
+        country = "International",
+        flag = "\u{1F310}",
+        data_amount = "5GB",
+        duration = "30 Days",
+        numericPrice,
+        price,
+        carrier = "Standard Network",
+        desc = "Instant QR Activation"
+      } = req.body || {};
+      if (!title || !numericPrice || Number(numericPrice) <= 0) {
+        return res.status(400).json({ error: "Title and a positive numeric price are required." });
+      }
+      const numPrice = Number(numericPrice);
+      const formattedPrice = price || `\u20A6${numPrice.toLocaleString()}`;
+      const plans = await loadEsimPlansStore();
+      const newPlan = {
+        id: `esim-plan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        title: String(title).trim(),
+        country: String(country).trim(),
+        flag: String(flag || "\u{1F310}").trim(),
+        data_amount: String(data_amount).trim(),
+        duration: String(duration).trim(),
+        numericPrice: numPrice,
+        price: formattedPrice,
+        carrier: String(carrier).trim(),
+        desc: String(desc).trim(),
+        status: "available",
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      plans.unshift(newPlan);
+      await saveEsimPlans(plans);
+      return res.json({ success: true, plan: newPlan });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.delete("/api/esim/plans/:id", async (req, res) => {
+    if (!await requireEsimAdmin(req, res)) return;
+    try {
+      const { id } = req.params;
+      const plans = await loadEsimPlansStore();
+      const filtered = plans.filter((p) => p.id !== id);
+      await saveEsimPlans(filtered);
+      return res.json({ success: true, plans: filtered });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
   app.get("/api/esim/inquiries", async (req, res) => {
     if (!await requireEsimAdmin(req, res)) return;
-    return res.json({ inquiries: serverEsimInquiries });
+    const inquiries = await loadEsimInquiriesStore();
+    return res.json({ inquiries });
+  });
+  app.get("/api/esim/inquiries/my", async (req, res) => {
+    try {
+      const userId = String(req.query.userId || "").trim();
+      const email = String(req.query.email || "").toLowerCase().trim();
+      const inquiries = await loadEsimInquiriesStore();
+      const mine = inquiries.filter(
+        (i) => email && String(i.user_email || "").toLowerCase().trim() === email || userId && userId !== "visitor" && String(i.user_id) === userId
+      );
+      return res.json({ inquiries: mine });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
   });
   app.post("/api/esim/inquiries", async (req, res) => {
     try {
@@ -6581,31 +7326,52 @@ AI:`;
         user_name = "Customer",
         user_email = "",
         user_phone = "",
-        package_id = "us-5gb",
-        package_label = "USA 5GB eSIM",
-        package_price = "\u20A68,500",
-        destination_country = "United States",
+        package_id = "custom",
+        package_label = "International eSIM Request",
+        package_price = "\u20A60",
+        destination_country = "International",
         device_model = "Smartphone",
-        message = ""
+        message = "",
+        check_balance = false
       } = req.body;
-      const newMsg = {
-        id: `msg-${Date.now()}`,
-        sender: "user",
-        text: String(message || "Inquiry initiated").trim(),
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      const existingIdx = serverEsimInquiries.findIndex(
-        (i) => user_email && i.user_email === user_email || user_id !== "visitor" && i.user_id === user_id
+      const inquiries = await loadEsimInquiriesStore();
+      const numericPrice = Number(String(package_price || "").replace(/[^\d.]/g, "")) || 0;
+      let buyerBalance = 0;
+      if (user_id && user_id !== "visitor") {
+        const { data: prof } = await supabase.from("profiles").select("wallet_balance, balance").eq("id", user_id).maybeSingle();
+        buyerBalance = Number(prof?.wallet_balance ?? prof?.balance ?? 0);
+      }
+      const existingIdx = inquiries.findIndex(
+        (i) => user_email && String(i.user_email || "").toLowerCase().trim() === String(user_email).toLowerCase().trim() || user_id !== "visitor" && i.user_id === user_id
       );
+      if (check_balance && numericPrice > 0 && buyerBalance < numericPrice) {
+        return res.status(400).json({
+          error: `Insufficient Balance! This eSIM (${package_label}) costs \u20A6${numericPrice.toLocaleString()}, but your wallet balance is \u20A6${buyerBalance.toLocaleString()}. Please fund your wallet before requesting to buy.`,
+          code: "INSUFFICIENT_BALANCE",
+          required: numericPrice,
+          balance: buyerBalance
+        });
+      }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const newMsg = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        sender: "user",
+        sender_name: user_name || "Customer",
+        sender_email: user_email || "",
+        text: String(message || "Inquiry initiated").trim(),
+        created_at: nowIso
+      };
       let inquiryObj;
       if (existingIdx >= 0) {
-        serverEsimInquiries[existingIdx].messages.push(newMsg);
-        serverEsimInquiries[existingIdx].last_message = newMsg.text;
-        serverEsimInquiries[existingIdx].last_message_at = newMsg.created_at;
-        serverEsimInquiries[existingIdx].updated_at = (/* @__PURE__ */ new Date()).toISOString();
-        if (device_model) serverEsimInquiries[existingIdx].device_model = device_model;
-        if (package_label) serverEsimInquiries[existingIdx].package_label = package_label;
-        inquiryObj = serverEsimInquiries[existingIdx];
+        if (!Array.isArray(inquiries[existingIdx].messages)) inquiries[existingIdx].messages = [];
+        inquiries[existingIdx].messages.push(newMsg);
+        inquiries[existingIdx].last_message = newMsg.text;
+        inquiries[existingIdx].last_message_at = newMsg.created_at;
+        inquiries[existingIdx].updated_at = nowIso;
+        if (device_model) inquiries[existingIdx].device_model = device_model;
+        if (package_label) inquiries[existingIdx].package_label = package_label;
+        if (package_price) inquiries[existingIdx].package_price = package_price;
+        inquiryObj = inquiries[existingIdx];
       } else {
         inquiryObj = {
           id: `inq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -6619,15 +7385,15 @@ AI:`;
           destination_country,
           device_model,
           status: "pending",
-          created_at: (/* @__PURE__ */ new Date()).toISOString(),
-          updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+          created_at: nowIso,
+          updated_at: nowIso,
           last_message: newMsg.text,
           last_message_at: newMsg.created_at,
           messages: [newMsg]
         };
-        serverEsimInquiries.unshift(inquiryObj);
+        inquiries.unshift(inquiryObj);
       }
-      saveEsimInquiries();
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry: inquiryObj });
     } catch (err) {
       console.error("[POST /api/esim/inquiries Error]:", err);
@@ -6638,29 +7404,32 @@ AI:`;
     try {
       const { id } = req.params;
       const { text, sender = "admin", sender_name = "eSIM Desk", sender_email = "jeffholland299@gmail.com", activation_code } = req.body;
-      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      const inquiries = await loadEsimInquiriesStore();
+      const inquiry = inquiries.find((i) => i.id === id);
       if (!inquiry) {
         return res.status(404).json({ error: "eSIM inquiry not found" });
       }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       const msg = {
-        id: `msg-${Date.now()}`,
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         sender,
         sender_name,
         sender_email,
         text: String(text || "").trim(),
         activation_code: activation_code || void 0,
         has_qr: Boolean(activation_code),
-        created_at: (/* @__PURE__ */ new Date()).toISOString()
+        created_at: nowIso
       };
+      if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
       inquiry.messages.push(msg);
       inquiry.last_message = msg.text;
       inquiry.last_message_at = msg.created_at;
-      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+      inquiry.updated_at = nowIso;
       if (activation_code) inquiry.activation_code = activation_code;
       if (sender === "admin" && inquiry.status === "pending") {
         inquiry.status = "in_progress";
       }
-      saveEsimInquiries();
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -6671,14 +7440,988 @@ AI:`;
     try {
       const { id } = req.params;
       const { status } = req.body;
-      const inquiry = serverEsimInquiries.find((i) => i.id === id);
+      const inquiries = await loadEsimInquiriesStore();
+      const inquiry = inquiries.find((i) => i.id === id);
       if (!inquiry) return res.status(404).json({ error: "eSIM inquiry not found" });
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const numericPrice = Number(String(inquiry.package_price || "").replace(/[^\d.]/g, "")) || 0;
+      if (status === "completed" && !inquiry.payment_debited && numericPrice > 0 && inquiry.user_id && inquiry.user_id !== "visitor") {
+        const { data: buyerProf } = await supabase.from("profiles").select("id, email, wallet_balance, balance").eq("id", inquiry.user_id).maybeSingle();
+        const currentBal = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
+        if (currentBal < numericPrice) {
+          return res.status(400).json({
+            error: `Insufficient Balance! Customer wallet has \u20A6${currentBal.toLocaleString()}, required \u20A6${numericPrice.toLocaleString()}.`,
+            code: "INSUFFICIENT_BALANCE"
+          });
+        }
+        const newBal = Number((currentBal - numericPrice).toFixed(2));
+        const paymentRef = `ESIM-DEAL-${Date.now()}`;
+        await supabase.from("profiles").update({
+          wallet_balance: newBal,
+          balance: newBal,
+          available_balance: newBal,
+          updated_at: nowIso
+        }).eq("id", inquiry.user_id);
+        try {
+          await supabase.from("transactions").insert({
+            user_id: String(inquiry.user_id),
+            user_email: buyerProf?.email || inquiry.user_email || null,
+            type: "esim",
+            amount: numericPrice,
+            status: "completed",
+            reference: paymentRef,
+            description: `eSIM Purchase: ${inquiry.package_label || "International eSIM"}`,
+            gateway: "wallet_auto_debit",
+            created_at: nowIso
+          });
+        } catch (_) {
+        }
+        inquiry.payment_debited = true;
+        inquiry.payment_reference = paymentRef;
+        if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
+        inquiry.messages.push({
+          id: `msg-${Date.now()}-done`,
+          sender: "admin",
+          sender_name: "NORODATA eSIM Desk",
+          text: `\u{1F389} eSIM DEAL COMPLETED! \u20A6${numericPrice.toLocaleString()} has been automatically debited from your wallet (Ref: ${paymentRef}).`,
+          created_at: nowIso
+        });
+      }
       inquiry.status = status;
-      inquiry.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      saveEsimInquiries();
+      inquiry.updated_at = nowIso;
+      await saveEsimInquiries(inquiries);
       return res.json({ success: true, inquiry });
     } catch (err) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+  const MARKETPLACE_CATEGORIES = [
+    { id: "cat-us-phone", name: "US Phone Numbers", description: "American phone numbers for verification and calls", icon: "\u{1F1FA}\u{1F1F8}", type: "foreign_number" },
+    { id: "cat-uk-phone", name: "UK Phone Numbers", description: "British phone numbers for verification and calls", icon: "\u{1F1EC}\u{1F1E7}", type: "foreign_number" },
+    { id: "cat-ca-phone", name: "Canada Phone Numbers", description: "Canadian phone numbers for verification and calls", icon: "\u{1F1E8}\u{1F1E6}", type: "foreign_number" },
+    { id: "cat-ig-acc", name: "Instagram Accounts", description: "Verified Instagram accounts with active followers", icon: "\u{1F4F7}", type: "social_account" },
+    { id: "cat-tt-acc", name: "TikTok Accounts", description: "TikTok accounts with active followers and high engagement", icon: "\u{1F3B5}", type: "social_account" },
+    { id: "cat-x-acc", name: "Twitter/X Accounts", description: "Twitter/X verified accounts and pages", icon: "\u{1D54F}", type: "social_account" },
+    { id: "cat-snap-acc", name: "Snapchat Accounts", description: "Snapchat accounts with high score and active contacts", icon: "\u{1F47B}", type: "social_account" },
+    { id: "cat-fb-acc", name: "Facebook Accounts", description: "Facebook pages, groups, and aged accounts", icon: "\u{1F44D}", type: "social_account" }
+  ];
+  const SEEDED_FOREIGN_NUMBER_LISTINGS = [];
+  const CORE_MARKETPLACE_ADMIN_EMAILS = [
+    ADMIN_EMAIL.toLowerCase().trim(),
+    "ibrahimfaruqolamilekan4@gmail.com",
+    "adewaleogunkeye200@gmail.com",
+    "jeffholland299@gmail.com",
+    "triumphanttosin@gmail.com"
+  ].filter(Boolean);
+  const RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS = [
+    "jeffholland299@gmail.com",
+    "triumphanttosin@gmail.com"
+  ];
+  let memoryMarketplaceAdmins = [...new Set(CORE_MARKETPLACE_ADMIN_EMAILS)];
+  const loadMarketplaceAdmins = async () => {
+    try {
+      const { data } = await supabase.from("provider_secrets").select("secret").eq("identifier", "marketplace_admins_store_v2").maybeSingle();
+      if (data?.secret) {
+        const parsed = JSON.parse(data.secret);
+        if (Array.isArray(parsed)) {
+          memoryMarketplaceAdmins = Array.from(/* @__PURE__ */ new Set([
+            ...CORE_MARKETPLACE_ADMIN_EMAILS,
+            ...parsed.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
+          ]));
+        }
+      }
+    } catch (_) {
+    }
+    return memoryMarketplaceAdmins;
+  };
+  const saveMarketplaceAdmins = async (emails) => {
+    const normalized = Array.from(/* @__PURE__ */ new Set([
+      ...CORE_MARKETPLACE_ADMIN_EMAILS,
+      ...emails.map((e) => String(e || "").toLowerCase().trim()).filter(Boolean)
+    ]));
+    memoryMarketplaceAdmins = normalized;
+    try {
+      await supabase.from("provider_secrets").upsert({
+        identifier: "marketplace_admins_store_v2",
+        secret: JSON.stringify(normalized),
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (_) {
+    }
+    for (const email of normalized) {
+      try {
+        await supabase.from("profiles").update({ role: "admin" }).ilike("email", email);
+      } catch (_) {
+      }
+    }
+    return normalized;
+  };
+  saveMarketplaceAdmins(CORE_MARKETPLACE_ADMIN_EMAILS).catch(() => {
+  });
+  const isCallerAdminUser = async (req, authUser) => {
+    const allowedAdmins = await loadMarketplaceAdmins();
+    const headerEmail = String(req.headers["x-admin-email"] || "").toLowerCase().trim();
+    const userEmail = String(authUser?.email || headerEmail || "").toLowerCase().trim();
+    if (userEmail && allowedAdmins.includes(userEmail)) return true;
+    if (authUser?.user_metadata?.role === "admin") return true;
+    if (authUser?.id) {
+      try {
+        const { data: prof } = await supabase.from("profiles").select("role, email").eq("id", authUser.id).maybeSingle();
+        if (prof?.role === "admin") return true;
+        if (prof?.email && allowedAdmins.includes(String(prof.email).toLowerCase().trim())) return true;
+      } catch (_) {
+      }
+    }
+    return false;
+  };
+  app.get("/api/marketplace/admins", async (req, res) => {
+    try {
+      let authUser = null;
+      const authHeader = String(req.headers.authorization || "");
+      if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice(7).trim();
+        const { data } = await supabase.auth.getUser(token);
+        authUser = data?.user || null;
+      }
+      const admins = await loadMarketplaceAdmins();
+      const isCallerAdmin = await isCallerAdminUser(req, authUser);
+      return res.json({ admins, isCallerAdmin });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/admins/promote", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
+        return res.status(403).json({ error: "Only the platform Super Admin can promote new Admin emails." });
+      }
+      const emailToPromote = String(req.body?.email || "").toLowerCase().trim();
+      if (!emailToPromote || !emailToPromote.includes("@")) {
+        return res.status(400).json({ error: "Please enter a valid email address to promote." });
+      }
+      const currentAdmins = await loadMarketplaceAdmins();
+      const updatedAdmins = await saveMarketplaceAdmins([...currentAdmins, emailToPromote]);
+      return res.json({
+        success: true,
+        email: emailToPromote,
+        admins: updatedAdmins,
+        message: `${emailToPromote} has been promoted to Foreign Number & Marketplace Admin!`
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || "Failed to promote email." });
+    }
+  });
+  app.delete("/api/marketplace/admins/:email", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const callerEmail = String(authUser?.email || "").toLowerCase().trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      if (!isAdmin || RESTRICTED_FOREIGN_NUMBER_ONLY_EMAILS.includes(callerEmail)) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      const targetEmail = decodeURIComponent(String(req.params.email || "")).toLowerCase().trim();
+      if (CORE_MARKETPLACE_ADMIN_EMAILS.includes(targetEmail)) {
+        return res.status(400).json({ error: "Core platform admin email cannot be demoted." });
+      }
+      const currentAdmins = await loadMarketplaceAdmins();
+      const filtered = currentAdmins.filter((e) => e !== targetEmail);
+      const updatedAdmins = await saveMarketplaceAdmins(filtered);
+      try {
+        await supabase.from("profiles").update({ role: "user" }).ilike("email", targetEmail);
+      } catch (_) {
+      }
+      return res.json({ success: true, admins: updatedAdmins });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  let memoryMarketplaceListings = null;
+  let memoryMarketplaceOrders = null;
+  try {
+    const dataDir = path.join(process.cwd(), ".data");
+    const mpFile = path.join(dataDir, "marketplace_store.json");
+    if (fs.existsSync(mpFile)) {
+      const parsed = JSON.parse(fs.readFileSync(mpFile, "utf-8"));
+      if (Array.isArray(parsed?.listings)) memoryMarketplaceListings = parsed.listings;
+      if (Array.isArray(parsed?.orders)) memoryMarketplaceOrders = parsed.orders;
+    }
+  } catch (_) {
+  }
+  const loadMarketplaceStore = async () => {
+    try {
+      const { data: rows } = await supabase.from("provider_secrets").select("identifier, secret").in("identifier", ["marketplace_listings_store_v2", "marketplace_orders_store_v2"]);
+      let listings = null;
+      let orders = null;
+      if (rows && rows.length > 0) {
+        for (const r of rows) {
+          if (r.identifier === "marketplace_listings_store_v2" && r.secret) {
+            try {
+              listings = JSON.parse(r.secret);
+            } catch (_) {
+            }
+          }
+          if (r.identifier === "marketplace_orders_store_v2" && r.secret) {
+            try {
+              orders = JSON.parse(r.secret);
+            } catch (_) {
+            }
+          }
+        }
+      }
+      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
+      if (Array.isArray(listings)) {
+        listings = listings.filter((l) => !legacyIds.has(String(l?.id)));
+      } else {
+        listings = [];
+      }
+      if (Array.isArray(memoryMarketplaceListings)) {
+        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
+      }
+      if (!Array.isArray(orders)) {
+        orders = memoryMarketplaceOrders || [];
+      }
+      memoryMarketplaceListings = listings;
+      memoryMarketplaceOrders = orders;
+      return { listings, orders };
+    } catch (_) {
+      const legacyIds = /* @__PURE__ */ new Set(["num-us-clean", "num-uk-clean", "num-ca-clean", "acc-ig-aged"]);
+      if (Array.isArray(memoryMarketplaceListings)) {
+        memoryMarketplaceListings = memoryMarketplaceListings.filter((l) => !legacyIds.has(String(l?.id)));
+      } else {
+        memoryMarketplaceListings = [];
+      }
+      if (!memoryMarketplaceOrders) memoryMarketplaceOrders = [];
+      return { listings: memoryMarketplaceListings, orders: memoryMarketplaceOrders };
+    }
+  };
+  const saveMarketplaceStore = async (listings, orders) => {
+    memoryMarketplaceListings = listings;
+    memoryMarketplaceOrders = orders;
+    try {
+      const dataDir = path.join(process.cwd(), ".data");
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dataDir, "marketplace_store.json"),
+        JSON.stringify({ listings, orders, updated_at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)
+      );
+    } catch (_) {
+    }
+    try {
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      await supabase.from("provider_secrets").upsert([
+        {
+          identifier: "marketplace_listings_store_v2",
+          secret: JSON.stringify(listings),
+          updated_at: nowIso
+        },
+        {
+          identifier: "marketplace_orders_store_v2",
+          secret: JSON.stringify(orders),
+          updated_at: nowIso
+        }
+      ]);
+    } catch (err) {
+      console.warn("[Marketplace Store Save Warning]:", err.message);
+    }
+  };
+  app.get("/api/marketplace/categories", async (_req, res) => {
+    return res.json({ categories: MARKETPLACE_CATEGORIES });
+  });
+  app.get("/api/marketplace/listings", async (req, res) => {
+    try {
+      const { listings } = await loadMarketplaceStore();
+      const category = String(req.query.category || "all").trim();
+      const type = String(req.query.type || "all").trim();
+      const search = String(req.query.search || "").trim().toLowerCase();
+      const includeSold = req.query.includeSold === "true";
+      let result = listings.filter((item) => includeSold || item.status === "available");
+      if (category && category !== "all") {
+        result = result.filter((item) => item.category_id === category);
+      }
+      if (type && type !== "all") {
+        result = result.filter((item) => item.marketplace_categories?.type === type);
+      }
+      if (search) {
+        result = result.filter(
+          (item) => String(item.title || "").toLowerCase().includes(search) || String(item.description || "").toLowerCase().includes(search) || String(item.product_details?.phone_number || item.product_details?.item_identifier || "").toLowerCase().includes(search)
+        );
+      }
+      return res.json({ listings: result });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/listings", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { categoryId, title, description, price, productDetails, imageUrl } = req.body || {};
+      const cat = MARKETPLACE_CATEGORIES.find((c) => c.id === categoryId) || MARKETPLACE_CATEGORIES[0];
+      const isForeignNumber = cat.type === "foreign_number";
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      if (isForeignNumber && !isAdmin) {
+        return res.status(403).json({
+          error: "Only the platform Admin can post foreign numbers for sale."
+        });
+      }
+      const numPrice = Number(price);
+      if (!title || !Number.isFinite(numPrice) || numPrice <= 0) {
+        return res.status(400).json({ error: "Valid title and selling price are required." });
+      }
+      const { data: sellerProf } = await supabase.from("profiles").select("full_name, name, email").eq("id", authUser.id).maybeSingle();
+      const sellerDisplayName = isForeignNumber ? "NORODATA Official Admin" : sellerProf?.full_name || sellerProf?.name || authUser.email?.split("@")[0] || "Verified Seller";
+      const newListing = {
+        id: `lst-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        seller_id: isForeignNumber ? "admin" : authUser.id,
+        created_by_id: authUser.id,
+        created_by_email: authUser.email || sellerProf?.email || "",
+        category_id: cat.id,
+        title: String(title).trim(),
+        description: String(description || "").trim(),
+        price: numPrice,
+        product_details: productDetails || {},
+        image_url: imageUrl || null,
+        status: "available",
+        views: 1,
+        is_admin_listing: isForeignNumber || isAdmin,
+        created_at: (/* @__PURE__ */ new Date()).toISOString(),
+        marketplace_categories: {
+          name: cat.name,
+          icon: cat.icon,
+          type: cat.type
+        },
+        profiles: {
+          full_name: sellerDisplayName,
+          name: sellerDisplayName,
+          marketplace_seller_rating: 5,
+          marketplace_seller_reviews: 100
+        }
+      };
+      const { listings, orders } = await loadMarketplaceStore();
+      listings.unshift(newListing);
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ listing: newListing });
+    } catch (err) {
+      console.error("[POST /api/marketplace/listings Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to create listing." });
+    }
+  });
+  app.delete("/api/marketplace/listings/:id", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const idx = listings.findIndex((l) => l.id === id);
+      if (idx === -1) return res.status(404).json({ error: "Listing not found." });
+      const target = listings[idx];
+      if (!isAdmin && target.seller_id !== authUser.id && target.created_by_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden: you can only delete your own listings." });
+      }
+      listings.splice(idx, 1);
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/orders/initiate", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const buyerId = authUser.id;
+      const { listingId, listingSnapshot } = req.body || {};
+      if (!listingId) return res.status(400).json({ error: "listingId is required." });
+      const { listings, orders } = await loadMarketplaceStore();
+      let listing = listings.find((l) => l.id === listingId) || listingSnapshot;
+      if (!listing) {
+        return res.status(404).json({ error: "Listing not found." });
+      }
+      const isForeignNumber = listing.marketplace_categories?.type === "foreign_number" || String(listing.category_id || "").includes("phone") || listing.is_admin_listing;
+      const { data: buyerProf } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", buyerId).maybeSingle();
+      const buyerName = buyerProf?.full_name || buyerProf?.name || authUser.email?.split("@")[0] || "Buyer";
+      const buyerEmail = buyerProf?.email || authUser.email || "";
+      const buyerBalance = Number(buyerProf?.wallet_balance ?? buyerProf?.balance ?? 0);
+      const requiredPrice = Number(listing.price || 0);
+      const existingOrder = orders.find(
+        (o) => o.listing_id === listing.id && o.buyer_id === buyerId
+      );
+      if (existingOrder) {
+        existingOrder.buyer = {
+          ...existingOrder.buyer,
+          id: buyerId,
+          full_name: buyerName,
+          email: buyerEmail,
+          phone_number: buyerProf?.phone_number || "",
+          wallet_balance: buyerBalance
+        };
+        return res.json({ order: existingOrder });
+      }
+      const phonePreview = listing.product_details?.phone_number || listing.product_details?.item_identifier || listing.title || "";
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const initialMessages = [
+        {
+          id: `msg-${Date.now()}-1`,
+          order_id: orderId,
+          sender_id: buyerId,
+          sender_name: buyerName,
+          sender_email: buyerEmail,
+          sender_role: "buyer",
+          message_type: "text",
+          body: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
+          content: isForeignNumber ? `\u{1F44B} Hi Admin! I clicked on foreign number "${phonePreview}" (${listing.title}) for \u20A6${requiredPrice.toLocaleString()}. Please provide my verification code!` : `Hi! I'm interested in purchasing: "${listing.title}" (\u20A6${requiredPrice.toLocaleString()}).`,
+          created_at: nowIso
+        }
+      ];
+      const newOrder = {
+        id: orderId,
+        listing_id: listing.id,
+        buyer_id: buyerId,
+        seller_id: "admin",
+        clicked_number: phonePreview,
+        phone_number: phonePreview,
+        price: requiredPrice,
+        status: "open",
+        is_foreign_number: isForeignNumber,
+        created_at: nowIso,
+        updated_at: nowIso,
+        marketplace_listings: {
+          id: listing.id,
+          title: listing.title,
+          price: requiredPrice,
+          description: listing.description,
+          product_details: {
+            ...listing.product_details || {},
+            phone_number: phonePreview,
+            item_identifier: phonePreview
+          },
+          image_url: listing.image_url || null,
+          marketplace_categories: listing.marketplace_categories || { name: "Foreign Number", icon: "\u{1F4F1}", type: "foreign_number" }
+        },
+        seller: {
+          id: "admin",
+          full_name: "NORODATA Official Admin",
+          name: "NORODATA Official Admin",
+          marketplace_seller_rating: 5
+        },
+        buyer: {
+          id: buyerId,
+          full_name: buyerName,
+          name: buyerName,
+          email: buyerEmail,
+          phone_number: buyerProf?.phone_number || "",
+          wallet_balance: buyerBalance
+        },
+        messages: initialMessages
+      };
+      orders.unshift(newOrder);
+      await saveMarketplaceStore(listings, orders);
+      try {
+        const buyerFirstName = String(buyerName).split(" ")[0] || "A buyer";
+        triggerMarketplaceAdminPushNotification({
+          listing_name: String(listing.title || "Marketplace Item"),
+          buyer_first_name: buyerFirstName,
+          order_id: orderId
+        }).catch((e) => console.warn("[Marketplace Push Notification Failed (non-fatal)]:", e?.message || e));
+      } catch (pushErr) {
+        console.warn("[Marketplace Order Push Notification Exception]:", pushErr?.message || pushErr);
+      }
+      return res.json({ order: newOrder });
+    } catch (err) {
+      console.error("[POST /api/marketplace/orders/initiate Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to initiate order chat." });
+    }
+  });
+  app.get("/api/marketplace/orders", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const role = String(req.query.role || "buyer").trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { orders } = await loadMarketplaceStore();
+      let filtered = [];
+      if (role === "admin" && isAdmin) {
+        filtered = orders;
+      } else if (role === "seller") {
+        filtered = orders.filter(
+          (o) => o.seller_id === authUser.id || isAdmin && (o.seller_id === "admin" || o.is_foreign_number)
+        );
+      } else {
+        filtered = orders.filter((o) => o.buyer_id === authUser.id);
+      }
+      if (isAdmin && filtered.length > 0) {
+        const buyerIds = Array.from(new Set(filtered.map((o) => o.buyer_id).filter(Boolean)));
+        if (buyerIds.length > 0) {
+          const { data: buyerProfiles } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").in("id", buyerIds);
+          const map = {};
+          (buyerProfiles || []).forEach((p) => {
+            map[p.id] = p;
+          });
+          filtered = filtered.map((o) => {
+            const bp = map[o.buyer_id];
+            if (!bp) return o;
+            return {
+              ...o,
+              buyer: {
+                ...o.buyer,
+                id: bp.id,
+                full_name: bp.full_name || bp.name || o.buyer?.full_name || "Buyer",
+                email: bp.email || o.buyer?.email || "",
+                phone_number: bp.phone_number || o.buyer?.phone_number || "",
+                wallet_balance: Number(bp.wallet_balance ?? bp.balance ?? 0)
+              }
+            };
+          });
+        }
+      }
+      return res.json({ orders: filtered });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/marketplace/orders/:id", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      let buyerBalance = Number(order.buyer?.wallet_balance ?? 0);
+      if (order.buyer_id) {
+        const { data: bp } = await supabase.from("profiles").select("id, full_name, name, email, phone_number, wallet_balance, balance").eq("id", order.buyer_id).maybeSingle();
+        if (bp) {
+          buyerBalance = Number(bp.wallet_balance ?? bp.balance ?? 0);
+          order.buyer = {
+            ...order.buyer,
+            id: bp.id,
+            full_name: bp.full_name || bp.name || order.buyer?.full_name || "Buyer",
+            email: bp.email || order.buyer?.email || "",
+            phone_number: bp.phone_number || order.buyer?.phone_number || "",
+            wallet_balance: buyerBalance
+          };
+        }
+      }
+      return res.json({
+        order,
+        messages: order.messages || [],
+        buyerBalance,
+        isAdmin
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/orders/:id/messages", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const content = String(req.body?.content || "").trim();
+      if (!content) return res.status(400).json({ error: "Message content is required." });
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+      const senderIsBuyer = authUser.id === order.buyer_id && (!isAdmin || req.body?.asRole === "buyer");
+      const senderId = senderIsBuyer ? authUser.id : isAdmin ? "admin" : authUser.id;
+      const senderRole = senderIsBuyer ? "buyer" : "admin";
+      const senderName = senderRole === "admin" ? `Admin (${authUser.email || "Official Desk"})` : order.buyer?.full_name || order.buyer?.name || authUser.email || "Buyer";
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const msg = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        order_id: id,
+        sender_id: senderId,
+        sender_name: senderName,
+        sender_email: authUser.email || "",
+        sender_role: senderRole,
+        message_type: "text",
+        content,
+        created_at: nowIso
+      };
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.last_message = content;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ message: msg, order });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/marketplace/orders/:id/request-code", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+      const { data: bp } = await supabase.from("profiles").select("wallet_balance, balance").eq("id", order.buyer_id).maybeSingle();
+      const buyerBalance = Number(bp?.wallet_balance ?? bp?.balance ?? 0);
+      const requiredPrice = Number(order.price || 0);
+      if (buyerBalance < requiredPrice && order.status !== "paid") {
+        return res.status(400).json({
+          error: `Insufficient Balance! Your wallet balance is \u20A6${buyerBalance.toLocaleString()}, but this number requires \u20A6${requiredPrice.toLocaleString()}. Please fund your wallet before requesting the login code.`,
+          code: "INSUFFICIENT_BALANCE",
+          required: requiredPrice,
+          balance: buyerBalance
+        });
+      }
+      const phonePreview = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || order.marketplace_listings?.title || "this number";
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const msg = {
+        id: `msg-${Date.now()}-req`,
+        order_id: id,
+        sender_id: order.buyer_id,
+        sender_name: order.buyer?.full_name || authUser.email || "Buyer",
+        sender_email: authUser.email || order.buyer?.email || "",
+        sender_role: "buyer",
+        message_type: "text",
+        content: `\u{1F514} LOGIN CODE REQUEST: Admin, I have entered the number ${phonePreview} to login. Please send me the verification OTP code now! (Wallet balance \u20A6${buyerBalance.toLocaleString()} verified \u2014 \u20A6${requiredPrice.toLocaleString()} will be auto-debited once done).`,
+        created_at: nowIso
+      };
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.code_requested = true;
+      order.status = order.status === "pending" ? "code_requested" : order.status;
+      order.last_message = msg.content;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ order, message: msg });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+  const executeOrderDealCompletion = async (order, listings, orders, verificationCode) => {
+    if (order.status === "completed") {
+      return { order, alreadyCompleted: true };
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const price = Number(order.price || 0);
+    let paymentRef = order.payment_reference || `NUM-DEAL-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    let newBuyerBalance = 0;
+    if (order.status !== "paid" && !order.payment_reference && price > 0) {
+      const { data: buyerProf, error: bErr } = await supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", order.buyer_id).maybeSingle();
+      if (bErr || !buyerProf) {
+        throw new Error("Buyer wallet profile not found.");
+      }
+      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
+      if (currentBalance < price) {
+        throw new Error(`Insufficient Balance! Buyer wallet balance is \u20A6${currentBalance.toLocaleString()}, but \u20A6${price.toLocaleString()} is required to complete the deal.`);
+      }
+      newBuyerBalance = Number((currentBalance - price).toFixed(2));
+      const { error: deductErr } = await supabase.from("profiles").update({
+        wallet_balance: newBuyerBalance,
+        balance: newBuyerBalance,
+        available_balance: newBuyerBalance,
+        updated_at: nowIso
+      }).eq("id", order.buyer_id);
+      if (deductErr) {
+        throw new Error(`Failed to auto-debit buyer wallet: ${deductErr.message}`);
+      }
+      try {
+        await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
+      } catch (_) {
+      }
+      const phoneNum = order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "";
+      try {
+        await supabase.from("transactions").insert({
+          user_id: String(order.buyer_id),
+          user_email: buyerProf.email || null,
+          type: "marketplace",
+          amount: price,
+          status: "completed",
+          reference: paymentRef,
+          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
+          gateway: "wallet_auto_debit",
+          created_at: nowIso
+        });
+      } catch (_) {
+      }
+      if (order.seller_id && order.seller_id !== "admin" && /^[0-9a-f-]{36}$/i.test(order.seller_id)) {
+        try {
+          const sellerPayout = Math.floor(price * 0.98);
+          const { data: sellerProf } = await supabase.from("profiles").select("id, email, wallet_balance, balance").eq("id", order.seller_id).maybeSingle();
+          if (sellerProf) {
+            const sBal = Number(sellerProf.wallet_balance ?? sellerProf.balance ?? 0);
+            const newSBal = Number((sBal + sellerPayout).toFixed(2));
+            await supabase.from("profiles").update({
+              wallet_balance: newSBal,
+              balance: newSBal,
+              available_balance: newSBal,
+              updated_at: nowIso
+            }).eq("id", order.seller_id);
+            await supabase.from("transactions").insert({
+              user_id: String(order.seller_id),
+              user_email: sellerProf.email || null,
+              type: "funding",
+              amount: sellerPayout,
+              status: "completed",
+              reference: `${paymentRef}-PAYOUT`,
+              description: `Marketplace sale payout: ${order.marketplace_listings?.title || "Listing"}`,
+              gateway: "marketplace_escrow",
+              created_at: nowIso
+            });
+          }
+        } catch (_) {
+        }
+      }
+    }
+    order.status = "completed";
+    order.paid_at = order.paid_at || nowIso;
+    order.completed_at = nowIso;
+    order.verified_at = nowIso;
+    order.payment_reference = paymentRef;
+    if (verificationCode) {
+      order.verification_code = verificationCode;
+    }
+    if (order.buyer) {
+      order.buyer.wallet_balance = newBuyerBalance;
+    }
+    const listingObj = listings.find((l) => l.id === order.listing_id);
+    if (listingObj) {
+      listingObj.status = "sold";
+    }
+    const doneContent = `\u{1F389} DEAL COMPLETED! \u20A6${price.toLocaleString()} has been automatically debited from the buyer's wallet (Ref: ${paymentRef}). Login code delivered and permanently recorded in chat history.`;
+    if (!Array.isArray(order.messages)) order.messages = [];
+    order.messages.push({
+      id: `msg-${Date.now()}-done`,
+      order_id: order.id,
+      sender_id: "admin",
+      sender_name: "NORODATA Official Admin",
+      sender_role: "admin",
+      message_type: "text",
+      content: doneContent,
+      created_at: nowIso
+    });
+    order.last_message = doneContent;
+    order.last_message_at = nowIso;
+    order.updated_at = nowIso;
+    await saveMarketplaceStore(listings, orders);
+    return { order, newBuyerBalance, reference: paymentRef };
+  };
+  app.post("/api/marketplace/orders/:id/send-code-and-complete", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const code = String(req.body?.code || "").trim();
+      if (!code) {
+        return res.status(400).json({ error: "Verification code is required." });
+      }
+      let callerRole = "user";
+      try {
+        const { data: callerProf } = await supabase.from("profiles").select("id, role, email").eq("id", authUser.id).maybeSingle();
+        callerRole = callerProf?.role || "user";
+      } catch (_) {
+      }
+      const callerEmail = String(authUser.email || "").toLowerCase().trim();
+      const isAllowedAdminOrOperator = callerRole === "admin" || callerRole === "operator" || ["ibrahimfaruqolamilekan4@gmail.com", "adewaleogunkeye200@gmail.com", "jeffholland299@gmail.com", "triumphanttosin@gmail.com"].includes(callerEmail);
+      if (!isAllowedAdminOrOperator) {
+        return res.status(403).json({ error: "Forbidden: Admin or operator role required." });
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(id) && uuidRegex.test(authUser.id)) {
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc("complete_marketplace_order", {
+            p_order_id: id,
+            p_caller_id: authUser.id,
+            p_code_value: code
+          });
+          if (!rpcErr && rpcData) {
+            if (rpcData.success) {
+              return res.json({
+                success: true,
+                newBuyerBalance: rpcData.new_balance,
+                reference: rpcData.reference,
+                completed_at: rpcData.completed_at
+              });
+            } else {
+              return res.status(400).json({ error: rpcData.error || "Failed to complete order." });
+            }
+          }
+        } catch (_) {
+        }
+      }
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found." });
+      }
+      if (order.status === "completed" || order.completed_at) {
+        return res.status(400).json({ error: "Already completed" });
+      }
+      const price = Number(order.price || 0);
+      const { data: buyerProf, error: bErr } = await supabase.from("profiles").select("id, email, full_name, name, wallet_balance, balance, available_balance").eq("id", order.buyer_id).maybeSingle();
+      if (bErr || !buyerProf) {
+        return res.status(404).json({ error: "Buyer wallet profile not found." });
+      }
+      const currentBalance = Number(buyerProf.wallet_balance ?? buyerProf.balance ?? 0);
+      if (currentBalance < price) {
+        return res.status(400).json({
+          error: "Buyer balance too low",
+          balance: currentBalance,
+          price,
+          short_by: Number((price - currentBalance).toFixed(2))
+        });
+      }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const newBuyerBalance = Number((currentBalance - price).toFixed(2));
+      const { error: deductErr } = await supabase.from("profiles").update({
+        wallet_balance: newBuyerBalance,
+        balance: newBuyerBalance,
+        available_balance: newBuyerBalance,
+        updated_at: nowIso
+      }).eq("id", order.buyer_id);
+      if (deductErr) {
+        return res.status(500).json({ error: `Failed to debit wallet: ${deductErr.message}` });
+      }
+      try {
+        await supabase.from("users").update({ wallet_balance: newBuyerBalance }).eq("id", order.buyer_id);
+      } catch (_) {
+      }
+      const codeMsg = {
+        id: `msg-${Date.now()}-code`,
+        order_id: id,
+        sender_id: authUser.id,
+        sender_role: "admin",
+        sender_name: `Admin Desk (${authUser.email || "Official"})`,
+        sender_email: authUser.email || "",
+        message_type: "verification_code",
+        body: "Here is your login verification code:",
+        content: `Here is your login verification code for ${order.phone_number || order.clicked_number || "your foreign number"}:`,
+        code_value: code,
+        created_at: nowIso
+      };
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(codeMsg);
+      order.status = "completed";
+      order.completed_at = nowIso;
+      order.paid_at = nowIso;
+      order.verified_at = nowIso;
+      order.verification_code = code;
+      const paymentRef = `NUM-DEBIT-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      order.payment_reference = paymentRef;
+      if (order.buyer) {
+        order.buyer.wallet_balance = newBuyerBalance;
+      }
+      order.last_message = `Login Verification Code Sent: ${code}`;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+      const phoneNum = order.phone_number || order.clicked_number || "";
+      try {
+        await supabase.from("transactions").insert({
+          user_id: String(order.buyer_id),
+          user_email: buyerProf.email || null,
+          type: "debit",
+          amount: price,
+          status: "completed",
+          reference: paymentRef,
+          description: `Foreign Number Purchase: ${phoneNum ? `${phoneNum} - ` : ""}${order.marketplace_listings?.title || "Foreign Number"}`,
+          phone: phoneNum || null,
+          gateway: "wallet_auto_debit",
+          created_at: nowIso
+        });
+      } catch (txErr) {
+        console.warn("[Transactions insert warning]:", txErr?.message || txErr);
+      }
+      await saveMarketplaceStore(listings, orders);
+      return res.json({
+        success: true,
+        order,
+        message: codeMsg,
+        newBuyerBalance,
+        reference: paymentRef
+      });
+    } catch (err) {
+      console.error("[send-code-and-complete Error]:", err.message);
+      return res.status(500).json({ error: err.message || "Failed to complete deal." });
+    }
+  });
+  app.post("/api/marketplace/orders/:id/send-code", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const code = String(req.body?.code || "").trim();
+      const autoCompleteDeal = Boolean(req.body?.autoCompleteDeal);
+      if (!code) return res.status(400).json({ error: "Verification code is required." });
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+      if (!isAdmin && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Only Admin or the seller can send verification codes." });
+      }
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      const msg = {
+        id: `msg-${Date.now()}-code`,
+        order_id: id,
+        sender_id: isAdmin ? "admin" : authUser.id,
+        sender_name: `Admin (${authUser.email || "Official Desk"})`,
+        sender_email: authUser.email || "",
+        sender_role: "admin",
+        message_type: "verification_code",
+        content: `Here is your login verification code for ${order.clicked_number || order.marketplace_listings?.product_details?.phone_number || "your number"}:`,
+        code_value: code,
+        created_at: nowIso
+      };
+      if (!Array.isArray(order.messages)) order.messages = [];
+      order.messages.push(msg);
+      order.verification_code = code;
+      order.status = order.status === "open" || order.status === "pending" || order.status === "code_requested" ? "code_sent" : order.status;
+      order.last_message = `Login Verification Code Sent: ${code}`;
+      order.last_message_at = nowIso;
+      order.updated_at = nowIso;
+      if (autoCompleteDeal) {
+        const result = await executeOrderDealCompletion(order, listings, orders, code);
+        return res.json({ success: true, order: result.order, message: msg, dealCompleted: true, newBuyerBalance: result.newBuyerBalance });
+      }
+      await saveMarketplaceStore(listings, orders);
+      return res.json({ success: true, order, message: msg, dealCompleted: false });
+    } catch (err) {
+      return res.status(400).json({ error: err.message || "Failed to send code." });
+    }
+  });
+  app.post("/api/marketplace/orders/:id/complete-deal", async (req, res) => {
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+    try {
+      const { id } = req.params;
+      const submittedCode = String(req.body?.code || "").trim();
+      const isAdmin = await isCallerAdminUser(req, authUser);
+      const { listings, orders } = await loadMarketplaceStore();
+      const order = orders.find((o) => o.id === id);
+      if (!order) return res.status(404).json({ error: "Order not found." });
+      if (!isAdmin && order.buyer_id !== authUser.id && order.seller_id !== authUser.id) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      const latestCodeMsg = [...order.messages || []].reverse().find((m) => m.message_type === "verification_code");
+      const finalCode = submittedCode || latestCodeMsg?.code_value || order.verification_code || "VERIFIED";
+      const result = await executeOrderDealCompletion(order, listings, orders, finalCode);
+      return res.json({
+        success: true,
+        order: result.order,
+        newBuyerBalance: result.newBuyerBalance,
+        reference: result.reference
+      });
+    } catch (err) {
+      console.error("[POST /api/marketplace/orders/:id/complete-deal Error]:", err.message);
+      return res.status(400).json({ error: err.message || "Failed to complete deal." });
     }
   });
   if (process.env.NODE_ENV !== "production") {

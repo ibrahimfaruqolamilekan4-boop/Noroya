@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import { calculateCustomerPlanPrice } from '../lib/planPricing';
 import AdminFailureLog from './AdminFailureLog';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
