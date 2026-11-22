@@ -1296,7 +1296,9 @@ async function startServer() {
       if (finalType !== 'airtime') {
          let serverPrice = 0;
          const role = profile.role || 'user';
-         if (planConfig) {
+         if (vtuPlan && Number(vtuPlan.price_to_user) > 0) {
+             serverPrice = Number(vtuPlan.price_to_user);
+         } else if (planConfig) {
              if (role === 'agent' && planConfig.agent_price) serverPrice = planConfig.agent_price;
              else if (role === 'reseller' && planConfig.reseller_price) serverPrice = planConfig.reseller_price;
              else if (planConfig.selling_price) serverPrice = planConfig.selling_price;
@@ -2881,6 +2883,504 @@ async function startServer() {
     }
   });
 
+  // ─── STEP 2: debug-provider-live (Probes named provider and returns raw response with redacted keys) ───
+  const handleDebugProviderLive = async (req: any, res: any) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const providerParam = (req.body?.provider || req.query?.provider || 'mozosubz').toString().toLowerCase().trim();
+      const requestedService = (req.body?.service || req.query?.service || '').toString().toLowerCase().trim();
+
+      if (providerParam === 'mozosubz') {
+        const CONNECT_KEY = await resolveMozosubzApiKey();
+        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes('PASTE_YOUR')) {
+          return res.status(503).json({ error: "Mozosubz Connect Key is not configured.", key_configured: false });
+        }
+
+        const MOZO_BASE = "https://mozosubz.xyz/api/v1";
+        const candidateServices = [
+          "mtn_sme", "mtn_cg", "mtn_gifting", "mtn_datashare", "mtn_awoof", "mtn_awoof2", "mtn_coupon",
+          "glo_sme", "glo_cg", "glo_data",
+          "airtel_sme", "airtel_cg", "airtel_gifting",
+          "etisalat_sme", "etisalat_data"
+        ];
+
+        const targetServices = requestedService ? [requestedService] : candidateServices;
+        const report: Record<string, any> = {};
+        let totalPlans = 0;
+        const allPlans: any[] = [];
+
+        // Probe base endpoint without parameter
+        let noParamResponse: any = null;
+        if (!requestedService) {
+          try {
+            const noParamResp = await fetch(`${MOZO_BASE}/data/plans`, {
+              headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
+            });
+            noParamResponse = {
+              status: noParamResp.status,
+              body: await noParamResp.json().catch(() => null)
+            };
+          } catch (e: any) {
+            noParamResponse = { error: e.message };
+          }
+        }
+
+        for (const svc of targetServices) {
+          try {
+            const resp = await fetch(`${MOZO_BASE}/data/plans?service=${svc}`, {
+              headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" }
+            });
+            const d: any = await resp.json().catch(() => null);
+            const plans = Array.isArray(d?.plans) ? d.plans : [];
+            totalPlans += plans.length;
+            report[svc] = {
+              http_status: resp.status,
+              raw_response: d,
+              plan_count: plans.length,
+              plans: plans.map((p: any) => ({
+                id: String(p.id),
+                name: p.name,
+                price: Number(p.price),
+                plan_type: p.plan_type
+              }))
+            };
+            for (const p of plans) {
+              allPlans.push({
+                service: svc,
+                id: String(p.id),
+                name: p.name,
+                price: Number(p.price),
+                plan_type: p.plan_type
+              });
+            }
+          } catch (e: any) {
+            report[svc] = { error: e?.message || String(e) };
+          }
+        }
+
+        const target1gbPlans = allPlans.filter(p =>
+          p.price === 399 || p.price === 450 || p.price === 494 ||
+          String(p.name).toLowerCase().includes("1gb") ||
+          String(p.name).toLowerCase().includes("1.0 gb") ||
+          String(p.name).toLowerCase().includes("1.0gb")
+        );
+
+        return res.json({
+          provider: "mozosubz",
+          endpoint_pattern: "GET /api/v1/data/plans?service={service_code}",
+          auth_header: "X-Connect-Key: ****",
+          total_plans_returned: totalPlans,
+          response_wrapper: "{ success: boolean, plans: Array<{ id, name, price, plan_type }> }",
+          services_present: Object.keys(report).filter(s => (report[s]?.plan_count || 0) > 0),
+          all_services_queried: Object.keys(report),
+          target_1gb_or_notable_plans: target1gbPlans,
+          base_endpoint_no_param: noParamResponse,
+          service_breakdown: report
+        });
+      }
+
+      if (providerParam === 'nifex') {
+        const nifexKey = await resolveNifexApiKey();
+        if (!nifexKey || nifexKey.length < 5) {
+          return res.status(503).json({ error: "Nifex key is not configured.", key_configured: false });
+        }
+        const cleanKey = nifexKey.replace(/^Token\s+/i, '').trim();
+        const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
+          headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" }
+        });
+        const raw = await resp.json().catch(() => null);
+        const plansList = Array.isArray(raw?.plans) ? raw.plans : (Array.isArray(raw) ? raw : []);
+
+        return res.json({
+          provider: "nifex",
+          endpoint: "GET https://nifexdataapp.com.ng/api/data/",
+          auth_header: "Authorization: Token ****",
+          total_plans_returned: plansList.length,
+          response_wrapper: Array.isArray(raw) ? "Array<Plan>" : "{ plans: Array<Plan> }",
+          raw_response: raw
+        });
+      }
+
+      return res.status(400).json({ error: `Unsupported provider: ${providerParam}` });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  };
+
+  app.get("/api/admin/debug-provider-live", handleDebugProviderLive);
+  app.post("/api/admin/debug-provider-live", handleDebugProviderLive);
+  app.get("/api/debug-provider-live", handleDebugProviderLive);
+  app.post("/api/debug-provider-live", handleDebugProviderLive);
+
+  // ─── STEP 3: get-provider-plans (Live Wholesale Per-Provider Fetch Endpoint) ───
+  const handleGetProviderPlans = async (req: any, res: any) => {
+    if (!await requireAdmin(req, res)) return;
+    const fetchStartTime = new Date().toISOString();
+    try {
+      const providerParam = (req.body?.provider || req.query?.provider || 'mozosubz').toString().toLowerCase().trim();
+      const serviceCode = (req.body?.service_code || req.body?.service || req.query?.service_code || req.query?.service || '').toString().toLowerCase().trim();
+
+      if (providerParam !== 'mozosubz' && providerParam !== 'nifex') {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid provider: '${providerParam}'. Must be 'mozosubz' or 'nifex'.`,
+          fetch_time: fetchStartTime,
+        });
+      }
+
+      if (providerParam === 'mozosubz') {
+        const CONNECT_KEY = await resolveMozosubzApiKey();
+        if (!CONNECT_KEY || CONNECT_KEY.length < 5 || CONNECT_KEY.includes('PASTE_YOUR')) {
+          return res.status(503).json({
+            success: false,
+            error: "Mozosubz Connect Key is not configured on the server. Please configure your key in the Pricing Manager.",
+            fetch_time: fetchStartTime,
+          });
+        }
+
+        const MOZO_BASE = "https://mozosubz.xyz/api/v1";
+        const candidateServices = [
+          { id: "mtn_sme",       network: "MTN",    plan_type: "SME"       },
+          { id: "mtn_cg",        network: "MTN",    plan_type: "CG"        },
+          { id: "mtn_gifting",   network: "MTN",    plan_type: "GIFTING"   },
+          { id: "mtn_datashare", network: "MTN",    plan_type: "DATASHARE" },
+          { id: "mtn_awoof",     network: "MTN",    plan_type: "AWOOF"     },
+          { id: "mtn_awoof2",    network: "MTN",    plan_type: "AWOOF"     },
+          { id: "mtn_coupon",    network: "MTN",    plan_type: "COUPON"    },
+          { id: "glo_sme",       network: "GLO",    plan_type: "SME"       },
+          { id: "glo_cg",        network: "GLO",    plan_type: "CG"        },
+          { id: "glo_data",      network: "GLO",    plan_type: "DATA"      },
+          { id: "airtel_sme",    network: "AIRTEL", plan_type: "SME"       },
+          { id: "airtel_cg",     network: "AIRTEL", plan_type: "CG"        },
+          { id: "airtel_gifting",network: "AIRTEL", plan_type: "GIFTING"   },
+          { id: "etisalat_sme",  network: "9MOBILE",plan_type: "SME"       },
+          { id: "etisalat_data", network: "9MOBILE",plan_type: "DATA"      },
+        ];
+
+        const targetServices = serviceCode
+          ? candidateServices.filter(s => s.id === serviceCode)
+          : candidateServices;
+
+        if (serviceCode && targetServices.length === 0) {
+          targetServices.push({
+            id: serviceCode,
+            network: serviceCode.includes("glo") ? "GLO" : serviceCode.includes("airtel") ? "AIRTEL" : (serviceCode.includes("9mobile") || serviceCode.includes("etisalat")) ? "9MOBILE" : "MTN",
+            plan_type: "DATA"
+          });
+        }
+
+        const allPlans: any[] = [];
+        const groupedByService: Record<string, any[]> = {};
+        const serviceErrors: Record<string, string> = {};
+
+        for (const svc of targetServices) {
+          groupedByService[svc.id] = [];
+          let page = 1;
+          let hasMore = true;
+
+          while (hasMore) {
+            try {
+              const url = page === 1
+                ? `${MOZO_BASE}/data/plans?service=${svc.id}`
+                : `${MOZO_BASE}/data/plans?service=${svc.id}&page=${page}`;
+
+              const resp = await fetch(url, {
+                headers: { "X-Connect-Key": CONNECT_KEY, "Content-Type": "application/json" },
+                signal: AbortSignal.timeout(12000),
+              });
+
+              if (!resp.ok) {
+                const errJson = await resp.json().catch(() => null);
+                serviceErrors[svc.id] = errJson?.error || errJson?.message || `HTTP ${resp.status}`;
+                hasMore = false;
+                break;
+              }
+
+              const data: any = await resp.json().catch(() => null);
+              if (!data || !data.success || !Array.isArray(data.plans)) {
+                if (data && !data.success) {
+                  serviceErrors[svc.id] = data.error || data.message || "Unsuccessful response from provider";
+                }
+                hasMore = false;
+                break;
+              }
+
+              for (const p of data.plans) {
+                const validityMatch = String(p.name || "").match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
+                const planObj = {
+                  id: String(p.id),
+                  name: String(p.name),
+                  network: svc.network,
+                  service_code: svc.id,
+                  provider_price: Number(p.price || 0),
+                  plan_type: p.plan_type || svc.plan_type,
+                  validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days"),
+                };
+                allPlans.push(planObj);
+                groupedByService[svc.id].push(planObj);
+              }
+
+              if (data.next || (data.total_pages && page < data.total_pages)) {
+                page++;
+              } else {
+                hasMore = false;
+              }
+            } catch (err: any) {
+              serviceErrors[svc.id] = err.message || String(err);
+              hasMore = false;
+            }
+          }
+        }
+
+        // Audit log: provider, count, time, no keys
+        console.log(`[get-provider-plans] provider: mozosubz, count: ${allPlans.length}, time: ${fetchStartTime}`);
+
+        if (serviceCode && allPlans.length === 0 && serviceErrors[serviceCode]) {
+          return res.status(502).json({
+            success: false,
+            provider: "mozosubz",
+            service_code: serviceCode,
+            error: `MozoSubz returned: ${serviceErrors[serviceCode]}`,
+            fetch_time: fetchStartTime,
+            count: 0,
+            plans: [],
+          });
+        }
+
+        return res.json({
+          success: true,
+          provider: "mozosubz",
+          service_code: serviceCode || null,
+          count: allPlans.length,
+          fetch_time: fetchStartTime,
+          plans: allPlans,
+          grouped_by_service: groupedByService,
+          errors: Object.keys(serviceErrors).length > 0 ? serviceErrors : undefined,
+        });
+      }
+
+      if (providerParam === 'nifex') {
+        const nifexKey = await resolveNifexApiKey();
+        if (!nifexKey || nifexKey.length < 5) {
+          return res.status(503).json({
+            success: false,
+            error: "Nifex API Token is not configured on the server. Please configure your key in the Pricing Manager.",
+            fetch_time: fetchStartTime,
+          });
+        }
+
+        const cleanKey = nifexKey.replace(/^Token\s+/i, '').trim();
+        let page = 1;
+        let hasMore = true;
+        const allNifexPlans: any[] = [];
+        const groupedByService: Record<string, any[]> = {};
+
+        while (hasMore) {
+          const nifexUrl = page === 1
+            ? "https://nifexdataapp.com.ng/api/data/"
+            : `https://nifexdataapp.com.ng/api/data/?page=${page}`;
+
+          const resp = await fetch(nifexUrl, {
+            headers: {
+              "Authorization": `Token ${cleanKey}`,
+              "Content-Type": "application/json",
+            },
+            signal: AbortSignal.timeout(12000),
+          });
+
+          if (!resp.ok) {
+            hasMore = false;
+            if (page === 1) {
+              return res.status(502).json({
+                success: false,
+                provider: "nifex",
+                error: `Nifex API error HTTP ${resp.status}`,
+                fetch_time: fetchStartTime,
+              });
+            }
+            break;
+          }
+
+          const rawJson: any = await resp.json().catch(() => null);
+          const rawList = Array.isArray(rawJson?.plans)
+            ? rawJson.plans
+            : (Array.isArray(rawJson) ? rawJson : (Array.isArray(rawJson?.results) ? rawJson.results : []));
+
+          for (const p of rawList) {
+            const rawNet = String(p.network || "MTN").toUpperCase();
+            const net = rawNet.includes("GLO") ? "GLO"
+              : rawNet.includes("AIRTEL") ? "AIRTEL"
+              : (rawNet.includes("9MOBILE") || rawNet.includes("ETISALAT")) ? "9MOBILE"
+              : "MTN";
+            const rawId = String(p.plan_id ?? p.pId ?? p.id);
+            const pId = `nifex_${net.toLowerCase()}_${rawId}`;
+            const svcType = String(p.type || p.plan_type || "DATA").toLowerCase();
+            const validityMatch = String(p.plan_name || "").match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
+
+            const planObj = {
+              id: pId,
+              name: String(p.plan_name || p.name || `${net} Data`),
+              network: net,
+              service_code: svcType,
+              provider_price: Number(p.price || 0),
+              plan_type: svcType.toUpperCase(),
+              validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days"),
+            };
+
+            if (!groupedByService[svcType]) groupedByService[svcType] = [];
+            groupedByService[svcType].push(planObj);
+            allNifexPlans.push(planObj);
+          }
+
+          if (rawJson?.next && rawList.length > 0) {
+            page++;
+          } else {
+            hasMore = false;
+          }
+        }
+
+        let filteredPlans = allNifexPlans;
+        if (serviceCode) {
+          const sc = serviceCode.toLowerCase();
+          filteredPlans = allNifexPlans.filter(p =>
+            p.service_code.toLowerCase().includes(sc) ||
+            p.network.toLowerCase().includes(sc)
+          );
+        }
+
+        console.log(`[get-provider-plans] provider: nifex, count: ${filteredPlans.length}, time: ${fetchStartTime}`);
+
+        return res.json({
+          success: true,
+          provider: "nifex",
+          service_code: serviceCode || null,
+          count: filteredPlans.length,
+          fetch_time: fetchStartTime,
+          plans: filteredPlans,
+          grouped_by_service: groupedByService,
+        });
+      }
+    } catch (err: any) {
+      console.error("[get-provider-plans Exception]:", err);
+      return res.status(500).json({ success: false, error: err.message, fetch_time: fetchStartTime });
+    }
+  };
+
+  app.get("/api/admin/get-provider-plans", handleGetProviderPlans);
+  app.post("/api/admin/get-provider-plans", handleGetProviderPlans);
+  app.get("/api/get-provider-plans", handleGetProviderPlans);
+  app.post("/api/get-provider-plans", handleGetProviderPlans);
+
+  // ─── STEP 4: Save Prices endpoint (keeps live view separate from saved DB) ─
+  app.post("/api/admin/save-provider-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { plans, provider = 'mozosubz', marginPercent = 10 } = req.body;
+      if (!Array.isArray(plans) || plans.length === 0) {
+        return res.status(400).json({ error: "Missing or empty plans array to save." });
+      }
+
+      // 1. Fetch existing manual overrides so saving NEVER overwrites them!
+      const planIds = plans.map((p: any) => String(p.provider_plan_id || p.id).trim()).filter(Boolean);
+      const { data: existingRows } = await supabase
+        .from('vtu_plans')
+        .select('provider_plan_id, manual_price_override, margin_percent, price_to_user, is_active')
+        .in('provider_plan_id', planIds);
+
+      const existingMap = new Map<string, any>();
+      (existingRows || []).forEach((r: any) => {
+        existingMap.set(String(r.provider_plan_id).trim(), r);
+      });
+
+      const nowIso = new Date().toISOString();
+      const upsertRows: any[] = [];
+      let savedCount = 0;
+
+      for (const p of plans) {
+        const pId = String(p.provider_plan_id || p.id).trim();
+        if (!pId) continue;
+
+        const cost = Number(p.provider_price !== undefined ? p.provider_price : p.cost_price || 0);
+        const existing = existingMap.get(pId);
+
+        // Rule 2 of Step 4: Saving never overwrites a manual price override.
+        let finalCustomerPrice = 0;
+        let finalManualOverride = existing?.manual_price_override ?? null;
+
+        if (p.manual_price_override !== undefined && p.manual_price_override !== null && Number(p.manual_price_override) > 0) {
+          finalManualOverride = Number(p.manual_price_override);
+          finalCustomerPrice = Math.ceil(finalManualOverride);
+        } else if (finalManualOverride && Number(finalManualOverride) > 0) {
+          // Preserve existing manual price override intact!
+          finalCustomerPrice = Math.ceil(Number(finalManualOverride));
+        } else if (p.customer_price && Number(p.customer_price) > 0) {
+          finalCustomerPrice = Math.ceil(Number(p.customer_price));
+        } else {
+          // Provider price + NORODATA margin computed by shared formula
+          const margin = p.margin_percent ? Number(p.margin_percent) : (existing?.margin_percent ? Number(existing.margin_percent) : Number(marginPercent || 10));
+          finalCustomerPrice = Math.ceil(cost * (1 + margin / 100));
+        }
+
+        const isActive = p.is_active !== undefined ? Boolean(p.is_active) : (existing ? existing.is_active !== false : true);
+
+        upsertRows.push({
+          provider_plan_id: pId,
+          plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
+          network: String(p.network || 'MTN').toUpperCase().trim(),
+          provider_price: cost,
+          price_to_user: finalCustomerPrice,
+          manual_price_override: finalManualOverride,
+          margin_percent: p.margin_percent ? Number(p.margin_percent) : (existing?.margin_percent ? Number(existing.margin_percent) : 10),
+          provider: p.provider || provider,
+          service: p.service_code || p.service || '',
+          validity: p.validity || '30 Days',
+          is_active: isActive,
+          last_synced_at: nowIso,
+        });
+
+        // Also sync services_config for backward compatibility
+        try {
+          await supabase.from('services_config').upsert({
+            mozosubz_plan_id: pId,
+            bigisub_identifier_id: pId,
+            bigisub_plan_id: pId,
+            mozosubz_service: p.service_code || p.service || '',
+            name: String(p.name || p.plan_name || 'Data Plan').trim(),
+            item_name: String(p.name || p.plan_name || 'Data Plan').trim(),
+            plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
+            selling_price: finalCustomerPrice,
+            retail_price: finalCustomerPrice,
+            cost_price: cost,
+            network: String(p.network || 'MTN').toUpperCase().trim(),
+            service_type: 'data',
+            is_active: isActive,
+            provider: p.provider || provider,
+            updated_at: nowIso,
+          }, { onConflict: 'bigisub_identifier_id' });
+        } catch (_) {}
+
+        savedCount++;
+      }
+
+      if (upsertRows.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from('vtu_plans')
+          .upsert(upsertRows, { onConflict: 'provider_plan_id' });
+
+        if (upsertErr) throw upsertErr;
+      }
+
+      return res.json({
+        success: true,
+        saved_count: savedCount,
+        message: `Saved ${savedCount} plans to customer store.`,
+      });
+    } catch (err: any) {
+      console.error("[POST /api/admin/save-provider-plans Exception]:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // 2. Unified GET route to pull active plans (grouped logically or in flat representation)
   app.get("/api/services/:type", async (req, res) => {
     try {
@@ -3606,13 +4106,31 @@ if (Object.keys(updateData).length <= 1) {
       // Synchronize with vtu_plans single source of truth for all data plans
       if (rawType === 'data') {
         try {
+          const { data: existingVtu } = await supabase
+            .from('vtu_plans')
+            .select('manual_price_override')
+            .eq('provider_plan_id', planId)
+            .maybeSingle();
+
+          let finalOverride = existingVtu?.manual_price_override ?? null;
+          let finalCustomerPrice = sellingPrice;
+
+          // Saving never overwrites a manual price override unless explicitly provided
+          if (req.body.manual_price_override !== undefined && req.body.manual_price_override !== null && Number(req.body.manual_price_override) > 0) {
+            finalOverride = Number(req.body.manual_price_override);
+            finalCustomerPrice = Math.ceil(finalOverride);
+          } else if (finalOverride && Number(finalOverride) > 0) {
+            // Preserve existing manual price override intact!
+            finalCustomerPrice = Math.ceil(Number(finalOverride));
+          }
+
           await supabase.from('vtu_plans').upsert({
             provider_plan_id: planId,
             plan_name: String(name || '').trim(),
             network: finalNet,
             provider_price: costPrice,
-            price_to_user: sellingPrice,
-            manual_price_override: sellingPrice,
+            price_to_user: finalCustomerPrice,
+            manual_price_override: finalOverride,
             provider: req.body.provider || 'mozosubz',
             service: mozosubz_service || service || '',
             validity: validity_days || duration || '30 Days',
@@ -4060,20 +4578,66 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(400).json({ error: `Insufficient wallet balance. You need ₦${finalAmount.toLocaleString()} but currently have ₦${currentBalance.toLocaleString()}.` });
       }
 
-      // Resolve the plan against services_config -- frontend may send either a composite
-      // mozosubz_plan_id, a raw bigisub_identifier_id, or (legacy) a plan display name.
-      let planConfig: any = null;
+      // Resolve the plan against vtu_plans (single source of truth) and services_config
       let vtuPlan: any = null;
+      let planConfig: any = null;
       if (finalType === 'data' && finalPlan) {
         try {
           const safePlan = pgSafeFilter(finalPlan);
-          const { data: pc } = await supabase
-            .from('services_config')
-            .select('provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name, selling_price, retail_price, cost_price, reseller_price, agent_price')
-            .or(`mozosubz_plan_id.eq.${safePlan},bigisub_identifier_id.eq.${safePlan},bigisub_plan_id.eq.${safePlan},item_name.eq.${safePlan},plan_name.eq.${safePlan},name.eq.${safePlan}`)
+          const { data: vp } = await supabase
+            .from('vtu_plans')
+            .select('*')
+            .eq('provider_plan_id', String(finalPlan))
             .maybeSingle();
-          planConfig = pc;
-        } catch (_) { /* fall through with no config -- provider call will still attempt a best-effort guess */ }
+
+          if (vp) {
+            vtuPlan = vp;
+          } else {
+            const { data: vpAlt } = await supabase
+              .from('vtu_plans')
+              .select('*')
+              .or(`id.eq.${safePlan},provider_plan_id.eq.${safePlan}`)
+              .maybeSingle();
+            if (vpAlt) vtuPlan = vpAlt;
+          }
+        } catch (vtuErr: any) {
+          console.warn("[VTU/purchase vtu_plans query warning]:", vtuErr.message);
+        }
+
+        if (vtuPlan) {
+          if (!vtuPlan.is_active) {
+            return res.status(400).json({ error: "This plan is no longer available. Please refresh and select an active plan." });
+          }
+          finalPlan = vtuPlan.provider_plan_id;
+          if (vtuPlan.price_to_user && Number(vtuPlan.price_to_user) > 0) {
+            finalAmount = Number(vtuPlan.price_to_user);
+          }
+        } else {
+          // Check if plan was explicitly marked inactive in vtu_plans
+          const { data: deactPlan } = await supabase
+            .from('vtu_plans')
+            .select('provider_plan_id, is_active')
+            .eq('is_active', false)
+            .eq('provider_plan_id', String(finalPlan))
+            .maybeSingle();
+          if (deactPlan) {
+            return res.status(400).json({ error: "This plan is no longer active. Please choose another." });
+          }
+
+          // Fallback check in services_config
+          try {
+            const safePlan = pgSafeFilter(finalPlan);
+            const { data: pc } = await supabase
+              .from('services_config')
+              .select('provider, mozosubz_service, mozosubz_plan_id, bigisub_identifier_id, bigisub_plan_id, item_name, plan_name, name, selling_price, retail_price, cost_price, reseller_price, agent_price, is_active')
+              .or(`mozosubz_plan_id.eq.${safePlan},bigisub_identifier_id.eq.${safePlan},bigisub_plan_id.eq.${safePlan},item_name.eq.${safePlan},plan_name.eq.${safePlan},name.eq.${safePlan}`)
+              .maybeSingle();
+            planConfig = pc;
+            if (planConfig && planConfig.is_active === false) {
+              return res.status(400).json({ error: "This plan is no longer active. Please choose another." });
+            }
+          } catch (_) {}
+        }
       }
 
       const chosenProvider = vtuPlan?.provider || planConfig?.provider || 'mozosubz';
@@ -4086,14 +4650,16 @@ if (Object.keys(updateData).length <= 1) {
         return res.status(503).json({ error: `Provider '${chosenProvider}' API key not configured. Contact admin.` });
       }
 
-      const resolvedPlanCode = planConfig?.mozosubz_plan_id || planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || finalPlan;
+      const resolvedPlanCode = vtuPlan?.provider_plan_id || planConfig?.mozosubz_plan_id || planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || finalPlan;
 
       // SECURITY (audit C4): server-side price enforcement for data -- the client's
-      // claimed amount is never trusted. Mirrors handleVtuPurchase.
+      // claimed amount is never trusted. Charged price equals the saved customer price in vtu_plans.
       if (finalType === 'data') {
         let serverPrice = 0;
         const role = profile?.role || 'user';
-        if (planConfig) {
+        if (vtuPlan && Number(vtuPlan.price_to_user) > 0) {
+          serverPrice = Number(vtuPlan.price_to_user);
+        } else if (planConfig) {
           if (role === 'agent' && planConfig.agent_price) serverPrice = Number(planConfig.agent_price);
           else if (role === 'reseller' && planConfig.reseller_price) serverPrice = Number(planConfig.reseller_price);
           else if (planConfig.selling_price) serverPrice = Number(planConfig.selling_price);
