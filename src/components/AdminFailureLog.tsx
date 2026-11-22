@@ -89,7 +89,7 @@ export default function AdminFailureLog() {
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase text-[10px] tracking-wider">
+              <tr className="border-b border-slate-800 text-slate-400 font-semibold text-[10px] tracking-wider">
                 <th className="py-3 px-3">Time</th>
                 <th className="py-3 px-3">Network</th>
                 <th className="py-3 px-3">Plan Name</th>

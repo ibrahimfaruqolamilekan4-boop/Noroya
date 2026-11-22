@@ -238,7 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               filter: `id=eq.${sbUser.id}`
             },
             (payload) => {
-              console.log('⚡ [Supabase Realtime Sync]: User profile update received!', payload);
+ console.log(' [Supabase Realtime Sync]: User profile update received!', payload);
               if (payload.new) {
                 const updated = payload.new as any;
                 setUserProfile(prev => {

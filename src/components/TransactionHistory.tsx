@@ -64,7 +64,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
       setTransactions(normalized);
       
       if (showToast) {
-        toast.success("Transaction ledger refreshed from live database! ⚡", { icon: "🔥" });
+ toast.success("Transaction ledger refreshed from live database! ", { icon: "" });
       }
     } catch (err: any) {
       console.error("[TransactionHistory Supabase Fetch Error]:", err);
@@ -136,7 +136,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success("CSV transaction table downloaded successfully!", { icon: "📋" });
+ toast.success("CSV transaction table downloaded successfully!", { icon: "" });
   };
 
   // Filter and search logic
@@ -164,13 +164,13 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
   return (
     <div className="space-y-6 font-sans">
       {/* Neo-Brutalist Main Header Card */}
-      <div className="bg-amber-400 text-black border-2 border-black p-6 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="bg-amber-400 text-black border-2 border-black p-6 rounded-2xl shadow-brut-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <div className="flex items-center gap-2">
             <History className="w-6 h-6 animate-pulse" />
-            <h3 className="text-2xl md:text-3xl font-black uppercase tracking-tight">Supabase Purchase Logs</h3>
+            <h3 className="text-2xl md:text-3xl font-bold ">Supabase Purchase Logs</h3>
           </div>
-          <p className="text-xs font-bold text-black/80 mt-1 uppercase tracking-wider font-mono">
+          <p className="text-xs font-bold text-black/80 mt-1 font-mono">
             Direct Cloud Connection • Real-time Sync Active
           </p>
         </div>
@@ -178,14 +178,14 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
           <button 
             onClick={handleSync}
             disabled={isSyncing || loading}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white border-2 border-black hover:bg-slate-50 text-black px-4 py-3 text-xs font-black uppercase tracking-wider rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white border-2 border-black hover:bg-slate-50 text-black px-4 py-3 text-xs font-bold rounded-xl shadow-brut-lg hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-brut transition-all cursor-pointer disabled:opacity-50"
           >
             <RefreshCw size={13} className={cn(isSyncing && "animate-spin")} />
             {isSyncing ? "Syncing..." : "Sync Logs"}
           </button>
           <button 
             onClick={handleDownloadCSV}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 border-2 border-black hover:bg-blue-500 text-white px-4 py-3 text-xs font-black uppercase tracking-wider rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer active:scale-95"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-blue-600 border-2 border-black hover:bg-blue-500 text-white px-4 py-3 text-xs font-bold rounded-xl shadow-brut-lg hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-brut transition-all cursor-pointer"
           >
             <Download size={13} />
             Export CSV
@@ -194,7 +194,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
       </div>
 
       {/* Filter and Search Bar Card */}
-      <div className="bg-white border-2 border-black rounded-2xl p-4 md:p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-4 text-black">
+      <div className="bg-white border-2 border-black rounded-2xl p-4 md:p-6 shadow-brut-lg space-y-4 text-black">
         <div className="flex flex-col md:flex-row gap-3">
           {/* Search Box */}
           <div className="relative flex-1">
@@ -204,12 +204,12 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
               placeholder="Find transactions by description, reference, or type (data, airtime, cable...)..."
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none placeholder:text-slate-400 font-sans shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] text-black"
+              className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none placeholder:text-slate-400 font-sans shadow-brut text-black"
             />
           </div>
           
           {/* Status Filter Scroll List */}
-          <div className="flex items-center gap-2 bg-slate-50 border-2 border-black px-3 py-1.5 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] overflow-x-auto whitespace-nowrap scrollbar-none">
+          <div className="flex items-center gap-2 bg-slate-50 border-2 border-black px-3 py-1.5 rounded-xl shadow-brut overflow-x-auto whitespace-nowrap scrollbar-none">
             <Filter size={14} className="text-slate-500 shrink-0 ml-1" />
             <div className="flex gap-1">
               {[
@@ -224,7 +224,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
                   key={filt.id}
                   onClick={() => setStatusFilter(filt.id as any)}
                   className={cn(
-                    "text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg transition-all cursor-pointer",
+                    "text-[10px] font-bold  px-2.5 py-1.5 rounded-lg transition-all cursor-pointer",
                     statusFilter === filt.id 
                       ? "bg-black text-white hover:bg-black/95" 
                       : "text-slate-700 hover:bg-slate-200"
@@ -240,20 +240,20 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
 
       {/* Transactions Render Area */}
       {loading ? (
-        <div className="bg-white border-2 border-black rounded-2xl p-16 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col items-center justify-center gap-4 text-black">
+        <div className="bg-white border-2 border-black rounded-2xl p-16 text-center shadow-brut-lg flex flex-col items-center justify-center gap-4 text-black">
           <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-bold uppercase tracking-wider animate-pulse">Loading Live Supabase Transactions...</p>
+          <p className="text-sm font-bold animate-pulse">Loading Live Supabase Transactions...</p>
         </div>
       ) : error ? (
-        <div className="bg-white border-2 border-black rounded-2xl p-12 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
+        <div className="bg-white border-2 border-black rounded-2xl p-12 text-center shadow-brut-lg text-black">
           <div className="w-12 h-12 rounded-full bg-red-100 border-2 border-black flex items-center justify-center mx-auto mb-4">
             <AlertCircle size={24} className="text-red-600" />
           </div>
-          <h4 className="font-black text-red-600 uppercase tracking-tight">Failed to fetch transactions</h4>
-          <p className="text-xs text-slate-500 font-bold uppercase mt-1">{error}</p>
+          <h4 className="font-bold text-red-600 ">Failed to fetch transactions</h4>
+          <p className="text-xs text-slate-500 font-bold mt-1">{error}</p>
           <button 
             onClick={() => fetchTransactions()}
-            className="mt-4 bg-black text-white px-4 py-2 text-xs font-black uppercase rounded-lg border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-[2px] transition-all"
+            className="mt-4 bg-black text-white px-4 py-2 text-xs font-bold rounded-lg border-2 border-black shadow-brut active:translate-y-[2px] transition-all"
           >
             Retry Fetch
           </button>
@@ -278,19 +278,19 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
               <div 
                 key={tx.id}
                 onClick={() => onSelectTx?.(tx)}
-                className="bg-white border-2 border-black rounded-2xl p-4 md:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-black"
+                className="bg-white border-2 border-black rounded-2xl p-4 md:p-5 shadow-brut-lg hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-brut transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-black"
               >
                 <div className="flex items-center gap-4 w-full sm:w-auto">
                   <div className={cn(
-                    "w-12 h-12 rounded-xl border-2 border-black flex items-center justify-center shrink-0 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]",
+                    "w-12 h-12 rounded-xl border-2 border-black flex items-center justify-center shrink-0 shadow-brut",
                     isFunding ? "bg-emerald-100 text-emerald-950" : "bg-rose-100 text-rose-950"
                   )}>
                     {isFunding ? <ArrowDownLeft size={22} className="stroke-[2.5]" /> : <ArrowUpRight size={22} className="stroke-[2.5]" />}
                   </div>
                   <div className="space-y-1 overflow-hidden">
                     <div className="flex items-center gap-2">
-                      <p className="font-extrabold text-sm text-slate-900 truncate uppercase tracking-tight">{tx.description || `${typeLabel} Transaction`}</p>
-                      <span className="hidden md:inline-block px-2 py-0.5 bg-slate-100 border border-slate-300 rounded font-bold text-[8px] uppercase tracking-wider text-slate-600">
+                      <p className="font-bold text-sm text-slate-900 truncate ">{tx.description || `${typeLabel} Transaction`}</p>
+                      <span className="hidden md:inline-block px-2 py-0.5 bg-slate-100 border border-slate-300 rounded font-bold text-[8px] text-slate-600">
                         {typeLabel}
                       </span>
                     </div>
@@ -302,7 +302,7 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
                       {tx.reference && (
                         <>
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                          <span className="uppercase text-slate-400 select-all truncate max-w-[150px]">Ref: {tx.reference}</span>
+                          <span className="text-slate-400 select-all truncate max-w-[150px]">Ref: {tx.reference}</span>
                         </>
                       )}
                     </div>
@@ -311,14 +311,14 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
 
                 <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center w-full sm:w-auto shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 gap-1.5">
                   <span className={cn(
-                    "font-mono text-base md:text-lg font-black tracking-tight",
+                    "font-mono text-base md:text-lg font-bold tracking-tight",
                     isFunding ? "text-emerald-600" : "text-slate-800"
                   )}>
                     {isFunding ? "+" : "-"}{formatCurrency(tx.amount)}
                   </span>
                   
                   <span className={cn(
-                    "text-[9px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]",
+                    "text-[9px] font-bold  px-2.5 py-0.5 rounded-md border-2 border-black shadow-brut-sm",
                     isSuccess ? "bg-emerald-300 text-emerald-950" : 
                     isPending ? "bg-amber-300 text-amber-950" : 
                     "bg-rose-300 text-rose-950"
@@ -331,12 +331,12 @@ export default function TransactionHistory({ user, onSelectTx }: TransactionHist
           })}
         </div>
       ) : (
-        <div className="bg-white border-2 border-black rounded-2xl p-16 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
-          <div className="w-16 h-16 rounded-full bg-slate-50 border-2 border-black flex items-center justify-center mx-auto mb-4 animate-bounce">
-            <span className="text-2xl">🔍</span>
+        <div className="bg-white border-2 border-black rounded-2xl p-16 text-center shadow-brut-lg text-black">
+          <div className="w-16 h-16 rounded-full bg-slate-50 border-2 border-black flex items-center justify-center mx-auto mb-4 ">
+ <span className="text-2xl"></span>
           </div>
-          <h4 className="font-black text-slate-700 uppercase tracking-tight">No Transactions Found</h4>
-          <p className="text-xs text-slate-500 font-bold uppercase mt-1">Try resetting filters or click Sync Logs to refresh</p>
+          <h4 className="font-bold text-slate-700 ">No Transactions Found</h4>
+          <p className="text-xs text-slate-500 font-bold mt-1">Try resetting filters or click Sync Logs to refresh</p>
         </div>
       )}
     </div>

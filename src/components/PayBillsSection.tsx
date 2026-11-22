@@ -295,7 +295,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   {srv.icon}
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-slate-900 text-lg">{srv.title}</h4>
+                  <h4 className="font-bold text-slate-900 text-lg">{srv.title}</h4>
                   <p className="text-slate-500 text-sm mt-1 leading-relaxed font-medium">{srv.description}</p>
                 </div>
               </button>
@@ -317,8 +317,8 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 {selectedService === 'betting' && <Activity size={20} />}
               </span>
               <div>
-                <h4 className="font-extrabold text-slate-900 capitalize">{selectedService} Dispatcher</h4>
-                <p className="text-xs text-slate-400 font-semibold font-sans uppercase">Continuous Realtime Dispatch</p>
+                <h4 className="font-bold text-slate-900 capitalize">{selectedService} Dispatcher</h4>
+                <p className="text-xs text-slate-400 font-semibold font-sans ">Continuous Realtime Dispatch</p>
               </div>
             </div>
 
@@ -327,15 +327,15 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 <form onSubmit={handleValidateAccount} className="space-y-6 max-w-lg">
                   {/* Select Provider */}
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Choose Service Provider</label>
+                    <label className="text-xs font-bold text-slate-400 ml-1">Choose Service Provider</label>
                     <div className="grid grid-cols-3 gap-3">
                       {selectedService === 'cable' && liveCablePlans.map((row: any) => {
                           const p = String(row.provider_or_network || '').toUpperCase();
-                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-extrabold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
+                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-bold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
                         })}
                       {selectedService === 'electricity' && [...new Map(liveElectricityPlans.map((row: any) => [String(row.provider_or_network || '').toUpperCase(), row])).values()].map((row: any) => {
                           const p = String(row.provider_or_network || '').toUpperCase();
-                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-extrabold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
+                          return <button key={p} type="button" onClick={() => setProvider(p)} className={cn("py-3 rounded-2xl border text-sm font-bold text-center transition-all", provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700")}>{p}</button>;
                         })}
                       {selectedService === 'exam' && (
                         <>
@@ -343,7 +343,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                             <button
                               key={p} type="button" onClick={() => setProvider(p)}
                               className={cn(
-                                "py-3 rounded-2xl border text-sm font-extrabold text-center transition-all",
+                                "py-3 rounded-2xl border text-sm font-bold text-center transition-all",
                                 provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700"
                               )}
                             >
@@ -358,7 +358,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                             <button
                               key={p} type="button" onClick={() => setProvider(p)}
                               className={cn(
-                                "py-3 rounded-2xl border text-sm font-extrabold text-center transition-all",
+                                "py-3 rounded-2xl border text-sm font-bold text-center transition-all",
                                 provider === p ? "border-blue-600 bg-blue-50 text-blue-600" : "border-slate-100 hover:bg-slate-50 text-slate-700"
                               )}
                             >
@@ -373,7 +373,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   {/* Smartcard or Meter Number */}
                   {selectedService !== 'exam' ? (
                     <div className="space-y-2">
-                      <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">
+                      <label className="text-xs font-bold text-slate-400 ml-1">
                         {selectedService === 'cable' ? 'Smartcard / IUC Decoder Number' : ''}
                         {selectedService === 'electricity' ? 'Prepaid Meter ID / Account Number' : ''}
                         {selectedService === 'betting' ? 'Betting Wallet User ID' : ''}
@@ -397,7 +397,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     <>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Pin Quantity</label>
+                          <label className="text-xs font-bold text-slate-400 ml-1">Pin Quantity</label>
                           <select 
                             value={examQty} 
                             onChange={(e) => setExamQty(Number(e.target.value))}
@@ -410,14 +410,14 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                           </select>
                         </div>
                         <div className="space-y-2">
-                          <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Cost Per Token</label>
+                          <label className="text-xs font-bold text-slate-400 ml-1">Cost Per Token</label>
                           <div className="py-4 px-5 bg-slate-50 rounded-2xl border border-slate-100 text-sm font-mono font-bold text-slate-700">
                             {formatCurrency(provider === 'WAEC' ? 3200 : provider === 'NECO' ? 2800 : 3000)}
                           </div>
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Delivery Email Address</label>
+                        <label className="text-xs font-bold text-slate-400 ml-1">Delivery Email Address</label>
                         <input 
                           required
                           type="email" 
@@ -433,7 +433,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   {/* Cable Plan Select dropdown */}
                   {selectedService === 'cable' && (
                     <div className="space-y-2">
-                      <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Select Cable Option</label>
+                      <label className="text-xs font-bold text-slate-400 ml-1">Select Cable Option</label>
                       <select 
                         required
                         value={planName}
@@ -454,7 +454,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   {/* Amount field for Electricity and betting */}
                   {(selectedService === 'electricity' || selectedService === 'betting') && (
                     <div className="space-y-2">
-                      <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Top-Up Amount (₦)</label>
+                      <label className="text-xs font-bold text-slate-400 ml-1">Top-Up Amount (₦)</label>
                       <input 
                         required
                         type="text" 
@@ -469,7 +469,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   <button 
                     disabled={isValidating}
                     type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 pr-1 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100 disabled:opacity-50"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl py-4 pr-1 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100 disabled:opacity-50"
                   >
                     {isValidating ? (
                       <>
@@ -488,8 +488,8 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                 /* STEP 2 - INTERACTIVE SUMMARY CONFIRMATION */
                 <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6 max-w-lg">
                   <div className="p-6 rounded-3xl bg-blue-50/50 border border-blue-100 text-center space-y-1">
-                    <p className="text-[10px] uppercase font-black text-blue-600 tracking-wider">Validated Receiver Account</p>
-                    <h5 className="font-extrabold text-slate-900 text-lg">{validatedName}</h5>
+                    <p className="text-[10px] font-bold text-blue-600 tracking-wider">Validated Receiver Account</p>
+                    <h5 className="font-bold text-slate-900 text-lg">{validatedName}</h5>
                     <p className="text-xs text-slate-400 font-mono">Verified Safe Route ID check ok</p>
                   </div>
 
@@ -510,11 +510,11 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     )}
                     <div className="py-3 flex justify-between text-sm">
                       <span className="text-slate-400 font-medium">Platform Service Fee</span>
-                      <span className="font-bold text-emerald-600 flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded uppercase">FREE</span></span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded ">FREE</span></span>
                     </div>
                     <div className="py-4 flex justify-between text-base border-t border-dashed border-slate-200">
-                      <span className="text-slate-900 font-extrabold">Final Billing Amount</span>
-                      <span className="font-black text-blue-650 font-mono">
+                      <span className="text-slate-900 font-semibold">Final Billing Amount</span>
+                      <span className="font-bold text-blue-650 font-mono">
                         {selectedService === 'cable' ? formatCurrency(Number(planName.split('|')[1] || 0)) : ''}
                         {selectedService === 'electricity' ? formatCurrency(Number(amount)) : ''}
                         {selectedService === 'betting' ? formatCurrency(Number(amount)) : ''}
@@ -535,7 +535,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     <button 
                       disabled={isPaying}
                       onClick={handlePay}
-                      className="py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100 disabled:opacity-50"
+                      className="py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100 disabled:opacity-50"
                     >
                       {isPaying ? "Processing..." : "Conclude & Pay"}
                     </button>
@@ -549,15 +549,15 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   <div className="text-center py-6 space-y-3">
                     <SuccessFeedback size={70} showConfetti={true} />
                     <div>
-                      <h4 className="text-2xl font-black text-slate-900 mt-2">Transaction Successful!</h4>
-                      <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">DISPATCH CONFIRMED OUTFLOW</p>
+                      <h4 className="text-2xl font-bold text-slate-900 mt-2">Transaction Successful!</h4>
+                      <p className="text-xs text-slate-400 font-bold ">DISPATCH CONFIRMED OUTFLOW</p>
                     </div>
                   </div>
 
                   {successReceipt.token && (
                     <div className="p-6 rounded-3xl bg-amber-50 border border-amber-100 text-center space-y-1">
-                      <p className="text-[10px] uppercase font-black text-amber-700 tracking-wider">Your Prepaid Meter Token</p>
-                      <h5 className="font-mono font-extrabold text-slate-900 text-2xl tracking-widest select-all">{successReceipt.token}</h5>
+                      <p className="text-[10px] font-bold text-amber-700 tracking-wider">Your Prepaid Meter Token</p>
+                      <h5 className="font-mono font-bold text-slate-900 text-2xl tracking-widest select-all">{successReceipt.token}</h5>
                       <p className="text-xs text-amber-600 font-medium">Copy or enter this exact token key into your prepaid terminal.</p>
                     </div>
                   )}
@@ -565,7 +565,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   <div className="bg-slate-50 border border-slate-100 p-6 rounded-[2rem] divide-y divide-slate-100 text-sm">
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium font-sans">Payment Channel</span>
-                      <span className="font-bold text-slate-800 uppercase">{successReceipt.service} ({successReceipt.provider})</span>
+                      <span className="font-bold text-slate-800 ">{successReceipt.service} ({successReceipt.provider})</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium font-sans">Beneficiary</span>
@@ -577,7 +577,7 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium font-sans">Cleared Amount</span>
-                      <span className="font-extrabold text-slate-900 font-mono">{formatCurrency(successReceipt.amount)}</span>
+                      <span className="font-bold text-slate-900 font-mono">{formatCurrency(successReceipt.amount)}</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-400 font-medium font-sans">Reference ID</span>
@@ -588,13 +588,13 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
                   <div className="flex gap-4">
                     <button 
                       onClick={() => setShowReceiptModal(true)}
-                      className="flex-1 bg-slate-900 hover:bg-black text-white font-extrabold rounded-2xl py-4 flex items-center justify-center gap-2 shadow-xl shadow-slate-200"
+                      className="flex-1 bg-slate-900 hover:bg-black text-white font-bold rounded-2xl py-4 flex items-center justify-center gap-2 shadow-xl shadow-slate-200"
                     >
                       <Printer size={18} /> View & Print Receipt
                     </button>
                     <button 
                       onClick={() => { setSelectedService(null); resetFlow(); }}
-                      className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 font-extrabold rounded-2xl py-4"
+                      className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold rounded-2xl py-4"
                     >
                       Finish View
                     </button>
@@ -634,44 +634,44 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
               {/* Receipt Content */}
               <div id="receipt-print-area" className="space-y-6">
                 <div className="text-center pb-4 border-b border-dashed border-slate-100 space-y-2">
-                  <div className="inline-flex items-center gap-1 font-black text-lg tracking-tight">
+                  <div className="inline-flex items-center gap-1 font-bold text-lg tracking-tight">
                     <span className="text-blue-600">NORODATA</span>DATA
                   </div>
-                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">Telecom & Utility Invoice</p>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">Telecom & Utility Invoice</p>
                 </div>
 
                 <div className="text-center py-3">
-                  <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Cleared Amount</span>
-                  <p className="text-3xl font-black text-slate-900 font-mono transition-transform mt-1">{formatCurrency(successReceipt.amount)}</p>
-                  <span className="text-[10px] uppercase font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full mt-2 inline-flex items-center gap-1.5 font-sans">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" /> Transaction Success
+                  <span className="text-[10px] font-bold text-slate-400 tracking-wider">Cleared Amount</span>
+                  <p className="text-3xl font-bold text-slate-900 font-mono transition-transform mt-1">{formatCurrency(successReceipt.amount)}</p>
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full mt-2 inline-flex items-center gap-1.5 font-sans">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 " /> Transaction Success
                   </span>
                 </div>
 
                 <div className="space-y-3.5 pt-4 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Merchant Business</span>
-                    <span className="font-extrabold text-slate-800">NORODATA Hub</span>
+                    <span className="font-bold text-slate-800">NORODATA Hub</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Service Subtitle</span>
-                    <span className="font-extrabold text-slate-800 capitalize">{successReceipt.service} Billing</span>
+                    <span className="font-bold text-slate-800 capitalize">{successReceipt.service} Billing</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Channel Provider</span>
-                    <span className="font-extrabold text-slate-800">{successReceipt.provider}</span>
+                    <span className="font-bold text-slate-800">{successReceipt.provider}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Receiver Name</span>
-                    <span className="font-extrabold text-slate-800">{successReceipt.validatedName}</span>
+                    <span className="font-bold text-slate-800">{successReceipt.validatedName}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">ID / Account Number</span>
-                    <span className="font-mono font-extrabold text-slate-800">{successReceipt.account}</span>
+                    <span className="font-mono font-bold text-slate-800">{successReceipt.account}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Reference Code</span>
-                    <span className="font-mono font-extrabold text-slate-650">{successReceipt.ref}</span>
+                    <span className="font-mono font-bold text-slate-650">{successReceipt.ref}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400 font-medium">Payment Date/Time</span>
@@ -680,8 +680,8 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
 
                   {successReceipt.token && (
                     <div className="pt-3 border-t border-dashed border-slate-200 mt-4 text-center">
-                      <span className="text-[10px] uppercase font-black text-amber-700 block">Meter Load Token</span>
-                      <p className="font-mono font-black text-slate-900 text-lg tracking-widest mt-1 select-all">{successReceipt.token}</p>
+                      <span className="text-[10px] font-bold text-amber-700 block">Meter Load Token</span>
+                      <p className="font-mono font-bold text-slate-900 text-lg tracking-widest mt-1 select-all">{successReceipt.token}</p>
                     </div>
                   )}
                 </div>
@@ -695,13 +695,13 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
               <div className="mt-8 flex gap-3 print:hidden">
                 <button 
                   onClick={handlePrintReceipt}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 text-sm shadow-md"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 text-sm shadow-md"
                 >
                   <Printer size={16} /> Print Copy
                 </button>
                 <button 
                   onClick={() => setShowReceiptModal(false)}
-                  className="flex-1 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 font-extrabold py-3.5 px-4 rounded-xl text-sm transition-colors"
+                  className="flex-1 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold py-3.5 px-4 rounded-xl text-sm transition-colors"
                 >
                   Close Invoice
                 </button>

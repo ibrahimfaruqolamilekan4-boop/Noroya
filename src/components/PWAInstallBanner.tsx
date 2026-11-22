@@ -171,11 +171,11 @@ export function PWAInstallBanner() {
       {showBanner && (
         <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-50 bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-4 shadow-2xl shadow-emerald-950/80 text-white flex items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom-5 duration-300">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-green-500 flex items-center justify-center text-white shrink-0 shadow-md">
+            <div className="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center text-white shrink-0 shadow-md">
               <Smartphone size={24} />
             </div>
             <div>
-              <h4 className="text-sm font-black tracking-tight">Install NORODATA App</h4>
+              <h4 className="text-sm font-bold tracking-tight">Install NORODATA App</h4>
               <p className="text-xs text-slate-300 font-medium">
                 {platform === 'ios'
                   ? 'Add to Home Screen for quick access'
@@ -187,7 +187,7 @@ export function PWAInstallBanner() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleInstallClick}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black px-3.5 py-2.5 rounded-xl shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2.5 rounded-xl shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Download size={14} />
               <span>Install</span>
@@ -215,11 +215,11 @@ export function PWAInstallBanner() {
             </button>
 
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-bold">
-                📱
+              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-semibold">
+ 
               </div>
               <div>
-                <h3 className="text-base font-black">
+                <h3 className="text-base font-semibold">
                   {platform === 'ios'
                     ? 'Install on iPhone & iPad'
                     : platform === 'android'
@@ -234,7 +234,7 @@ export function PWAInstallBanner() {
               {platform === 'android' ? (
                 <>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">1</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Open Chrome menu</p>
                       <p className="text-slate-400 flex items-center gap-1">
@@ -243,7 +243,7 @@ export function PWAInstallBanner() {
                     </div>
                   </div>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">2</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Tap 'Install app'</p>
                       <p className="text-slate-400">
@@ -255,7 +255,7 @@ export function PWAInstallBanner() {
               ) : platform === 'ios' ? (
                 <>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">1</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Tap the Share button</p>
                       <p className="text-slate-400 flex items-center gap-1">
@@ -264,7 +264,7 @@ export function PWAInstallBanner() {
                     </div>
                   </div>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">2</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Select 'Add to Home Screen'</p>
                       <p className="text-slate-400 flex items-center gap-1">
@@ -276,7 +276,7 @@ export function PWAInstallBanner() {
               ) : (
                 <>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">1</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">1</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Click the Install icon</p>
                       <p className="text-slate-400">
@@ -285,7 +285,7 @@ export function PWAInstallBanner() {
                     </div>
                   </div>
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-slate-800/60 border border-slate-800">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black flex items-center justify-center shrink-0">2</span>
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center shrink-0">2</span>
                     <div>
                       <p className="font-bold text-white mb-0.5">Click 'Install'</p>
                       <p className="text-slate-400">
@@ -299,7 +299,7 @@ export function PWAInstallBanner() {
 
             <button
               onClick={handleDismiss}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 rounded-xl transition-all text-xs cursor-pointer"
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition-all text-xs cursor-pointer"
             >
               Got it, thanks!
             </button>

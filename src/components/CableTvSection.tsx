@@ -113,7 +113,7 @@ export default function CableTvSection() {
 
       const resData = await response.json();
       if (response.ok && resData.success) {
-        const uppercaseProvider = provider.code.toUpperCase();
+        const Provider = provider.code.toUpperCase();
         
         // Expiration calculation: Current date + 30 days
         const expire = new Date();
@@ -123,7 +123,7 @@ export default function CableTvSection() {
         setValidatedAccount({
           customerName: resData.customerName,
           smartcardNo: smartcardNo.trim(),
-          provider: uppercaseProvider,
+          provider: Provider,
           packageName: selectedPackage.name,
           price: selectedPackage.price,
           dueDate
@@ -240,7 +240,7 @@ export default function CableTvSection() {
               <div className="space-y-4">
                 {plansLoading && <p className="text-xs text-slate-500">Loading active cable packages…</p>}
                 {!plansLoading && cableProviders.length === 0 && <p className="text-xs text-rose-500">No active cable packages are available. Ask an admin to publish one.</p>}
-                <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 block">
+                <label className="text-xs font-bold text-slate-400 ml-1 block">
                   Select Cable Provider
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -250,11 +250,11 @@ export default function CableTvSection() {
                       onClick={() => setProvider(cab)}
                       className="border border-slate-100 bg-white rounded-3xl p-6 hover:border-purple-300 hover:shadow-lg hover:shadow-purple-50/40 text-left transition-all flex flex-col justify-between h-40 outline-none"
                     >
-                      <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center font-black text-sm shadow-sm", cab.logoBg, cab.textColor)}>
+                      <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-sm shadow-sm", cab.logoBg, cab.textColor)}>
                         {cab.shortName}
                       </div>
                       <div className="mt-4">
-                        <h4 className="font-extrabold text-slate-800 text-base tracking-tight">{cab.name}</h4>
+                        <h4 className="font-bold text-slate-800 text-base tracking-tight">{cab.name}</h4>
                         <p className="text-xs text-slate-400 font-medium mt-1">Starting from ₦{cab.packages[0].price.toLocaleString()} / month</p>
                       </div>
                     </button>
@@ -271,8 +271,8 @@ export default function CableTvSection() {
                       <Tv size={20} />
                     </span>
                     <div>
-                      <h4 className="font-extrabold text-slate-900">{provider.name} Booster</h4>
-                      <p className="text-[10px] text-slate-400 font-extrabold tracking-widest uppercase">Verified decoder account activation</p>
+                      <h4 className="font-bold text-slate-900">{provider.name} Booster</h4>
+                      <p className="text-[10px] text-slate-400 font-bold ">Verified decoder account activation</p>
                     </div>
                   </div>
                   <div className="text-xs font-bold text-purple-600 bg-purple-50 px-2.5 py-1 rounded-lg">
@@ -284,9 +284,9 @@ export default function CableTvSection() {
                   
                   {/* Smartcard Number / IUC ID input */}
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1 flex justify-between">
+                    <label className="text-xs font-bold text-slate-400 ml-1 flex justify-between">
                       <span>Smartcard / IUC Decoder Identification</span>
-                      <span className="text-slate-300 font-bold tracking-normal uppercase text-[9px]">MultiChoice validation safe</span>
+                      <span className="text-slate-300 font-bold text-[9px]">MultiChoice validation safe</span>
                     </label>
                     <input
                       required
@@ -296,13 +296,13 @@ export default function CableTvSection() {
                       value={smartcardNo}
                       onChange={(e) => setSmartcardNo(e.target.value.replace(/\D/g, ''))}
                       placeholder="e.g. 1024567890"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4  px-5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/10 focus:border-purple-500"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/10 focus:border-purple-500"
                     />
                   </div>
 
                   {/* Selecting premium packages */}
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-1">Select Cable subscription Bouquet Package</label>
+                    <label className="text-xs font-bold text-slate-400 ml-1">Select Cable subscription Bouquet Package</label>
                     <div className="grid grid-cols-1 gap-2.5 max-h-60 overflow-y-auto pr-1">
                       {provider.packages.map((pkg) => {
                         const isChosen = selectedPackage?.id === pkg.id;
@@ -323,8 +323,8 @@ export default function CableTvSection() {
                               <span>{pkg.name}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-base font-black">₦{pkg.price.toLocaleString()}</span>
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-white border border-slate-100 px-1.5 py-0.5 rounded">
+                              <span className="font-mono text-base font-semibold">₦{pkg.price.toLocaleString()}</span>
+                              <span className="text-[10px] text-slate-400 font-bold bg-white border border-slate-100 px-1.5 py-0.5 rounded">
                                 {pkg.duration}
                               </span>
                             </div>
@@ -346,7 +346,7 @@ export default function CableTvSection() {
                     <button
                       disabled={isValidating}
                       type="submit"
-                      className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl py-4 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
+                      className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl py-4 transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
                     >
                       {isValidating ? (
                         <>
@@ -378,8 +378,8 @@ export default function CableTvSection() {
                 <ShieldCheck size={22} />
               </div>
               <div className="space-y-1">
-                <p className="text-xs uppercase font-black text-green-700 tracking-wider">Subscriber Details Verified</p>
-                <h4 className="font-extrabold text-slate-900 text-lg leading-snug">{validatedAccount.customerName}</h4>
+                <p className="text-xs font-bold text-green-700 tracking-wider">Subscriber Details Verified</p>
+                <h4 className="font-bold text-slate-900 text-lg leading-snug">{validatedAccount.customerName}</h4>
                 <p className="text-xs text-slate-500 font-sans leading-relaxed">
                   Smartcard / IUC Code safe check confirm. Status: Active.
                 </p>
@@ -388,32 +388,32 @@ export default function CableTvSection() {
 
             {/* Billing detail card summary */}
             <div className="p-6 bg-white rounded-[2rem] border border-slate-100 shadow-sm space-y-4 font-sans">
-              <h4 className="font-black text-slate-900 text-sm uppercase tracking-wider pl-1 pb-2 border-b border-slate-50 font-sans">Cable TV Subscription Invoice</h4>
+              <h4 className="font-bold text-slate-900 text-sm pl-1 pb-2 border-b border-slate-50 font-sans">Cable TV Subscription Invoice</h4>
               
               <div className="divide-y divide-slate-100 text-xs">
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium font-sans">Channel Operator</span>
-                  <span className="font-extrabold text-slate-800">{provider.name}</span>
+                  <span className="font-bold text-slate-800">{provider.name}</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium font-sans">Decoder Card PIN</span>
-                  <span className="font-mono font-extrabold text-slate-800 tracking-wider">{validatedAccount.smartcardNo}</span>
+                  <span className="font-mono font-bold text-slate-800 tracking-wider">{validatedAccount.smartcardNo}</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium">Selected Package Bouquet</span>
-                  <span className="font-extrabold text-slate-800">{validatedAccount.packageName}</span>
+                  <span className="font-bold text-slate-800">{validatedAccount.packageName}</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium">Scheduled Coverage Duration</span>
-                  <span className="font-extrabold text-slate-800">30 Days (Renew: {validatedAccount.dueDate})</span>
+                  <span className="font-bold text-slate-800">30 Days (Renew: {validatedAccount.dueDate})</span>
                 </div>
                 <div className="py-3 flex justify-between">
                   <span className="text-slate-400 font-medium">Utility Billing Fee</span>
-                  <span className="font-bold text-emerald-600 uppercase flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded">FREE</span></span>
+                  <span className="font-bold text-emerald-600 flex items-center gap-1">₦0.00 <span className="text-[9px] bg-emerald-50 px-1 py-0.5 rounded">FREE</span></span>
                 </div>
                 <div className="py-4 flex justify-between text-sm border-t border-dashed border-slate-200">
-                  <span className="text-slate-900 font-extrabold">Total Outflow Debit</span>
-                  <span className="text-lg font-black text-blue-600 font-mono">{formatCurrency(validatedAccount.price)}</span>
+                  <span className="text-slate-900 font-semibold">Total Outflow Debit</span>
+                  <span className="text-lg font-bold text-blue-600 font-mono">{formatCurrency(validatedAccount.price)}</span>
                 </div>
               </div>
 
@@ -436,7 +436,7 @@ export default function CableTvSection() {
               <button
                 disabled={isPaying}
                 onClick={handlePayment}
-                className="py-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
+                className="py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-100"
               >
                 {isPaying ? (
                   <>
@@ -463,8 +463,8 @@ export default function CableTvSection() {
             <div className="text-center py-6 space-y-3">
               <SuccessFeedback size={70} showConfetti={true} />
               <div>
-                <h4 className="text-2xl font-black text-slate-900 mt-2">Subscription Completed!</h4>
-                <p className="text-xs text-slate-400 font-extrabold tracking-widest uppercase font-sans">AUTOMATED CABLE DECODER RECHARGED</p>
+                <h4 className="text-2xl font-bold text-slate-900 mt-2">Subscription Completed!</h4>
+                <p className="text-xs text-slate-400 font-bold font-sans">AUTOMATED CABLE DECODER RECHARGED</p>
               </div>
             </div>
 
@@ -472,39 +472,39 @@ export default function CableTvSection() {
             <div className="bg-slate-50 rounded-[2rem] border border-slate-100 p-6 space-y-3.5 divide-y divide-slate-100 text-xs font-sans">
               <div className="py-2.5 flex justify-between items-center first:pt-0">
                 <span className="text-slate-400 font-medium font-sans">Merchant Outlet</span>
-                <span className="font-extrabold text-slate-800">NORODATA Hub</span>
+                <span className="font-bold text-slate-800">NORODATA Hub</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium font-sans">Cable TV Service</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.provider}</span>
+                <span className="font-bold text-slate-800">{paymentReceipt.provider}</span>
               </div>
               <span className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Subscriber Name</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.customerName}</span>
+                <span className="font-bold text-slate-800">{paymentReceipt.customerName}</span>
               </span>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium font-sans">IUC Smartcard Number</span>
-                <span className="font-mono font-extrabold text-slate-800">{paymentReceipt.smartcardNo}</span>
+                <span className="font-mono font-bold text-slate-800">{paymentReceipt.smartcardNo}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Recharged Package Plan</span>
-                <span className="font-extrabold text-slate-800">{paymentReceipt.packageName}</span>
+                <span className="font-bold text-slate-800">{paymentReceipt.packageName}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium font-mono">Outflow Debit Cost</span>
-                <span className="font-black text-slate-900 font-mono text-sm">{formatCurrency(paymentReceipt.amount)}</span>
+                <span className="font-bold text-slate-900 font-mono text-sm">{formatCurrency(paymentReceipt.amount)}</span>
               </div>
               {paymentReceipt.cashbackEarned > 0 ? (
                 <div className="py-2.5 flex justify-between items-center col">
-                  <span className="text-amber-700 font-bold">Earned Cashback Bonus</span>
-                  <span className="font-black font-mono text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">
+                  <span className="text-amber-700 font-semibold">Earned Cashback Bonus</span>
+                  <span className="font-bold font-mono text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">
                     + {formatCurrency(paymentReceipt.cashbackEarned)}
                   </span>
                 </div>
               ) : null}
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium font-sans">Reference Token ID</span>
-                <span className="font-mono font-extrabold text-slate-650">{paymentReceipt.ref}</span>
+                <span className="font-mono font-bold text-slate-650">{paymentReceipt.ref}</span>
               </div>
               <div className="py-2.5 flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Transaction Timestamp</span>
@@ -516,13 +516,13 @@ export default function CableTvSection() {
             <div className="grid grid-cols-2 gap-4">
               <button
                 onClick={() => window.print()}
-                className="py-4 rounded-xl bg-slate-900 text-white font-extrabold text-xs tracking-wider uppercase flex items-center justify-center gap-2 hover:bg-black transition-all shadow-md"
+                className="py-4 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-2 hover:bg-black transition-all shadow-md"
               >
                 <Printer size={16} /> Print E-Receipt
               </button>
               <button
                 onClick={resetFlow}
-                className="py-4 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-extrabold text-xs tracking-wider uppercase transition-all"
+                className="py-4 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold text-xs transition-all"
               >
                 New Subscription
               </button>

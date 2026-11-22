@@ -3,6 +3,12 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install --production=false",
+  "crons": [
+    {
+      "path": "/api/cron/sync-vtu-plans",
+      "schedule": "*/15 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/webhook(.*)",

@@ -463,7 +463,7 @@ export default function AdminPanelSection() {
       setServicesConfig(prev => prev.filter(s => s.service_type !== 'data' && s.service_type !== 'DATA'));
       setDataPlansList([]);
       toast.dismiss(toastId);
-      toast.success('🗑️ All data plans deleted successfully! You can now add fresh plans.');
+ toast.success(' All data plans deleted successfully! You can now add fresh plans.');
       setShowDeleteAllModal(false);
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -885,10 +885,10 @@ export default function AdminPanelSection() {
             <ShieldCheck size={22} />
           </div>
           <div>
-            <h4 className="font-extrabold text-slate-800 text-lg">
+            <h4 className="font-bold text-slate-800 text-lg">
               {isEsimAdmin ? "eSIM Operator Desk" : "Platform Admin Control"}
             </h4>
-            <p className="text-xs text-slate-400 font-semibold font-sans uppercase">
+            <p className="text-xs text-slate-400 font-semibold font-sans ">
               {isEsimAdmin 
                 ? "Logged in as jeffholland299@gmail.com · Restricted to eSIM Messages & Fulfillment"
                 : "Continuous Whitelisted Bypass Mode"}
@@ -914,7 +914,7 @@ export default function AdminPanelSection() {
               }
             }}
             disabled={pushLoading}
-            className="px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95 border bg-amber-500 hover:bg-amber-600 text-white border-amber-600 disabled:opacity-50"
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer border bg-amber-500 hover:bg-amber-600 text-white border-amber-600 disabled:opacity-50"
           >
             <Bell size={14} />
             <span>{pushLoading ? 'Enabling...' : 'Enable admin notifications'}</span>
@@ -925,44 +925,44 @@ export default function AdminPanelSection() {
             type="button"
             onClick={() => setAdminSubTab('esim-messages')}
             className={cn(
-              "px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95 border",
+              "px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer border",
               adminSubTab === 'esim-messages'
                 ? "bg-teal-600 text-white border-teal-500 ring-2 ring-teal-400/40"
                 : "bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-300"
             )}
           >
             <MessageSquare size={14} />
-            <span>📶 eSIM Messages</span>
+ <span> eSIM Messages</span>
           </button>
 
-          <span className="text-xs bg-green-50 text-green-700 font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping" /> Connection secure
+          <span className="text-xs bg-green-50 text-green-700 font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 border border-green-150">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 " /> Connection secure
           </span>
         </div>
       </div>
 
       {/* iPhone PWA Notification Guidance */}
       <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
-        <span className="text-base">📲</span>
+ <span className="text-base"></span>
         <span>
           <strong>On iPhone, install NORODATA to your Home Screen first, then enable notifications.</strong>
         </span>
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1.5 rounded-2xl max-w-5xl select-none font-bold">
+      <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1.5 rounded-2xl max-w-5xl select-none font-semibold">
         {/* On all 3 accounts, eSIM Messages button is always available */}
         <button
           type="button"
           onClick={() => setAdminSubTab('esim-messages')}
           className={cn(
-            "px-4 py-2.5 text-xs md:text-sm font-black rounded-xl transition flex items-center gap-1.5 cursor-pointer",
+            "px-4 py-2.5 text-xs md:text-sm font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer",
             adminSubTab === 'esim-messages'
-              ? "bg-teal-600 text-white shadow-md font-extrabold"
+              ? "bg-teal-600 text-white shadow-md font-semibold"
               : "text-teal-700 hover:text-teal-900 hover:bg-teal-50"
           )}
         >
-          <span>📶 eSIM Messages</span>
+ <span> eSIM Messages</span>
         </button>
 
         {!isEsimAdmin && !isRestrictedAdmin && (
@@ -971,9 +971,9 @@ export default function AdminPanelSection() {
               type="button"
               onClick={() => setAdminSubTab('service-plans')}
               className={cn(
-                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                "py-2.5 px-3.5 text-xs  rounded-xl transition-all cursor-pointer text-center font-sans",
                 adminSubTab === 'service-plans'
-                  ? "bg-white text-slate-900 shadow-md font-extrabold"
+                  ? "bg-white text-slate-900 shadow-md font-semibold"
                   : "text-slate-500 hover:text-slate-850"
               )}
             >
@@ -983,9 +983,9 @@ export default function AdminPanelSection() {
               type="button"
               onClick={() => setAdminSubTab('opay-receipts')}
               className={cn(
-                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans",
+                "py-2.5 px-3.5 text-xs  rounded-xl transition-all cursor-pointer text-center font-sans",
                 adminSubTab === 'opay-receipts'
-                  ? "bg-white text-slate-900 shadow-md font-extrabold"
+                  ? "bg-white text-slate-900 shadow-md font-semibold"
                   : "text-slate-500 hover:text-slate-850"
               )}
             >
@@ -995,34 +995,32 @@ export default function AdminPanelSection() {
               type="button"
               onClick={() => setAdminSubTab('unmatched-deposits')}
               className={cn(
-                "py-2.5 px-3.5 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer text-center font-sans flex items-center gap-1.5",
+                "py-2.5 px-3.5 text-xs  rounded-xl transition-all cursor-pointer text-center font-sans flex items-center gap-1.5",
                 adminSubTab === 'unmatched-deposits'
-                  ? "bg-emerald-600 text-white shadow-md font-extrabold"
-                  : "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 font-bold"
+                  ? "bg-emerald-600 text-white shadow-md font-semibold"
+                  : "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 font-semibold"
               )}
             >
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <span>⚡ Unmatched Deposits</span>
+ <span> Unmatched Deposits</span>
             </button>
             <button
               onClick={() => setAdminSubTab('pricing-manager')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
-                adminSubTab === 'pricing-manager'
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${ adminSubTab === 'pricing-manager'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              💰 Pricing Manager
+ Pricing Manager
             </button>
             <button
               onClick={() => setAdminSubTab('dashboard')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
-                adminSubTab === 'dashboard'
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${ adminSubTab === 'dashboard'
                   ? 'bg-indigo-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              📊 Dashboard
+ Dashboard
             </button>
           </>
         )}
@@ -1030,36 +1028,33 @@ export default function AdminPanelSection() {
           <>
             <button
               onClick={() => setAdminSubTab('transactions')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
-                adminSubTab === 'transactions'
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${ adminSubTab === 'transactions'
                   ? 'bg-indigo-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              🧾 Transactions
+ Transactions
             </button>
             <button
               onClick={() => setAdminSubTab('user-mgmt')}
-              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
-                adminSubTab === 'user-mgmt'
+              className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${ adminSubTab === 'user-mgmt'
                   ? 'bg-indigo-600 text-white shadow'
                   : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
               }`}
             >
-              👤 User Management
+ User Management
             </button>
           </>
         )}
         {!isEsimAdmin && !isRestrictedAdmin && (
           <button
             onClick={() => setAdminSubTab('provider-status')}
-            className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${
-              adminSubTab === 'provider-status'
+            className={`px-4 py-2 text-sm font-semibold rounded-xl transition cursor-pointer ${ adminSubTab === 'provider-status'
                 ? 'bg-indigo-600 text-white shadow'
                 : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
             }`}
           >
-            🛰️ Provider Status
+ Provider Status
           </button>
         )}
       </div>
@@ -1076,27 +1071,27 @@ export default function AdminPanelSection() {
         /* DEDICATED SERVICE PLANS MANAGER SPLIT-SCREEN LAYOUT */
         <div className="space-y-6 pb-12">
           {/* Header Action Dashboard with Option C Neo-Brutalis styling */}
-          <div className="bg-yellow-100 rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+          <div className="bg-yellow-100 rounded-2xl border-2 border-black p-6 shadow-brut-lg flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-black animate-pulse"></span>
-                <span className="text-[10px] uppercase font-black tracking-wider text-black font-sans">Option C Neo-Brutalism Design Panel</span>
+                <span className="text-[10px] font-bold tracking-wider text-black font-sans">Option C Neo-Brutalism Design Panel</span>
               </div>
-              <h4 className="font-extrabold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubz VTU Integration Console</h4>
+              <h4 className="font-bold text-2xl tracking-tight text-black mt-0.5 font-sans">Mozosubz VTU Integration Console</h4>
               <p className="text-xs text-black/80 font-bold max-w-2xl font-sans">
                 Real-time synchronized control. Keep your published digital packages perfectly calibrated. 7-day physical lifespan rules apply automatically on database write transactions.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="bg-white border-2 border-black px-4 py-2.5 rounded-2xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] text-center shrink-0">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block font-sans">Active Services</span>
-                <span className="text-xl font-black text-black font-mono">{servicesConfig.filter(s => s.is_active).length} / {servicesConfig.length}</span>
+              <div className="bg-white border-2 border-black px-4 py-2.5 rounded-2xl shadow-brut text-center shrink-0">
+                <span className="text-[10px] font-bold text-slate-500 block font-sans">Active Services</span>
+                <span className="text-xl font-bold text-black font-mono">{servicesConfig.filter(s => s.is_active).length} / {servicesConfig.length}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setShowDeleteAllModal(true)}
                 disabled={isDeletingAllPlans}
-                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-3 rounded-2xl border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95"
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-3 rounded-2xl border-2 border-black shadow-brut hover:shadow-brut-lg transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
               >
                 <Trash2 size={14} />
                 <span>{isDeletingAllPlans ? "Deleting..." : "Delete All Data Plans"}</span>
@@ -1107,13 +1102,13 @@ export default function AdminPanelSection() {
           {/* Delete All Data Plans Confirmation Modal */}
           {showDeleteAllModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-              <div className="bg-white border-4 border-black rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] space-y-4 text-left">
+              <div className="bg-white border-4 border-black rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-brut-lg space-y-4 text-left">
                 <div className="flex items-start gap-3.5">
                   <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 border-2 border-black flex items-center justify-center text-xl shrink-0">
                     <Trash2 size={24} />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-lg font-black text-black">
+                    <h3 className="text-lg font-bold text-black">
                       Delete ALL Data Plans?
                     </h3>
                     <p className="text-xs text-slate-600 font-medium leading-relaxed">
@@ -1122,8 +1117,8 @@ export default function AdminPanelSection() {
                   </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-red-50 border-2 border-black text-xs text-red-700 font-bold">
-                  ⚠️ Permanent wipe: all existing data bundles in database will be purged.
+                <div className="p-3 rounded-xl bg-red-50 border-2 border-black text-xs text-red-700 font-semibold">
+ Permanent wipe: all existing data bundles in database will be purged.
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-2">
@@ -1131,7 +1126,7 @@ export default function AdminPanelSection() {
                     type="button"
                     onClick={() => setShowDeleteAllModal(false)}
                     disabled={isDeletingAllPlans}
-                    className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-black font-extrabold text-xs border-2 border-black cursor-pointer transition"
+                    className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-black font-bold text-xs border-2 border-black cursor-pointer transition"
                   >
                     Cancel
                   </button>
@@ -1139,7 +1134,7 @@ export default function AdminPanelSection() {
                     type="button"
                     onClick={handleDeleteAllPlans}
                     disabled={isDeletingAllPlans}
-                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center gap-2 cursor-pointer transition active:scale-95 disabled:opacity-50"
+                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs border-2 border-black shadow-brut flex items-center gap-2 cursor-pointer transition disabled:opacity-50"
                   >
                     {isDeletingAllPlans ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                     <span>{isDeletingAllPlans ? 'Deleting All...' : 'Yes, Delete All Plans'}</span>
@@ -1151,15 +1146,15 @@ export default function AdminPanelSection() {
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
             {/* COLUMN A: Create New Service Config (Form) */}
-            <div className="xl:col-span-1 bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-5">
+            <div className="xl:col-span-1 bg-white rounded-3xl border-2 border-black p-6 shadow-brut-lg space-y-5">
               <div>
-                <h5 className="font-extrabold text-lg text-black font-sans">➕ Add New Service</h5>
-                <p className="text-[10px] text-slate-400 font-bold font-sans uppercase">Create dynamic VTU product mapping</p>
+ <h5 className="font-bold text-lg text-black font-sans"> Add New Service</h5>
+                <p className="text-[10px] text-slate-400 font-bold font-sans ">Create dynamic VTU product mapping</p>
               </div>
 
               <form onSubmit={handleAddServiceConfig} className="space-y-4 text-xs font-bold text-left">
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Service Type</label>
+                  <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Service Type</label>
                   <select
                     value={newServiceType}
                     onChange={(e) => {
@@ -1177,16 +1172,16 @@ export default function AdminPanelSection() {
                     }}
                     className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none"
                   >
-                    <option value="data">📶 Internet Data</option>
-                    <option value="airtime">📞 Voice Airtime</option>
-                    <option value="cable">📺 Cable TV Bouquet</option>
-                    <option value="electricity">⚡ Electricity Bill Disco</option>
-                    <option value="exam_pin">🎓 Exam Result PIN</option>
+ <option value="data"> Internet Data</option>
+ <option value="airtime"> Voice Airtime</option>
+ <option value="cable"> Cable TV Bouquet</option>
+ <option value="electricity"> Electricity Bill Disco</option>
+ <option value="exam_pin"> Exam Result PIN</option>
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Network or Provider</label>
+                  <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Network or Provider</label>
                   <input
                     required
                     type="text"
@@ -1198,7 +1193,7 @@ export default function AdminPanelSection() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Package/Item Name</label>
+                  <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Package/Item Name</label>
                   <input
                     required
                     type="text"
@@ -1211,7 +1206,7 @@ export default function AdminPanelSection() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Cost Price (₦)</label>
+                    <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Cost Price (₦)</label>
                     <input
                       required
                       type="number"
@@ -1222,7 +1217,7 @@ export default function AdminPanelSection() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Selling Price (₦)</label>
+                    <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Selling Price (₦)</label>
                     <input
                       required
                       type="number"
@@ -1236,7 +1231,7 @@ export default function AdminPanelSection() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Mozosubz Plan/Identifier ID</label>
+                    <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Mozosubz Plan/Identifier ID</label>
                     <input
                       required
                       type="text"
@@ -1247,7 +1242,7 @@ export default function AdminPanelSection() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Plan Days / Validity</label>
+                    <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Plan Days / Validity</label>
                     <input
                       required
                       type="text"
@@ -1261,11 +1256,11 @@ export default function AdminPanelSection() {
 
                 {newServiceType === 'data' && (
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Data Plan Category / Type</label>
+                    <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Data Plan Category / Type</label>
                     <select
                       value={newPlanCategory}
                       onChange={(e) => setNewPlanCategory(e.target.value as any)}
-                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-bold"
+                      className="w-full bg-slate-50 border-2 border-black rounded-xl p-3 focus:outline-none font-semibold"
                     >
                       <option value="SME">SME</option>
                       <option value="CG">CG (Corporate Gifting)</option>
@@ -1277,7 +1272,7 @@ export default function AdminPanelSection() {
                 <button
                   type="submit"
                   disabled={isAddingService}
-                  className="w-full bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold p-3.5 rounded-xl transition-all flex items-center justify-center gap-2 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] cursor-pointer text-xs"
+                  className="w-full bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-bold p-3.5 rounded-xl transition-all flex items-center justify-center gap-2 border-2 border-black shadow-brut cursor-pointer text-xs"
                 >
                   {isAddingService ? (
                     <>
@@ -1292,10 +1287,10 @@ export default function AdminPanelSection() {
             </div>
 
             {/* COLUMN B: Manage Existing Service Configurations */}
-            <div className="xl:col-span-2 bg-white rounded-3xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-6">
+            <div className="xl:col-span-2 bg-white rounded-3xl border-2 border-black p-6 shadow-brut-lg space-y-6">
               <div className="border-b-2 border-black pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
                 <div>
-                  <h5 className="font-extrabold text-lg text-black font-sans uppercase tracking-tight">⚙️ Services Inventory Matrix</h5>
+ <h5 className="font-bold text-lg text-black font-sans "> Services Inventory Matrix</h5>
                   <p className="text-[11px] text-slate-500 font-bold font-sans">
                     View active plans, calibrate markup profits, and save configuration records to Supabase.
                   </p>
@@ -1308,20 +1303,20 @@ export default function AdminPanelSection() {
                 <div className="flex flex-wrap gap-1.5 justify-start text-left">
                   {([
                     { id: 'all', label: 'All Services' },
-                    { id: 'data', label: '📶 Internet Data' },
-                    { id: 'airtime', label: '📞 Airtime' },
-                    { id: 'cable', label: '📺 Cable TV' },
-                    { id: 'electricity', label: '⚡ Electricity' },
-                    { id: 'exam_pin', label: '🎓 Exam PIN' }
+ { id: 'data', label: ' Internet Data' },
+ { id: 'airtime', label: ' Airtime' },
+ { id: 'cable', label: ' Cable TV' },
+ { id: 'electricity', label: ' Electricity' },
+ { id: 'exam_pin', label: ' Exam PIN' }
                   ] as const).map((tab) => (
                     <button
                       key={tab.id}
                       type="button"
                       onClick={() => setInventoryCategoryTab(tab.id as any)}
                       className={cn(
-                        "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                        "px-3 py-1.5 rounded-lg text-[10px] font-bold border-2 border-black transition-all cursor-pointer font-sans",
                         inventoryCategoryTab === tab.id
-                          ? "bg-black text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                          ? "bg-black text-white shadow-brut"
                           : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
                       )}
                     >
@@ -1404,7 +1399,7 @@ export default function AdminPanelSection() {
                       <div
                         key={item.id}
                         className={cn(
-                          "bg-slate-50 border-2 border-black rounded-xl p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all space-y-3 text-left relative overflow-hidden",
+                          "bg-slate-50 border-2 border-black rounded-xl p-4 shadow-brut hover:shadow-brut-lg transition-all space-y-3 text-left relative overflow-hidden",
                           !item.is_active && "opacity-70 grayscale"
                         )}
                       >
@@ -1417,8 +1412,8 @@ export default function AdminPanelSection() {
                               onChange={(e) => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, e.target.checked, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
                               className="rounded border-2 border-black accent-black cursor-pointer h-4 w-4"
                             />
-                            <span className="text-[10px] font-black uppercase font-sans">
-                              {item.is_active ? "🟢 Active" : "🔴 Off"}
+                            <span className="text-[10px] font-bold font-sans">
+ {item.is_active ? " Active" : " Off"}
                             </span>
                           </label>
                         </div>
@@ -1427,7 +1422,7 @@ export default function AdminPanelSection() {
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5 font-sans">
                             <span className={cn(
-                              "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                              "text-[9px] font-bold px-2 py-0.5 rounded leading-none border border-black",
                               item.provider_or_network?.toUpperCase() === 'MTN' ? "bg-yellow-400 text-black" :
                               item.provider_or_network?.toUpperCase() === 'AIRTEL' ? "bg-red-500 text-white" :
                               item.provider_or_network?.toUpperCase() === 'GLO' ? "bg-green-500 text-white" :
@@ -1436,18 +1431,18 @@ export default function AdminPanelSection() {
                             )}>
                               {item.provider_or_network}
                             </span>
-                            <span className="text-[9px] bg-slate-200 text-slate-800 font-extrabold px-1.5 py-0.5 rounded leading-none uppercase border border-slate-300 font-mono">
+                            <span className="text-[9px] bg-slate-200 text-slate-800 font-bold px-1.5 py-0.5 rounded leading-none border border-slate-300 font-mono">
                               {item.service_type}
                             </span>
                           </div>
 
                           {/* Display parsed name and category badge */}
                           <div className="flex items-center gap-2 pt-1.5">
-                            <h6 className="font-black text-slate-950 text-base tracking-tight leading-snug">
+                            <h6 className="font-bold text-slate-950 text-base tracking-tight leading-snug">
                               {displayName}
                             </h6>
                             <span className={cn(
-                              "text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none border border-black",
+                              "text-[9px] font-bold px-2 py-0.5 rounded leading-none border border-black",
                               itemCategory === 'SME' ? "bg-purple-100 text-purple-800 border-purple-300" :
                               itemCategory === 'CG' ? "bg-blue-100 text-blue-850 border-blue-300" :
                               "bg-amber-100 text-amber-800 border-amber-300"
@@ -1529,7 +1524,7 @@ export default function AdminPanelSection() {
                         {/* Price Fields and Profiting Grid */}
                         <div className="pt-2.5 border-t border-slate-200/85 grid grid-cols-3 gap-3">
                           <div className="space-y-1">
-                            <span className="text-[8px] font-extrabold text-slate-400 block uppercase pl-1 font-sans">Cost (₦)</span>
+                            <span className="text-[8px] font-bold text-slate-400 block pl-1 font-sans">Cost (₦)</span>
                             <input
                               type="number"
                               value={item.cost_price}
@@ -1542,7 +1537,7 @@ export default function AdminPanelSection() {
                           </div>
 
                           <div className="space-y-1">
-                            <span className="text-[8px] font-extrabold text-indigo-600 block uppercase pl-1 font-sans">Selling (₦)</span>
+                            <span className="text-[8px] font-bold text-indigo-600 block pl-1 font-sans">Selling (₦)</span>
                             <input
                               type="number"
                               value={item.selling_price}
@@ -1555,8 +1550,8 @@ export default function AdminPanelSection() {
                           </div>
 
                           <div className="space-y-1 text-center font-sans">
-                            <span className="text-[8px] font-extrabold text-slate-400 block uppercase font-sans">Markup Profit</span>
-                            <div className="text-xs font-black text-green-600 font-mono pt-1 leading-none">
+                            <span className="text-[8px] font-bold text-slate-400 block font-sans">Markup Profit</span>
+                            <div className="text-xs font-bold text-green-600 font-mono pt-1 leading-none">
                               ₦{profit} <span className="text-[9px] text-slate-400 block font-normal mt-0.5 font-sans">{profitPercentage}% gain</span>
                             </div>
                           </div>
@@ -1567,7 +1562,7 @@ export default function AdminPanelSection() {
                           <button
                             type="button"
                             onClick={() => handleDeleteServiceConfig(item.id)}
-                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-sans cursor-pointer flex items-center gap-1 active:scale-95 transition-all"
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 px-2.5 py-1.5 rounded-lg text-[10px] font-bold font-sans cursor-pointer flex items-center gap-1 transition-all"
                           >
                             <Trash2 size={11} /> Delete
                           </button>
@@ -1576,7 +1571,7 @@ export default function AdminPanelSection() {
                             type="button"
                             onClick={() => handleUpdateServiceConfig(item.id, item.cost_price, item.selling_price, item.is_active, item.mozosubz_plan_id, itemValidity, item.item_name, itemCategory)}
                             disabled={isUpdatingService === item.id}
-                            className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-black hover:scale-102 transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
+                            className="bg-black hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-[10px] px-3.5 py-1.5 rounded-lg border border-black transition-all cursor-pointer inline-flex items-center gap-1 shadow-sm font-sans"
                           >
                             {isUpdatingService === item.id ? (
                               <>
@@ -1602,7 +1597,7 @@ export default function AdminPanelSection() {
                   {/* BULK MARKUP MULTI-SINK CONTROLS */}
                   <div className="bg-amber-50 border-2 border-black p-3.5 rounded-xl space-y-2 text-left">
                     <div className="flex items-center gap-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 font-sans">⚡ Auto-Markup Utilities Matrix</span>
+ <span className="text-[10px] font-bold text-amber-900 font-sans"> Auto-Markup Utilities Matrix</span>
                     </div>
                     <p className="text-[10px] text-amber-955 font-sans font-medium">Click to instantly apply markup to all freshly loaded Peyflex drafts:</p>
                     <div className="flex flex-wrap items-center gap-1.5 font-sans">
@@ -1616,7 +1611,7 @@ export default function AdminPanelSection() {
                           })));
                           toast.success("Applied Cost + 3% bulk markup draft!");
                         }}
-                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-brut-sm font-sans"
                       >
                         Cost + 3%
                       </button>
@@ -1630,7 +1625,7 @@ export default function AdminPanelSection() {
                           })));
                           toast.success("Applied Cost + 5% bulk markup draft!");
                         }}
-                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-brut-sm font-sans"
                       >
                         Cost + 5%
                       </button>
@@ -1644,7 +1639,7 @@ export default function AdminPanelSection() {
                           })));
                           toast.success("Applied Cost + 10% bulk markup draft!");
                         }}
-                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-brut-sm font-sans"
                       >
                         Cost + 10%
                       </button>
@@ -1658,7 +1653,7 @@ export default function AdminPanelSection() {
                           })));
                           toast.success("Applied Cost + ₦100 flat markup draft!");
                         }}
-                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] font-sans"
+                        className="bg-white hover:bg-slate-100 text-black border border-black font-bold text-[9px] px-2.5 py-1.5 rounded-lg transition-all cursor-pointer shadow-brut-sm font-sans"
                       >
                         Cost + ₦100 Flat
                       </button>
@@ -1678,9 +1673,9 @@ export default function AdminPanelSection() {
                         type="button"
                         onClick={() => setPeyflexFilterCategory(tab.id)}
                         className={cn(
-                          "px-3 py-1.5 rounded-lg text-[10px] font-extrabold border-2 border-black transition-all cursor-pointer font-sans",
+                          "px-3 py-1.5 rounded-lg text-[10px] font-bold border-2 border-black transition-all cursor-pointer font-sans",
                           peyflexFilterCategory === tab.id
-                            ? "bg-purple-950 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                            ? "bg-purple-950 text-white shadow-brut"
                             : "bg-slate-50 hover:bg-slate-100 text-black shadow-none"
                         )}
                       >
@@ -1724,12 +1719,12 @@ export default function AdminPanelSection() {
                         const profitMargin = item.wholesaleCost > 0 ? Math.round(((finalPrice - item.wholesaleCost) / item.wholesaleCost) * 100) : 0;
 
                         return (
-                          <div key={pevId} className="bg-slate-50 border-2 border-black rounded-xl p-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs text-left shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-y-[-1px] font-sans">
+                          <div key={pevId} className="bg-slate-50 border-2 border-black rounded-xl p-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs text-left shadow-brut transition-all hover:translate-y-[-1px] font-sans">
                             {/* Left Meta info */}
                             <div className="space-y-1 min-w-0 pr-2">
                               <div className="flex items-center gap-1.5 flex-wrap font-sans">
                                 <span className={cn(
-                                  "text-[8px] font-black uppercase px-1.5 py-0.5 rounded leading-none border border-black",
+                                  "text-[8px] font-bold px-1.5 py-0.5 rounded leading-none border border-black",
                                   item.network === 'MTN' ? "bg-yellow-400 text-black" :
                                   item.network === 'Airtel' ? "bg-red-400 text-white" :
                                   item.network === 'Glo' ? "bg-green-400 text-white" :
@@ -1737,23 +1732,23 @@ export default function AdminPanelSection() {
                                 )}>
                                   {item.network}
                                 </span>
-                                <span className="text-[8px] bg-white text-slate-700 font-extrabold px-1.5 py-0.5 rounded leading-none border border-black uppercase">
+                                <span className="text-[8px] bg-white text-slate-700 font-bold px-1.5 py-0.5 rounded leading-none border border-black ">
                                   {item.planType || item.type}
                                 </span>
                               </div>
-                              <h6 className="font-extrabold text-slate-900 tracking-tight text-xs leading-tight">{item.name}</h6>
-                              <div className="text-[9px] text-slate-400 font-mono font-bold">CODE: {pevId}</div>
+                              <h6 className="font-bold text-slate-900 tracking-tight text-xs leading-tight">{item.name}</h6>
+                              <div className="text-[9px] text-slate-400 font-mono font-semibold">CODE: {pevId}</div>
                             </div>
 
                             {/* Cost and Price input */}
                             <div className="flex items-center gap-3 justify-between md:justify-end border-t border-dashed border-slate-300 md:border-t-0 pt-2 md:pt-0">
                               <div className="text-right text-[10px] font-sans pr-1 w-20 leading-tight shrink-0">
-                                <span className="block text-slate-400 font-bold">Wholesale Cost</span>
+                                <span className="block text-slate-400 font-semibold">Wholesale Cost</span>
                                 <span className="font-bold text-xs text-slate-700 font-mono">₦{item.wholesaleCost}</span>
                               </div>
 
                               <div className="flex flex-col items-end">
-                                <span className="text-[8px] text-slate-505 font-bold uppercase pb-0.5">Your Retail Price (₦)</span>
+                                <span className="text-[8px] text-slate-505 font-bold pb-0.5">Your Retail Price (₦)</span>
                                 <div className="relative inline-block font-sans">
                                   <input
                                     type="number"
@@ -1761,7 +1756,7 @@ export default function AdminPanelSection() {
                                     onChange={(e) => handleUpdateDraftPrice(item.peyflex_variation_id, Number(e.target.value))}
                                     className="w-24 bg-white border-2 border-black text-black font-bold text-xs rounded-lg p-1.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-500/20 font-mono"
                                   />
-                                  <span className="absolute -top-1 -right-1 text-[7px] bg-black text-white font-black px-1 rounded-sm select-none border border-black leading-none py-0.5">
+                                  <span className="absolute -top-1 -right-1 text-[7px] bg-black text-white font-bold px-1 rounded-sm select-none border border-black leading-none py-0.5">
                                     {profitMargin >= 0 ? `+${profitMargin}%` : `${profitMargin}%`}
                                   </span>
                                 </div>
@@ -1779,30 +1774,30 @@ export default function AdminPanelSection() {
                     <RefreshCw size={20} className="animate-pulse" />
                   </div>
                   <div className="space-y-1">
-                    <p className="text-xs font-extrabold text-slate-800 font-sans">No Peyflex Draft Profiles Loaded</p>
+                    <p className="text-xs font-bold text-slate-800 font-sans">No Peyflex Draft Profiles Loaded</p>
                     <p className="text-[11px] text-slate-500 font-sans max-w-sm mx-auto font-medium">Please trigger the node synchronization using the primary button above to fetch instant pricing channels.</p>
                   </div>
                   <button
                     type="button"
                     onClick={fetchPeyflexRates}
-                    className="p-3 bg-black hover:bg-slate-850 text-white border-2 border-black font-extrabold text-xs rounded-xl shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer inline-flex items-center gap-2 font-sans"
+                    className="p-3 bg-black hover:bg-slate-850 text-white border-2 border-black font-bold text-xs rounded-xl shadow-brut-lg transition-all cursor-pointer inline-flex items-center gap-2 font-sans"
                   >
-                    🚀 Trigger Synchronization Channel
+ Trigger Synchronization Channel
                   </button>
                 </div>
               )}
             </div>
 
           {/* Collapsible Tidy Manual Creator / Registry Suite */}
-          <div className="bg-white rounded-2xl border-2 border-black p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] space-y-4">
+          <div className="bg-white rounded-2xl border-2 border-black p-6 shadow-brut-lg space-y-4">
             <div className="pb-3 border-b border-slate-200 text-left">
-              <h5 className="font-extrabold text-md text-black font-sans uppercase tracking-tight">⚙️ Manual Plan Registrar Suite</h5>
+ <h5 className="font-bold text-md text-black font-sans "> Manual Plan Registrar Suite</h5>
               <p className="text-xs text-slate-500 font-bold font-sans">Register manual custom variables or non-peyflex configurations directly</p>
             </div>
 
             <form onSubmit={handleAddPlanSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end font-sans">
               <div className="space-y-1 text-left font-sans animate-fadeIn">
-                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Carrier Network</label>
+                <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Carrier Network</label>
                 <select
                   value={planNetwork}
                   onChange={(e) => setPlanNetwork(e.target.value as NetworkType)}
@@ -1816,7 +1811,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left">
-                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Package Category</label>
+                <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Package Category</label>
                 <select
                   value={planType}
                   onChange={(e) => setPlanType(e.target.value as any)}
@@ -1828,7 +1823,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left">
-                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans">Display Plan Name</label>
+                <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans">Display Plan Name</label>
                 <input
                   type="text"
                   placeholder="e.g. MTN SME 1.2GB Gifting"
@@ -1839,7 +1834,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left">
-                <label className="text-[10px] uppercase font-bold text-slate-500 ml-1 font-sans font-sans">Retail Pricing (₦)</label>
+                <label className="text-[10px] font-bold text-slate-500 ml-1 font-sans font-sans">Retail Pricing (₦)</label>
                 <input
                   type="number"
                   placeholder="e.g. 350"
@@ -1850,7 +1845,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left">
-                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Reseller Rate (₦) - Optional</label>
+                <label className="text-[10px] font-bold text-slate-505 ml-1 font-sans">Reseller Rate (₦) - Optional</label>
                 <input
                   type="number"
                   placeholder="Leave empty for auto"
@@ -1861,7 +1856,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left font-sans font-sans">
-                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Agent Rate (₦) - Optional</label>
+                <label className="text-[10px] font-bold text-slate-505 ml-1 font-sans">Agent Rate (₦) - Optional</label>
                 <input
                   type="number"
                   placeholder="Leave empty for auto"
@@ -1872,7 +1867,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left font-sans">
-                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans">Validity Duration</label>
+                <label className="text-[10px] font-bold text-slate-505 ml-1 font-sans">Validity Duration</label>
                 <input
                   type="text"
                   placeholder="e.g. 30 Days"
@@ -1883,7 +1878,7 @@ export default function AdminPanelSection() {
               </div>
 
               <div className="space-y-1 text-left font-sans">
-                <label className="text-[10px] uppercase font-bold text-slate-505 ml-1 font-sans font-mono font-mono">Peyflex ID (Var Code)</label>
+                <label className="text-[10px] font-bold text-slate-505 ml-1 font-sans font-mono font-mono">Peyflex ID (Var Code)</label>
                 <input
                   type="text"
                   placeholder="e.g. mtn_sme_1gb"
@@ -1897,9 +1892,9 @@ export default function AdminPanelSection() {
                 <button
                   type="submit"
                   disabled={isAddingPlan}
-                  className="bg-black hover:bg-slate-850 text-white font-extrabold text-xs px-6 py-3 rounded-xl border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:scale-101 transition-all cursor-pointer font-sans"
+                  className="bg-black hover:bg-slate-850 text-white font-bold text-xs px-6 py-3 rounded-xl border-2 border-black shadow-brut transition-all cursor-pointer font-sans"
                 >
-                  {isAddingPlan ? "Registering Plan Code..." : "➕ Create & Publish Manual Service Package"}
+ {isAddingPlan ? "Registering Plan Code..." : " Create & Publish Manual Service Package"}
                 </button>
               </div>
             </form>
@@ -1913,7 +1908,7 @@ export default function AdminPanelSection() {
         <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm space-y-8">
           <div className="flex justify-between items-center pb-6 border-b border-slate-50">
             <div>
-              <h5 className="font-extrabold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
+              <h5 className="font-bold text-slate-900 text-lg">Bank Deposits (Flutterwave) Audit & Logs</h5>
               <p className="text-sm text-slate-400 font-medium font-sans">
                 Real-time transaction values, status checks, and revenue auditing.
               </p>
@@ -1923,7 +1918,7 @@ export default function AdminPanelSection() {
               disabled={loadingOpayStats}
               className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-4 py-2 rounded-xl hover:bg-blue-100 transition-all cursor-pointer disabled:opacity-50"
             >
-              {loadingOpayStats ? "Refreshing..." : "🔄 Refresh Stats"}
+ {loadingOpayStats ? "Refreshing..." : " Refresh Stats"}
             </button>
           </div>
 
@@ -1937,29 +1932,29 @@ export default function AdminPanelSection() {
               {/* Cards Panel */}
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="bg-purple-50/50 border border-purple-100/80 p-6 rounded-3xl">
-                  <span className="text-[10px] uppercase font-extrabold text-purple-700 tracking-wider block font-sans">Total Deposited Revenue</span>
-                  <p className="text-2xl font-black text-purple-800 font-mono tracking-tight mt-2">{formatCurrency(opayRevenueStats?.totalRevenue || 0)}</p>
+                  <span className="text-[10px] font-bold text-purple-700 tracking-wider block font-sans">Total Deposited Revenue</span>
+                  <p className="text-2xl font-bold text-purple-800 font-mono tracking-tight mt-2">{formatCurrency(opayRevenueStats?.totalRevenue || 0)}</p>
                 </div>
 
                 <div className="bg-emerald-50/50 border border-emerald-100/80 p-6 rounded-3xl">
-                  <span className="text-[10px] uppercase font-extrabold text-emerald-700 tracking-wider block font-sans">Successful Payments</span>
-                  <p className="text-2xl font-black text-emerald-800 font-mono tracking-tight mt-2">{opayRevenueStats?.successfulCount || 0}</p>
+                  <span className="text-[10px] font-bold text-emerald-700 tracking-wider block font-sans">Successful Payments</span>
+                  <p className="text-2xl font-bold text-emerald-800 font-mono tracking-tight mt-2">{opayRevenueStats?.successfulCount || 0}</p>
                 </div>
 
                 <div className="bg-rose-50/50 border border-rose-100/80 p-6 rounded-3xl">
-                  <span className="text-[10px] uppercase font-extrabold text-rose-700 tracking-wider block font-sans">Failed Payments</span>
-                  <p className="text-2xl font-black text-rose-800 font-mono tracking-tight mt-2">{opayRevenueStats?.failedCount || 0}</p>
+                  <span className="text-[10px] font-bold text-rose-700 tracking-wider block font-sans">Failed Payments</span>
+                  <p className="text-2xl font-bold text-rose-800 font-mono tracking-tight mt-2">{opayRevenueStats?.failedCount || 0}</p>
                 </div>
 
                 <div className="bg-slate-50 border border-slate-100 p-6 rounded-3xl">
-                  <span className="text-[10px] uppercase font-extrabold text-slate-500 tracking-wider block font-sans">Total Credit Invariant Logs</span>
-                  <p className="text-2xl font-black text-slate-800 font-mono tracking-tight mt-2">{opayRevenueStats?.totalCount || 0}</p>
+                  <span className="text-[10px] font-bold text-slate-500 tracking-wider block font-sans">Total Credit Invariant Logs</span>
+                  <p className="text-2xl font-bold text-slate-800 font-mono tracking-tight mt-2">{opayRevenueStats?.totalCount || 0}</p>
                 </div>
               </div>
 
               {/* Transactions List */}
               <div className="space-y-4">
-                <h6 className="font-extrabold text-slate-900">Deposit Webhook Transaction Logs</h6>
+                <h6 className="font-bold text-slate-900">Deposit Webhook Transaction Logs</h6>
                 <div className="border border-slate-100 rounded-2xl overflow-hidden divide-y divide-slate-50">
                   {opayRevenueStats?.payments && opayRevenueStats.payments.length > 0 ? (
                     opayRevenueStats.payments.map((p: any) => (
@@ -1967,16 +1962,16 @@ export default function AdminPanelSection() {
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-800 font-sans">{p.email || "user@example.com"}</span>
-                            <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded uppercase">User: {p.userId?.slice(0, 8)}...</span>
+                            <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded ">User: {p.userId?.slice(0, 8)}...</span>
                           </div>
                           <p className="font-mono text-[10px] text-slate-400">Ref: <span className="text-slate-600 font-semibold">{p.reference}</span></p>
                           <p className="text-[10px] text-slate-400 font-sans">{new Date(p.createdAt || 0).toLocaleString()}</p>
                         </div>
 
                         <div className="text-right flex sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2">
-                          <span className="font-black text-sm text-slate-900 font-mono">{formatCurrency(p.amount)}</span>
+                          <span className="font-bold text-sm text-slate-900 font-mono">{formatCurrency(p.amount)}</span>
                           <span className={cn(
-                            "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded font-sans",
+                            "text-[9px] font-bold  px-2 py-0.5 rounded font-sans",
                             p.status === "completed" || p.status === "success" ? "bg-emerald-50 text-emerald-700" :
                             p.status === "pending" ? "bg-amber-50 text-amber-700 animate-pulse" : "bg-rose-50 text-rose-700"
                           )}>
@@ -2013,13 +2008,13 @@ export default function AdminPanelSection() {
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-[2rem] p-8 max-w-md w-full relative border border-slate-100 shadow-2xl z-10 font-sans text-slate-900"
             >
-              <h5 className="font-extrabold text-lg text-slate-900 mb-2 font-sans">Edit Service Plan</h5>
+              <h5 className="font-bold text-lg text-slate-900 mb-2 font-sans">Edit Service Plan</h5>
               <p className="text-xs text-slate-500 mb-6 font-sans">Modify product properties for <span className="font-bold text-slate-800 font-mono">{editingPlan.network} - {editingPlan.name}</span></p>
 
-              <form onSubmit={handleEditPlanSubmit} className="space-y-4 text-xs font-bold">
+              <form onSubmit={handleEditPlanSubmit} className="space-y-4 text-xs font-semibold">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Network Carrier</label>
+                    <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Network Carrier</label>
                     <select 
                       value={editPlanNetwork}
                       onChange={(e) => setEditPlanNetwork(e.target.value as NetworkType)}
@@ -2032,7 +2027,7 @@ export default function AdminPanelSection() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Plan Category</label>
+                    <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Plan Category</label>
                     <select 
                       value={editPlanType}
                       onChange={(e) => setEditPlanType(e.target.value as any)}
@@ -2045,7 +2040,7 @@ export default function AdminPanelSection() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Plan Name</label>
+                  <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Plan Name</label>
                   <input 
                     required
                     type="text" 
@@ -2058,7 +2053,7 @@ export default function AdminPanelSection() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">Retail Price (₦)</label>
+                    <label className="text-[10px] font-bold text-slate-400 ml-1">Retail Price (₦)</label>
                     <input 
                       required
                       type="text" 
@@ -2069,7 +2064,7 @@ export default function AdminPanelSection() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Validity Duration</label>
+                    <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Validity Duration</label>
                     <input 
                       type="text" 
                       value={editPlanDuration}
@@ -2082,7 +2077,7 @@ export default function AdminPanelSection() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-405 ml-1 font-sans">Peyflex Variation ID / Code</label>
+                  <label className="text-[10px] font-bold text-slate-405 ml-1 font-sans">Peyflex Variation ID / Code</label>
                   <input 
                     required
                     type="text" 
@@ -2095,11 +2090,11 @@ export default function AdminPanelSection() {
 
                 {/* EDIT MARKUP PRICES */}
                 <div className="border-t border-slate-100 pt-4 space-y-3.5">
-                  <span className="text-[10px] uppercase font-black text-indigo-650 block tracking-wider font-sans">Partner Pricing Markups (Optional)</span>
+                  <span className="text-[10px] font-bold text-indigo-650 block tracking-wider font-sans">Partner Pricing Markups (Optional)</span>
                   
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Reseller Price (₦)</label>
+                      <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Reseller Price (₦)</label>
                       <input 
                         type="text" 
                         value={editPlanResellerPrice}
@@ -2109,7 +2104,7 @@ export default function AdminPanelSection() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-slate-400 ml-1 font-sans">Agent Price (₦)</label>
+                      <label className="text-[10px] font-bold text-slate-400 ml-1 font-sans">Agent Price (₦)</label>
                       <input 
                         type="text" 
                         value={editPlanAgentPrice}
@@ -2132,7 +2127,7 @@ export default function AdminPanelSection() {
                   <button 
                     disabled={isUpdatingPlan}
                     type="submit"
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-extrabold transition-all flex items-center justify-center gap-1 shadow-lg shadow-indigo-100 cursor-pointer"
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-bold transition-all flex items-center justify-center gap-1 shadow-lg shadow-indigo-100 cursor-pointer"
                   >
                     {isUpdatingPlan ? "Saving..." : "Save Properties"}
                   </button>

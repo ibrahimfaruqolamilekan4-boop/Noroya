@@ -180,7 +180,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
     return () => clearTimeout(timer);
   }, [referralCode, mode]);
 
-  // Password Strength Calculation (Min 8 chars, numbers, uppercase, symbols)
+  // Password Strength Calculation (Min 8 chars, numbers, , symbols)
   const calculatePasswordStrength = (pwd: string) => {
     if (!pwd) return { score: 0, label: 'None', color: 'bg-slate-200', width: 'w-0' };
     let score = 0;
@@ -193,7 +193,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
     if (score <= 2) return { score: 1, label: 'Weak (min 8 chars required)', color: 'bg-rose-500', width: 'w-1/4' };
     if (score === 3) return { score: 2, label: 'Fair', color: 'bg-amber-500', width: 'w-2/4' };
     if (score === 4) return { score: 3, label: 'Strong', color: 'bg-emerald-500', width: 'w-3/4' };
-    return { score: 4, label: 'Bank-Grade 🔐', color: 'bg-[#3B7A3B]', width: 'w-full' };
+ return { score: 4, label: 'Bank-Grade ', color: 'bg-[#3B7A3B]', width: 'w-full' };
   };
 
   const passwordStrength = calculatePasswordStrength(password);
@@ -461,9 +461,9 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
         </button>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-[#132613] flex items-center justify-center">
-            <span className="text-xs font-black text-[#B5D430]">N</span>
+            <span className="text-xs font-bold text-[#B5D430]">N</span>
           </div>
-          <span className="font-black text-slate-900 text-sm">NORODATA</span>
+          <span className="font-bold text-slate-900 text-sm">NORODATA</span>
         </div>
       </div>
 
@@ -497,11 +497,11 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
               {/* Brand Logo */}
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-[#3B7A3B] flex items-center justify-center shadow-md">
-                  <span className="text-2xl font-black text-[#B5D430]">N</span>
+                  <span className="text-2xl font-bold text-[#B5D430]">N</span>
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black tracking-tight text-white">NORODATA</h3>
-                  <p className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
+                  <h3 className="text-2xl font-bold tracking-tight text-white">NORODATA</h3>
+                  <p className="text-[11px] font-bold text-emerald-300 ">
                     Instant Recharge & Utility Bills
                   </p>
                 </div>
@@ -509,7 +509,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
 
               {/* Headline & Value Proposition */}
               <div className="pt-4 space-y-2">
-                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white leading-tight">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white leading-tight">
                   One Unified Wallet for All Nigerian Utilities.
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
@@ -525,7 +525,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                     <Zap size={16} />
                   </div>
                   <div>
-                    <h4 className="text-xs font-black text-white">Wholesale Rates & Discounts</h4>
+                    <h4 className="text-xs font-bold text-white">Wholesale Rates & Discounts</h4>
                     <p className="text-[11px] text-slate-300 mt-0.5">
                       Save significantly on data bundles and get cash discounts on every airtime recharge.
                     </p>
@@ -537,7 +537,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                     <RotateCcw size={16} />
                   </div>
                   <div>
-                    <h4 className="text-xs font-black text-white">Automated Wallet Refund</h4>
+                    <h4 className="text-xs font-bold text-white">Automated Wallet Refund</h4>
                     <p className="text-[11px] text-slate-300 mt-0.5">
                       Failsafe server engine automatically credits 100% of your funds if a network fails.
                     </p>
@@ -549,7 +549,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                     <ShieldCheck size={16} />
                   </div>
                   <div>
-                    <h4 className="text-xs font-black text-white">Instant Monnify Auto-Funding</h4>
+                    <h4 className="text-xs font-bold text-white">Instant Monnify Auto-Funding</h4>
                     <p className="text-[11px] text-slate-300 mt-0.5">
                       Personal dedicated bank account for instant 24/7 wallet top-ups with zero delays.
                     </p>
@@ -583,7 +583,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                   type="button"
                   onClick={() => { setMode('login'); setAuthError(null); }}
                   className={cn(
-                    "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-black transition-all",
+                    "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all",
                     mode === 'login'
                       ? "bg-white text-slate-900 shadow-sm"
                       : "text-slate-600 hover:text-slate-900"
@@ -597,7 +597,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                   type="button"
                   onClick={() => { setMode('signup'); setAuthError(null); }}
                   className={cn(
-                    "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-black transition-all",
+                    "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all",
                     mode === 'signup'
                       ? "bg-white text-slate-900 shadow-sm"
                       : "text-slate-600 hover:text-slate-900"
@@ -611,7 +611,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
 
               {/* Heading */}
               <div>
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
                   {mode === 'login' ? 'Sign In to Your Account' : 'Open Your Free Account'}
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
@@ -836,7 +836,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                         value={referralCode}
                         onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                         placeholder="e.g. NORODATA-ABCDE"
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-[#E2E2DC] text-xs sm:text-sm font-medium uppercase text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#3B7A3B] focus:border-transparent transition-all"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-[#E2E2DC] text-xs sm:text-sm font-medium text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#3B7A3B] focus:border-transparent transition-all"
                       />
                     </div>
                     <p className="text-[10px] text-slate-500 mt-1">
@@ -884,7 +884,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                 <button
                   type="submit"
                   disabled={loading || cooldownRemaining > 0}
-                  className="w-full py-3.5 rounded-xl text-xs sm:text-sm font-black text-white shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                  className="w-full py-3.5 rounded-xl text-xs sm:text-sm font-bold text-white shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
                   style={{ backgroundColor: '#3B7A3B' }}
                 >
                   {loading ? (
@@ -902,7 +902,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
               {/* Divider */}
               <div className="relative flex items-center justify-center my-4">
                 <div className="border-t border-[#E2E2DC] w-full" />
-                <span className="bg-white px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider relative">
+                <span className="bg-white px-3 text-[11px] font-bold text-slate-400 relative">
                   Or
                 </span>
               </div>
@@ -970,7 +970,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                   <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center">
                     <KeyRound size={20} />
                   </div>
-                  <h3 className="text-xl font-black text-slate-900 pt-2">Reset Password</h3>
+                  <h3 className="text-xl font-bold text-slate-900 pt-2">Reset Password</h3>
                   <p className="text-xs text-slate-500">
                     Enter the email registered with your NORODATA account.
                   </p>
@@ -993,7 +993,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                   <button
                     type="button"
                     onClick={() => { setForgotModalOpen(false); setForgotMessage(null); }}
-                    className="w-full py-3 rounded-xl text-xs font-black text-white"
+                    className="w-full py-3 rounded-xl text-xs font-bold text-white"
                     style={{ backgroundColor: '#3B7A3B' }}
                   >
                     Back to Sign In
@@ -1022,7 +1022,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                   <button
                     type="submit"
                     disabled={forgotLoading}
-                    className="w-full py-3 rounded-xl text-xs font-black text-white shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
                     style={{ backgroundColor: '#3B7A3B' }}
                   >
                     {forgotLoading ? (
@@ -1052,9 +1052,9 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
             className="relative bg-white rounded-3xl w-full max-w-md shadow-2xl p-6 sm:p-8 space-y-5 text-center border border-gray-100"
           >
             <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-[#3B7A3B] flex items-center justify-center mx-auto text-3xl shadow-inner">
-              ✨
+ 
             </div>
-            <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+            <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
               Welcome to NORODATA Subs
             </h3>
             <div className="text-sm text-gray-600 leading-relaxed text-left space-y-3 bg-[#EDEDE9]/50 p-5 rounded-2xl border border-gray-200">
@@ -1083,7 +1083,7 @@ export default function AuthPage({ onBack, initialMode = 'login' }: AuthPageProp
                 setMode('login');
                 toast.success('Check your Gmail to confirm, then log in!');
               }}
-              className="w-full text-white font-black rounded-xl py-4 shadow-lg hover:shadow-xl transition-all cursor-pointer text-base uppercase tracking-wider"
+              className="w-full text-white font-bold rounded-xl py-4 shadow-lg hover:shadow-xl transition-all cursor-pointer text-base "
               style={{ backgroundColor: '#3B7A3B' }}
             >
               OK

@@ -196,8 +196,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
 
   // Page title per tab
   const pageTitles: Record<string, { title: string; sub: string }> = {
-    dashboard: { title: `Good morning, ${user.fullName?.split(' ')[0] || 'there'} ✦`, sub: 'Everything you need, in one calm place.' },
-    marketplace: { title: 'Digital Marketplace 🛍️', sub: 'Buy & sell foreign numbers (US, UK, Canada) & social media accounts.' },
+ dashboard: { title: `Good morning, ${user.fullName?.split(' ')[0] || 'there'} `, sub: 'Everything you need, in one calm place.' },
+ marketplace: { title: 'Digital Marketplace ', sub: 'Buy & sell foreign numbers (US, UK, Canada) & social media accounts.' },
     'buy-data': { title: 'Buy data', sub: 'Simple, secure and ready when you are.' },
     'buy-airtime': { title: 'Buy airtime', sub: 'Top up instantly across all networks.' },
     electricity: { title: 'Pay electricity', sub: 'Prepaid and postpaid tokens.' },
@@ -238,9 +238,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
-                    <span className="text-white font-black text-sm">N</span>
+                    <span className="text-white font-bold text-sm">N</span>
                   </div>
-                  <span className="font-black text-gray-900 tracking-tight">NORODATA</span>
+                  <span className="font-bold text-gray-900 tracking-tight">NORODATA</span>
                 </div>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
@@ -299,9 +299,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
       <aside className="hidden md:flex fixed top-0 left-0 bottom-0 w-60 flex-col bg-white border-r border-gray-100 z-40">
         <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-100">
           <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
-            <span className="text-white font-black text-sm">N</span>
+            <span className="text-white font-bold text-sm">N</span>
           </div>
-          <span className="font-black text-gray-900 tracking-tight text-base">NORODATA</span>
+          <span className="font-bold text-gray-900 tracking-tight text-base">NORODATA</span>
         </div>
 
         <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-0.5">
@@ -359,9 +359,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             {/* Mobile logo */}
             <div className="flex items-center gap-2 md:hidden">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#3B7A3B' }}>
-                <span className="text-white font-black text-xs">N</span>
+                <span className="text-white font-bold text-xs">N</span>
               </div>
-              <span className="font-black text-gray-900 text-sm tracking-tight">NORODATA</span>
+              <span className="font-bold text-gray-900 text-sm tracking-tight">NORODATA</span>
             </div>
           </div>
 
@@ -370,7 +370,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             {/* Transfer button */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-transfer-modal'))}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 active:scale-95 border"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:brightness-95 border"
               style={{ backgroundColor: '#F0F0EC', borderColor: '#D4D4CE', color: '#132613' }}
             >
               <Send size={14} />
@@ -387,7 +387,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             {/* Deposit funds button */}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-fund-modal'))}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110 active:scale-95"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold transition-all hover:brightness-110"
               style={{ backgroundColor: '#3B7A3B' }}
             >
               <span className="text-base leading-none">+</span>
@@ -396,14 +396,14 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             </button>
             <button
               onClick={() => setShowGlobalQR(true)}
-              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-xl bg-gray-100 text-gray-700 active:scale-95 border border-gray-200"
+              className="sm:hidden flex items-center justify-center w-9 h-9 rounded-xl bg-gray-100 text-gray-700 border border-gray-200"
             >
               <Scan size={16} />
             </button>
 
             <div className="hidden sm:flex items-center gap-2.5">
               <div
-                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-semibold"
                 style={{ backgroundColor: '#3B7A3B' }}
               >
                 {(user.fullName?.[0] || 'U').toUpperCase()}
@@ -416,7 +416,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
         {broadcastAlert && (
           <div className="px-6 py-3 text-white flex justify-between items-center text-sm" style={{ backgroundColor: '#3B7A3B' }}>
             <div className="flex items-center gap-2 font-medium">
-              <span>📢</span>
+ <span></span>
               <span>{broadcastAlert}</span>
             </div>
             <button
@@ -430,7 +430,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
 
         {/* ── Page heading ────────────────────────────────────────────── */}
         <div className="px-4 md:px-8 pt-6 pb-2">
-          <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">{currentPage.title}</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">{currentPage.title}</h1>
           <p className="text-sm text-gray-500 mt-0.5 font-medium">{currentPage.sub}</p>
         </div>
 
@@ -463,7 +463,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
       <div className="fixed right-4 bottom-20 md:bottom-6 z-40 print:hidden">
         <button
           onClick={() => setShowSupportHub(!showSupportHub)}
-          className="flex items-center gap-2 px-4 py-3 rounded-2xl text-white font-bold text-sm shadow-xl transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          className="flex items-center gap-2 px-4 py-3 rounded-2xl text-white font-bold text-sm shadow-xl transition-all cursor-pointer"
           style={{ backgroundColor: '#25D366' }}
           title="WhatsApp Support"
         >
@@ -541,19 +541,19 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className={cn(
-                'relative flex flex-col items-center justify-center py-1.5 px-3 rounded-xl transition-all duration-200 active:scale-95 cursor-pointer',
+                'relative flex flex-col items-center justify-center py-1.5 px-3 rounded-xl transition-all duration-200 cursor-pointer',
                 isActive ? 'text-[#B5D430]' : 'text-white/70 hover:text-white'
               )}
             >
               <div className="relative">
                 {tab.icon}
                 {tab.badge && (
-                  <span className="absolute -top-1.5 -right-3 text-[9px] font-black bg-rose-500 text-white px-1 py-0.2 rounded-full leading-tight shadow-sm animate-pulse">
+                  <span className="absolute -top-1.5 -right-3 text-[9px] font-bold bg-rose-500 text-white px-1 py-0.2 rounded-full leading-tight shadow-sm animate-pulse">
                     {tab.badge}
                   </span>
                 )}
               </div>
-              <span className={cn('text-[10px] mt-0.5 tracking-tight font-bold', isActive ? 'text-[#B5D430]' : 'text-white/70')}>
+              <span className={cn('text-[10px] mt-0.5 tracking-tight font-semibold', isActive ? 'text-[#B5D430]' : 'text-white/70')}>
                 {tab.label}
               </span>
               {isActive && (
@@ -588,13 +588,13 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                 <div className="w-12 h-12 rounded-full bg-green-100 text-green-600 flex items-center justify-center mx-auto">
                   <CheckCircle2 size={24} />
                 </div>
-                <h4 className="font-black text-gray-900 text-xl">Transaction Receipt</h4>
-                <p className="text-xs text-green-600 font-bold uppercase tracking-widest">Approved</p>
+                <h4 className="font-bold text-gray-900 text-xl">Transaction Receipt</h4>
+                <p className="text-xs text-green-600 font-bold ">Approved</p>
               </div>
 
               <div className="bg-gray-50 rounded-2xl p-5 text-center">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Amount Charged</p>
-                <p className="text-3xl font-black text-gray-900 mt-1 tracking-tight">
+                <p className="text-xs font-bold text-gray-400 ">Amount Charged</p>
+                <p className="text-3xl font-bold text-gray-900 mt-1 tracking-tight">
                   {formatCurrency(selectedReceiptTx.amount)}
                 </p>
               </div>
@@ -607,13 +607,13 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                   { label: 'Date', val: new Date(selectedReceiptTx.createdAt).toLocaleString() },
                 ].map(({ label, val, mono }) => (
                   <div key={label} className="flex justify-between items-start gap-4">
-                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">{label}</span>
+                    <span className="text-xs font-bold text-gray-400 shrink-0">{label}</span>
                     <span className={cn('font-semibold text-right text-xs', mono && 'font-mono')}>{val}</span>
                   </div>
                 ))}
                 <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Status</span>
-                  <span className="px-2.5 py-1 bg-green-500 text-white rounded-lg text-xs font-bold uppercase">
+                  <span className="text-xs font-bold text-gray-400 ">Status</span>
+                  <span className="px-2.5 py-1 bg-green-500 text-white rounded-lg text-xs font-bold ">
                     {selectedReceiptTx.status}
                   </span>
                 </div>
@@ -664,7 +664,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               className="relative bg-white rounded-3xl p-6 shadow-2xl z-10 max-w-sm w-full text-center print:hidden"
             >
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-gray-900 font-black text-lg">My Profile QR</h3>
+                <h3 className="text-gray-900 font-bold text-lg">My Profile QR</h3>
                 <button onClick={() => setShowGlobalQR(false)} className="p-1.5 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
                   <X size={16} />
                 </button>
@@ -693,14 +693,14 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                     navigator.clipboard.writeText(`${window.location.origin}/signup?ref=${user.referralCode}`);
                     toast.success('Link copied!');
                   }}
-                  className="flex-1 py-3 rounded-xl font-bold text-white shadow-md active:scale-95 transition-all text-sm"
+                  className="flex-1 py-3 rounded-xl font-bold text-white shadow-md transition-all text-sm"
                   style={{ backgroundColor: '#3B7A3B' }}
                 >
                   Copy Link
                 </button>
                 <button 
                   onClick={() => downloadQR("global-qr-code", "NORODATA-QR.png")}
-                  className="flex-1 py-3 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all border border-gray-200 text-sm"
+                  className="flex-1 py-3 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-all border border-gray-200 text-sm"
                 >
                   Download PNG
                 </button>
@@ -708,9 +708,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
               <div className="mt-2">
                 <button 
                   onClick={() => window.print()}
-                  className="w-full py-3 rounded-xl font-bold text-gray-900 bg-white border-2 border-gray-100 hover:border-gray-300 active:scale-95 transition-all flex justify-center items-center gap-2 text-sm"
+                  className="w-full py-3 rounded-xl font-bold text-gray-900 bg-white border-2 border-gray-100 hover:border-gray-300 transition-all flex justify-center items-center gap-2 text-sm"
                 >
-                  🖨️ Print A4 Flyer
+ Print A4 Flyer
                 </button>
               </div>
             </motion.div>
@@ -721,9 +721,9 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
       {/* A4 Printable Flyer (Only visible when printing) */}
       <div className="hidden print:flex fixed inset-0 z-[999999] bg-white w-full h-full flex-col items-center justify-center text-center p-8">
         <div className="w-32 h-32 rounded-[2rem] flex items-center justify-center bg-[#3B7A3B] mb-6 shadow-lg border-4 border-gray-100">
-          <span className="text-white font-black text-7xl">N</span>
+          <span className="text-white font-bold text-7xl">N</span>
         </div>
-        <h1 className="text-6xl font-black text-gray-900 mb-4 tracking-tighter">NORODATA</h1>
+        <h1 className="text-6xl font-bold text-gray-900 mb-4 tracking-tighter">NORODATA</h1>
         <h2 className="text-4xl font-bold text-[#3B7A3B] mb-16 tracking-tight">Buy Cheap Data Instantly!</h2>
         
         <div className="p-6 bg-white border-4 border-gray-100 rounded-[2rem] shadow-sm inline-block mb-16">
@@ -737,7 +737,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
         </div>
         
         <p className="text-3xl font-bold text-gray-800 leading-snug">Scan to join & send money to<br/>{user.fullName}</p>
-        <p className="text-2xl font-black mt-6 tracking-wide text-[#3B7A3B]">{window.location.origin}</p>
+        <p className="text-2xl font-bold mt-6 tracking-wide text-[#3B7A3B]">{window.location.origin}</p>
       </div>
 
     </>
@@ -1016,7 +1016,7 @@ function DashboardOverview({
     const chargeId = params.get('charge_id') || params.get('payment_id') || '';
 
     if (isCancelled) {
-      toast('Bachs.io checkout was cancelled.', { icon: 'ℹ️' });
+ toast('Bachs.io checkout was cancelled.', { icon: 'ℹ' });
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
       return;
@@ -1096,15 +1096,15 @@ function DashboardOverview({
 
   // Quick service grid
   const quickServices = [
-    { id: 'marketplace', icon: '🛍️', label: 'Marketplace', sub: 'Numbers & accounts', color: '#EAF8ED' },
-    { id: 'buy-data', icon: '📶', label: 'Buy data', sub: 'From ₦50', color: '#E8F0E8' },
-    { id: 'buy-airtime', icon: '⚡', label: 'Buy airtime', sub: 'All networks', color: '#E8ECFF' },
-    { id: 'electricity', icon: '🔆', label: 'Pay electricity', sub: 'Instant delivery', color: '#FFF4E0' },
-    { id: 'cable', icon: '📺', label: 'Renew cable TV', sub: 'Keep watching', color: '#F0E8FF' },
-    { id: 'betting', icon: '🎯', label: 'Fund betting', sub: 'Quick top-up', color: '#FFF0E8' },
-    { id: 'bills', icon: '📋', label: 'Pay a bill', sub: 'More services', color: '#E8F4FF' },
+ { id: 'marketplace', icon: '', label: 'Marketplace', sub: 'Numbers & accounts', color: '#EAF8ED' },
+ { id: 'buy-data', icon: '', label: 'Buy data', sub: 'From ₦50', color: '#E8F0E8' },
+ { id: 'buy-airtime', icon: '', label: 'Buy airtime', sub: 'All networks', color: '#E8ECFF' },
+ { id: 'electricity', icon: '', label: 'Pay electricity', sub: 'Instant delivery', color: '#FFF4E0' },
+ { id: 'cable', icon: '', label: 'Renew cable TV', sub: 'Keep watching', color: '#F0E8FF' },
+ { id: 'betting', icon: '', label: 'Fund betting', sub: 'Quick top-up', color: '#FFF0E8' },
+ { id: 'bills', icon: '', label: 'Pay a bill', sub: 'More services', color: '#E8F4FF' },
     { id: 'history', icon: '↗', label: 'View history', sub: 'Receipts & status', color: '#F4F4F4' },
-    { id: 'referrals', icon: '🌿', label: 'Refer & earn', sub: 'Get your link', color: '#E8F5E8' },
+ { id: 'referrals', icon: '', label: 'Refer & earn', sub: 'Get your link', color: '#E8F5E8' },
   ];
 
   // Compute spend this month from transactions
@@ -1146,14 +1146,14 @@ function DashboardOverview({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[#132613] text-[#B5D430] border border-[#B5D430]/30 inline-flex items-center gap-1.5 shadow-sm">
+            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#132613] text-[#B5D430] border border-[#B5D430]/30 inline-flex items-center gap-1.5 shadow-sm">
               <Sparkles size={11} className="text-[#B5D430]" />
               {user.role === 'admin' ? 'Super Admin' : user.role === 'reseller' ? 'Wholesale Reseller' : 'Verified Subscriber'}
             </span>
             <span className="text-xs text-gray-500 font-semibold">Tier 1 Account</span>
           </div>
-          <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">
-            Welcome back, {user.full_name?.split(' ')[0] || (user as any)?.name?.split(' ')[0] || 'Subscriber'} 👋
+          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">
+ Welcome back, {user.full_name?.split(' ')[0] || (user as any)?.name?.split(' ')[0] || 'Subscriber'} 
           </h2>
         </div>
       </div>
@@ -1165,21 +1165,21 @@ function DashboardOverview({
           <span>Telco Health:</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-950 font-black border border-amber-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-950 font-bold border border-amber-200">
             <span className="w-2 h-2 rounded-full bg-amber-400" />
-            MTN: 99.9% ⚡
+ MTN: 99.9% 
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 text-rose-950 font-black border border-rose-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 text-rose-950 font-bold border border-rose-200">
             <span className="w-2 h-2 rounded-full bg-rose-500" />
-            Airtel: Fast ⚡
+ Airtel: Fast 
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-950 font-black border border-emerald-200">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-950 font-bold border border-emerald-200">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            Glo: Active ⚡
+ Glo: Active 
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-lime-50 text-lime-950 font-black border border-lime-300">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-lime-50 text-lime-950 font-bold border border-lime-300">
             <span className="w-2 h-2 rounded-full bg-lime-600" />
-            9mobile: Active ⚡
+ 9mobile: Active 
           </span>
         </div>
         <span className="ml-auto text-[11px] text-gray-400 font-medium shrink-0 hidden sm:inline">
@@ -1195,13 +1195,13 @@ function DashboardOverview({
               <Phone size={20} />
             </div>
             <div>
-              <p className="text-sm font-black text-amber-900">Add your phone number to enable wallet transfers</p>
+              <p className="text-sm font-bold text-amber-900">Add your phone number to enable wallet transfers</p>
               <p className="text-xs text-amber-700">A Nigerian phone number is required on your profile before sending wallet funds to other users.</p>
             </div>
           </div>
           <button
             onClick={() => setShowAddPhoneModal(true)}
-            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition shadow-sm shrink-0 active:scale-95 cursor-pointer"
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition shadow-sm shrink-0 cursor-pointer"
           >
             Add Phone Number
           </button>
@@ -1227,7 +1227,7 @@ function DashboardOverview({
           {/* Label row */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold tracking-widest uppercase" style={{ color: '#8FB88F' }}>
+              <span className="text-xs font-bold " style={{ color: '#8FB88F' }}>
                 AVAILABLE WALLET BALANCE
               </span>
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
@@ -1243,7 +1243,7 @@ function DashboardOverview({
 
           {/* Balance */}
           <div className="mb-1">
-            <span className="text-4xl md:text-5xl font-black text-white tracking-tight font-mono">
+            <span className="text-4xl md:text-5xl font-bold text-white tracking-tight font-mono">
               {hideBalance ? '••••••' : formatCurrency(currentBalance)}
             </span>
             {isUpdating && <span className="text-xs text-green-400 ml-2 animate-pulse">Syncing…</span>}
@@ -1256,13 +1256,13 @@ function DashboardOverview({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs mb-0.5" style={{ color: '#8FB88F' }}>This month</p>
-              <p className="text-sm font-bold" style={{ color: '#B5D430' }}>
+              <p className="text-sm font-semibold" style={{ color: '#B5D430' }}>
                 +{formatCurrency(spendThisMonth > 0 ? spendThisMonth : 0)} funded
               </p>
             </div>
             <button
               onClick={() => setShowFundModal(true)}
-              className="px-5 py-2.5 rounded-2xl text-sm font-bold transition-all hover:brightness-110 active:scale-95 cursor-pointer"
+              className="px-5 py-2.5 rounded-2xl text-sm font-bold transition-all hover:brightness-110 cursor-pointer"
               style={{ backgroundColor: '#B5D430', color: '#132613' }}
             >
               Deposit money →
@@ -1283,22 +1283,22 @@ function DashboardOverview({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[11px] font-black uppercase tracking-wider text-[#B5D430]">
+                <span className="text-[11px] font-bold text-[#B5D430]">
                   1-Tap Dedicated Virtual Account
                 </span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-white/10 text-white/90">
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-white/10 text-white/90">
                 {bachsVirtualAccount.status || 'Active'}
               </span>
             </div>
 
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold text-white/70 uppercase tracking-wider mb-0.5">
+                <p className="text-xs font-semibold text-white/70 mb-0.5">
                   {bachsVirtualAccount.bank_name || 'Bank Transfer'}
                 </p>
                 <div className="flex items-center gap-3">
-                  <span className="text-2xl md:text-3xl font-black font-mono tracking-wider text-white">
+                  <span className="text-2xl md:text-3xl font-bold font-mono tracking-wider text-white">
                     {bachsVirtualAccount.account_number}
                   </span>
                   <button
@@ -1309,7 +1309,7 @@ function DashboardOverview({
                       toast.success('Virtual account copied!');
                       setTimeout(() => setCopiedAccount(false), 2000);
                     }}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                     style={{
                       backgroundColor: copiedAccount ? '#B5D430' : 'rgba(255,255,255,0.15)',
                       color: copiedAccount ? '#132613' : '#FFFFFF',
@@ -1350,25 +1350,25 @@ function DashboardOverview({
 
             <div className="bg-white/10 rounded-xl p-2.5 border border-white/15 space-y-1">
               <p className="text-[11px] text-emerald-100 font-semibold leading-relaxed">
-                💡 <strong>Transfer Tip:</strong> Include your email (<code>{user.email}</code>) or registered phone in the transfer narration for 100% automated instant wallet credit.
+ <strong>Transfer Tip:</strong> Include your email (<code>{user.email}</code>) or registered phone in the transfer narration for 100% automated instant wallet credit.
               </p>
             </div>
           </div>
         </div>
       ) : (
-        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+        <div className="bg-surface-muted border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-800 shrink-0 font-bold">
-              ⚡
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-800 shrink-0 font-semibold">
+ 
             </div>
             <div>
-              <p className="text-sm font-black text-emerald-950">Automated Instant Top-up</p>
+              <p className="text-sm font-bold text-emerald-950">Automated Instant Top-up</p>
               <p className="text-xs text-emerald-700">Fund your wallet automatically via Card or Bank Transfer on Bachs.io.</p>
             </div>
           </div>
           <button
             onClick={() => setShowFundModal(true)}
-            className="px-4 py-2 bg-[#132613] hover:bg-[#1a381a] text-[#B5D430] text-xs font-black rounded-xl transition shadow-sm shrink-0 active:scale-95 cursor-pointer"
+            className="px-4 py-2 bg-[#132613] hover:bg-[#1a381a] text-[#B5D430] text-xs font-bold rounded-xl transition shadow-sm shrink-0 cursor-pointer"
           >
             Deposit Funds Now →
           </button>
@@ -1379,9 +1379,9 @@ function DashboardOverview({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Spend card */}
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">SPEND THIS MONTH</p>
+          <p className="text-xs font-bold text-gray-400 mb-1">SPEND THIS MONTH</p>
           <div className="flex items-center gap-3 mb-4">
-            <span className="text-2xl font-black text-gray-900">{formatCurrency(spendThisMonth)}</span>
+            <span className="text-2xl font-bold text-gray-900">{formatCurrency(spendThisMonth)}</span>
             <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Live</span>
           </div>
           {/* Dynamic 7-day mini bar chart */}
@@ -1400,7 +1400,7 @@ function DashboardOverview({
         {/* Month in NORODATA */}
         <div className="bg-green-50 rounded-2xl p-5 border border-green-100 flex flex-col justify-between">
           <div>
-            <p className="text-xs font-black text-gray-900 uppercase tracking-widest mb-1">YOUR MONTH IN NORODATA</p>
+            <p className="text-xs font-bold text-gray-900 mb-1">YOUR MONTH IN NORODATA</p>
             <p className="text-sm text-gray-600 font-medium mt-1">
               {transactions.length} successful transactions. Every action updates your wallet and ledger.
             </p>
@@ -1416,11 +1416,11 @@ function DashboardOverview({
       </div>
 
       {/* ── Trending in Marketplace Hot Deals Banner ── */}
-      <div className="relative rounded-2xl p-4 bg-gradient-to-r from-[#132613] via-[#1a381a] to-[#132613] text-white border border-[#B5D430]/20 shadow-md overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="relative rounded-2xl p-4 bg-brand-900 text-white border border-[#B5D430]/20 shadow-md overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1 relative z-10">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#B5D430] text-[#132613]">
-              Trending Now 🔥
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#B5D430] text-[#132613]">
+ Trending Now 
             </span>
             <span className="text-xs text-emerald-200 font-semibold">Foreign Numbers & eSIM Desk</span>
           </div>
@@ -1433,7 +1433,7 @@ function DashboardOverview({
         </div>
         <button
           onClick={() => setTab('marketplace')}
-          className="relative z-10 px-4 py-2.5 rounded-xl text-xs font-black transition-all hover:scale-105 active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+          className="relative z-10 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
           style={{ backgroundColor: '#B5D430', color: '#132613' }}
         >
           <span>Explore Marketplace</span>
@@ -1444,13 +1444,13 @@ function DashboardOverview({
 
       {/* ── Quick actions grid ────────────────────────────────────── */}
       <div>
-        <h2 className="text-lg font-black text-gray-900 mb-3">Start something</h2>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Start something</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {quickServices.map((svc) => (
             <button
               key={svc.id}
               onClick={() => setTab(svc.id)}
-              className="bg-white hover:bg-gray-50 rounded-2xl p-4 border border-gray-100 shadow-sm text-left transition-all hover:-translate-y-0.5 hover:shadow-md active:scale-98 group"
+              className="bg-white hover:bg-gray-50 rounded-2xl p-4 border border-gray-100 shadow-sm text-left transition-all hover:-translate-y-0.5 hover:shadow-md group"
             >
               <div
                 className="w-10 h-10 rounded-xl flex items-center justify-center mb-3 text-lg"
@@ -1486,7 +1486,7 @@ function DashboardOverview({
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#E8F5E8' }}>
                     <Wallet size={18} style={{ color: '#3B7A3B' }} />
                   </div>
-                  <h4 className="font-black text-gray-900 text-lg">Deposit Funds</h4>
+                  <h4 className="font-bold text-gray-900 text-lg">Deposit Funds</h4>
                 </div>
                 <button onClick={() => setShowFundModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
                   <X size={16} />
@@ -1500,7 +1500,7 @@ function DashboardOverview({
                     key={t}
                     onClick={() => setFundingTab(t)}
                     className={cn(
-                      'flex-1 py-2.5 px-3 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+                      'flex-1 py-2.5 px-3 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer',
                       fundingTab === t
                         ? 'bg-white shadow-sm text-gray-900 border border-gray-200/60'
                         : 'text-gray-500 hover:text-gray-800'
@@ -1526,9 +1526,9 @@ function DashboardOverview({
                   <form onSubmit={handleBachsFundSubmit} className="space-y-4">
                     <div className="rounded-2xl p-4 bg-emerald-50/70 border border-emerald-200 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Bachs.io Payment Gateway</span>
+                        <span className="text-xs font-bold text-emerald-950 ">Bachs.io Payment Gateway</span>
                         <span className={cn(
-                          "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                          "text-[10px] font-bold px-2 py-0.5 rounded-full ",
                           bachsConfigStatus?.configured ? "bg-emerald-200 text-emerald-900" : "bg-amber-200 text-amber-900"
                         )}>
                           {!bachsConfigStatus ? "Connecting..." : !bachsConfigStatus.configured ? "Key Pending" : bachsConfigStatus.mode === 'sandbox' ? 'Sandbox' : 'Live NGN'}
@@ -1539,7 +1539,7 @@ function DashboardOverview({
                       </p>
                       {bachsConfigStatus && !bachsConfigStatus.configured && (
                         <p className="text-[11px] text-amber-800 bg-amber-100/80 rounded-lg p-2 font-medium">
-                          ⚠️ Bachs.io secret key is not set yet. Please paste your <code>sk_live_...</code> or <code>sk_sandbox_...</code> in the Admin Panel (Bachs.io Gateway tab) or your Vercel Environment Variables.
+ Bachs.io secret key is not set yet. Please paste your <code>sk_live_...</code> or <code>sk_sandbox_...</code> in the Admin Panel (Bachs.io Gateway tab) or your Vercel Environment Variables.
                         </p>
                       )}
                     </div>
@@ -1548,17 +1548,17 @@ function DashboardOverview({
                     {bachsVirtualAccount && (
                       <div className="bg-emerald-900 text-white rounded-xl p-4 space-y-2 border border-emerald-700">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
-                            ⚡ Instant Automated Virtual Account (Bachs.io)
+                          <span className="text-[10px] font-bold text-emerald-300">
+ Instant Automated Virtual Account (Bachs.io)
                           </span>
-                          <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold uppercase">
+                          <span className="text-[10px] bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded-full font-bold ">
                             {bachsVirtualAccount.status}
                           </span>
                         </div>
                         <div className="flex items-center justify-between pt-1">
                           <div>
                             <p className="text-xs text-emerald-200">{bachsVirtualAccount.bank_name}</p>
-                            <p className="font-mono text-lg font-black tracking-wider">{bachsVirtualAccount.account_number}</p>
+                            <p className="font-mono text-lg font-bold tracking-wider">{bachsVirtualAccount.account_number}</p>
                             {bachsVirtualAccount.account_name && (
                               <p className="text-xs text-emerald-100 font-semibold">{bachsVirtualAccount.account_name}</p>
                             )}
@@ -1576,11 +1576,11 @@ function DashboardOverview({
                         </div>
                         <div className="bg-emerald-950/70 rounded-xl p-2.5 border border-emerald-500/30 space-y-2">
                           <p className="text-[11px] text-emerald-100 font-semibold leading-relaxed">
-                            💡 <strong>Auto-Credit Instructions:</strong> Transfer from OPay, PalmPay, Kuda, or any Nigerian bank app. Paste your registered email into the transfer narration/remark:
+ <strong>Auto-Credit Instructions:</strong> Transfer from OPay, PalmPay, Kuda, or any Nigerian bank app. Paste your registered email into the transfer narration/remark:
                           </p>
                           <div className="flex items-center justify-between bg-emerald-900/60 rounded-lg px-3 py-1.5 border border-emerald-500/40">
                             <div className="truncate mr-2">
-                              <span className="text-[9px] text-emerald-300 uppercase font-black block">Your Narration / Remark</span>
+                              <span className="text-[9px] text-emerald-300 font-bold block">Your Narration / Remark</span>
                               <span className="font-mono text-xs font-bold text-white truncate block">{user.email}</span>
                             </div>
                             <button
@@ -1595,14 +1595,14 @@ function DashboardOverview({
                             </button>
                           </div>
                           <p className="text-[10px] text-emerald-300/80">
-                            ⚡ Funds are credited automatically within 60 seconds with zero manual approval.
+ Funds are credited automatically within 60 seconds with zero manual approval.
                           </p>
                         </div>
                       </div>
                     )}
 
                     <div>
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount (₦)</label>
+                      <label className="text-xs font-bold text-gray-400 block mb-2">Amount (₦)</label>
                       <input
                         type="number" required min={100} value={opayAmount}
                         onChange={(e) => setOpayAmount(e.target.value.replace(/\D/g, ''))}
@@ -1646,7 +1646,7 @@ function DashboardOverview({
                               <span>Gateway fee</span>
                               <span className="font-semibold">₦{gwFee.toLocaleString()}</span>
                             </div>
-                            <div className="flex justify-between text-sm font-black text-gray-900 border-t pt-2 border-gray-200">
+                            <div className="flex justify-between text-sm font-bold text-gray-900 border-t pt-2 border-gray-200">
                               <span>Total</span>
                               <span style={{ color: '#3B7A3B' }}>₦{tot.toLocaleString()}</span>
                             </div>
@@ -1676,23 +1676,23 @@ function DashboardOverview({
                     <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-3">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center font-bold text-sm">
-                          🏦
+ 
                         </div>
                         <div>
-                          <p className="text-xs font-black text-amber-950 uppercase tracking-wider">Manual Deposit Account</p>
+                          <p className="text-xs font-bold text-amber-950 ">Manual Deposit Account</p>
                           <p className="text-[11px] text-amber-800">Transfer directly to our verified OPay business account</p>
                         </div>
                       </div>
 
                       <div className="bg-white rounded-xl p-3 space-y-2.5 border border-amber-100 text-xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Bank</span>
-                          <span className="font-extrabold text-gray-900">OPay</span>
+                          <span className="text-gray-400 font-bold text-[10px]">Bank</span>
+                          <span className="font-bold text-gray-900">OPay</span>
                         </div>
                         <div className="flex items-center justify-between border-t border-gray-50 pt-2">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account No.</span>
+                          <span className="text-gray-400 font-bold text-[10px]">Account No.</span>
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-black text-gray-900 text-sm">8143889102</span>
+                            <span className="font-mono font-bold text-gray-900 text-sm">8143889102</span>
                             <button
                               type="button"
                               onClick={() => {
@@ -1703,18 +1703,18 @@ function DashboardOverview({
                               }}
                               className="text-[10px] px-2 py-0.5 rounded font-bold transition-all bg-amber-100 text-amber-900 hover:bg-amber-200 cursor-pointer"
                             >
-                              {copiedAccount ? '✓ Copied' : 'Copy'}
+ {copiedAccount ? ' Copied' : 'Copy'}
                             </button>
                           </div>
                         </div>
                         <div className="flex items-center justify-between border-t border-gray-50 pt-2">
-                          <span className="text-gray-400 font-bold uppercase text-[10px]">Account Name</span>
+                          <span className="text-gray-400 font-bold text-[10px]">Account Name</span>
                           <span className="font-bold text-gray-800 text-[11px]">Ibrahim Faruq OLAMILEKAN</span>
                         </div>
                       </div>
 
                       <div className="text-[11px] text-amber-900/80 bg-white/60 rounded-xl p-2.5 space-y-1">
-                        <p className="font-bold">Instructions:</p>
+                        <p className="font-semibold">Instructions:</p>
                         <ol className="list-decimal list-inside space-y-0.5">
                           <li>Transfer to the OPay account above</li>
                           <li>Take a screenshot of payment receipt</li>
@@ -1724,7 +1724,7 @@ function DashboardOverview({
                     </div>
 
                     <div>
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-2">Amount Transferred (₦)</label>
+                      <label className="text-xs font-bold text-gray-400 block mb-2">Amount Transferred (₦)</label>
                       <input
                         type="number" value={manualAmount}
                         onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
@@ -1735,14 +1735,14 @@ function DashboardOverview({
 
                     {/* WhatsApp Admin Confirmation Button */}
                     <div className="space-y-2">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Send Proof to Admin</p>
+                      <p className="text-[11px] font-bold text-gray-500 ">Send Proof to Admin</p>
                       {ADMIN_CONTACTS.map((admin) => (
                         <a
                           key={admin.number}
                           href={`https://wa.me/${admin.number}?text=Hello%20NORODATA%20Admin,%20I%20have%20sent%20a%20manual%20transfer%20of%20₦${manualAmount || '0'}%20to%20OPay%208143889102.%20My%20email%20is%20${encodeURIComponent(user.email || '')}.%20Please%20find%20attached%20payment%20proof.`}
                           target="_blank"
                           rel="noreferrer"
-                          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-white text-xs font-bold transition-all hover:brightness-110 active:scale-95"
+                          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-white text-xs font-bold transition-all hover:brightness-110"
                           style={{ backgroundColor: '#25D366' }}
                         >
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
@@ -1775,7 +1775,7 @@ function DashboardOverview({
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-black text-gray-900 text-xl">Send Money</h4>
+                  <h4 className="font-bold text-gray-900 text-xl">Send Money</h4>
                   <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer by phone number</p>
                 </div>
                 <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
@@ -1786,7 +1786,7 @@ function DashboardOverview({
               {transferStep === 'input' && (
                 <div className="space-y-5">
                   <div>
-                    <label className="text-xs font-black text-gray-900 uppercase tracking-wider block mb-1.5">Recipient Phone Number</label>
+                    <label className="text-xs font-bold text-gray-900 block mb-1.5">Recipient Phone Number</label>
                     <input
                       type="tel"
                       value={transferUid}
@@ -1801,7 +1801,7 @@ function DashboardOverview({
 
                   {/* Amount */}
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Amount (₦)</label>
+                    <label className="text-xs font-bold text-gray-400 block mb-1.5">Amount (₦)</label>
                     <input
                       type="number"
                       min={100}
@@ -1818,7 +1818,7 @@ function DashboardOverview({
 
                   {/* Note */}
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Note (optional)</label>
+                    <label className="text-xs font-bold text-gray-400 block mb-1.5">Note (optional)</label>
                     <input
                       type="text"
                       value={transferNote}
@@ -1842,8 +1842,8 @@ function DashboardOverview({
               {transferStep === 'confirm' && transferRecipient && (
                 <div className="space-y-4">
                   <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-3">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Send to:</p>
-                    <p className="font-black text-gray-900 text-xl">{transferRecipient.display_name}</p>
+                    <p className="text-xs text-gray-400 font-bold ">Send to:</p>
+                    <p className="font-bold text-gray-900 text-xl">{transferRecipient.display_name}</p>
                     {transferNote && <p className="text-sm text-gray-600 italic">"{transferNote}"</p>}
                     <div className="pt-3 border-t border-gray-200 space-y-2 text-sm">
                       <div className="flex justify-between text-gray-600">
@@ -1854,7 +1854,7 @@ function DashboardOverview({
                         <span>Transfer Fee</span>
                         <span className="font-semibold">₦10</span>
                       </div>
-                      <div className="flex justify-between items-center pt-2 border-t border-gray-200 text-base font-black">
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200 text-base font-semibold">
                         <span className="text-gray-900">Total Debit</span>
                         <span style={{ color: '#3B7A3B' }}>₦{(Number(transferAmount) + 10).toLocaleString()}</span>
                       </div>
@@ -1890,7 +1890,7 @@ function DashboardOverview({
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-black text-gray-900 text-lg">Add Phone Number</h4>
+                  <h4 className="font-bold text-gray-900 text-lg">Add Phone Number</h4>
                   <p className="text-xs text-gray-400 mt-0.5">Required for peer-to-peer wallet transfers</p>
                 </div>
                 <button onClick={() => setShowAddPhoneModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
@@ -1900,7 +1900,7 @@ function DashboardOverview({
 
               <form onSubmit={handleSavePhoneNumber} className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1.5">Nigerian Phone Number</label>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Nigerian Phone Number</label>
                   <input
                     type="tel"
                     required
@@ -1967,7 +1967,7 @@ function SupabaseTransactionHistoryWidget({
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-black text-gray-900">Recent activity</h2>
+        <h2 className="text-lg font-bold text-gray-900">Recent activity</h2>
         <button
           onClick={() => setTab('history')}
           className="text-sm font-semibold transition-all"
@@ -2100,7 +2100,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
           <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full mb-4" style={{ backgroundColor: 'rgba(181,212,48,0.2)', color: '#B5D430' }}>
             <Gift size={12} /> Referral Program
           </span>
-          <h3 className="text-2xl font-black mb-2">Refer & earn 2% commissions</h3>
+          <h3 className="text-2xl font-bold mb-2">Refer & earn 2% commissions</h3>
           <p className="text-sm mb-6" style={{ color: '#8FB88F' }}>
             Invite friends and earn a 2% cash commission on every purchase they make — forever.
           </p>
@@ -2109,9 +2109,9 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
             <div className="rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}>
               <p className="text-xs mb-1" style={{ color: '#8FB88F' }}>Your code</p>
               <div className="flex items-center justify-between">
-                <span className="font-mono font-black text-white">{user.referralCode}</span>
+                <span className="font-mono font-bold text-white">{user.referralCode}</span>
                 <button onClick={handleCopyCode} className="text-xs px-2 py-1 rounded-lg font-bold transition-all" style={{ backgroundColor: copiedCode ? '#B5D430' : 'rgba(255,255,255,0.15)', color: copiedCode ? '#132613' : '#fff' }}>
-                  {copiedCode ? '✓' : <Copy size={12} />}
+ {copiedCode ? '' : <Copy size={12} />}
                 </button>
               </div>
             </div>
@@ -2120,7 +2120,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
               <div className="flex items-center justify-between">
                 <span className="font-mono text-xs opacity-80 truncate max-w-[100px]">{referralLink}</span>
                 <button onClick={handleCopyLink} className="text-xs px-2 py-1 rounded-lg font-bold transition-all" style={{ backgroundColor: copiedLink ? '#B5D430' : '#fff', color: copiedLink ? '#132613' : '#3B7A3B' }}>
-                  {copiedLink ? '✓' : 'Copy'}
+ {copiedLink ? '' : 'Copy'}
                 </button>
               </div>
             </div>
@@ -2128,10 +2128,10 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold" style={{ color: '#8FB88F' }}>Share via:</span>
-              <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white text-xs hover:scale-110 transition-all">W</a>
-              <a href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center text-white text-xs hover:scale-110 transition-all">T</a>
-              <a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs hover:scale-110 transition-all border border-white/10">X</a>
+              <span className="text-xs font-semibold" style={{ color: '#8FB88F' }}>Share via:</span>
+              <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white text-xs transition-all">W</a>
+              <a href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center text-white text-xs transition-all">T</a>
+              <a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer" className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs transition-all border border-white/10">X</a>
             </div>
             <button onClick={() => setShowQR(true)} className="text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all hover:bg-white hover:text-black" style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff' }}>
               <Scan size={12} /> Show QR
@@ -2151,7 +2151,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
                   className="relative bg-white rounded-3xl p-6 shadow-2xl z-10 max-w-sm w-full text-center"
                 >
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-gray-900 font-black text-lg">Scan to join</h3>
+                    <h3 className="text-gray-900 font-bold text-lg">Scan to join</h3>
                     <button onClick={() => setShowQR(false)} className="p-1 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200">
                       <X size={16} />
                     </button>
@@ -2169,7 +2169,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
                   <div className="flex gap-2 w-full mt-2">
                     <button 
                       onClick={() => downloadQR("referral-qr-code", "NORODATA-Referral-QR.png")}
-                      className="w-full py-2.5 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all border border-gray-200 text-sm"
+                      className="w-full py-2.5 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-all border border-gray-200 text-sm"
                     >
                       Download PNG
                     </button>
@@ -2177,9 +2177,9 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
                   <div className="w-full mt-2">
                     <button 
                       onClick={() => window.print()}
-                      className="w-full py-2.5 rounded-xl font-bold text-gray-900 bg-white hover:border-gray-300 active:scale-95 transition-all border-2 border-gray-100 text-sm flex justify-center items-center gap-2"
+                      className="w-full py-2.5 rounded-xl font-bold text-gray-900 bg-white hover:border-gray-300 transition-all border-2 border-gray-100 text-sm flex justify-center items-center gap-2"
                     >
-                      🖨️ Print A4 Flyer
+ Print A4 Flyer
                     </button>
                   </div>
                   <p className="text-gray-500 text-xs font-medium mt-3">Have your friends scan this QR code with their camera to join NORODATA directly.</p>
@@ -2201,8 +2201,8 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ backgroundColor: iconBg }}>
               <span style={{ color: iconColor }}>{icon}</span>
             </div>
-            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">{label}</p>
-            <p className="text-xl font-black text-gray-900">{val}</p>
+            <p className="text-xs text-gray-400 font-bold mb-0.5">{label}</p>
+            <p className="text-xl font-bold text-gray-900">{val}</p>
           </div>
         ))}
       </div>
@@ -2223,7 +2223,7 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 font-bold uppercase tracking-wider">
+                <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-400 font-bold ">
                   <th className="px-5 py-3 text-left">Name / Email</th>
                   <th className="px-5 py-3 text-left">Joined</th>
                   <th className="px-5 py-3 text-left">Status</th>
@@ -2304,9 +2304,9 @@ function SettingsSection({ user }: { user: UserProfile }) {
       
       toast.dismiss(toastId);
       if (autoPublish) {
-        toast.success(`🎉 Force-fetched & published ${data.publishedCount || data.total || 0} plans live!`);
+ toast.success(` Force-fetched & published ${data.publishedCount || data.total || 0} plans live!`);
       } else {
-        toast.success(`🚀 Force-fetched ${data.total || 0} plans across all providers!`);
+ toast.success(` Force-fetched ${data.total || 0} plans across all providers!`);
       }
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -2345,7 +2345,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
       try { await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000'); } catch (_) {}
 
       toast.dismiss(toastId);
-      toast.success('🗑️ All data plans deleted successfully! Database clean.');
+ toast.success(' All data plans deleted successfully! Database clean.');
       setShowDeleteModal(false);
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -2371,7 +2371,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
         .update({ phone_number: phoneNumber, transaction_pin: transactionPin })
         .eq('id', (user as any).uid || (user as any).id);
       if (error) throw error;
-      toast.success('Profile updated! 🔐');
+ toast.success('Profile updated! ');
     } catch (error: any) {
       toast.error('Failed to update: ' + error.message);
     } finally { setIsUpdating(false); }
@@ -2382,14 +2382,14 @@ function SettingsSection({ user }: { user: UserProfile }) {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
         {/* Profile info */}
         <div className="p-6">
-          <h3 className="font-black text-gray-900 text-lg mb-5">Profile information</h3>
+          <h3 className="font-bold text-gray-900 text-lg mb-5">Profile information</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
               { label: 'Full name', val: user.fullName },
               { label: 'Email address', val: user.email },
             ].map(({ label, val }) => (
               <div key={label}>
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">{label}</label>
+                <label className="text-xs font-bold text-gray-400 block mb-1.5">{label}</label>
                 <input
                   readOnly value={val}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-semibold text-gray-700 focus:outline-none"
@@ -2402,12 +2402,12 @@ function SettingsSection({ user }: { user: UserProfile }) {
         {/* Security */}
         <form onSubmit={handleUpdateSecurity} className="p-6 space-y-5">
           <div>
-            <h3 className="font-black text-gray-900 text-lg mb-1">Security credentials</h3>
+            <h3 className="font-bold text-gray-900 text-lg mb-1">Security credentials</h3>
             <p className="text-xs text-gray-400">Keep your phone and PIN up to date.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Phone number</label>
+              <label className="text-xs font-bold text-gray-400 block mb-1.5">Phone number</label>
               <input
                 type="tel" maxLength={11} value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
@@ -2416,7 +2416,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
               />
             </div>
             <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Transaction PIN (4 digits)</label>
+              <label className="text-xs font-bold text-gray-400 block mb-1.5">Transaction PIN (4 digits)</label>
               <input
                 type="password" maxLength={4} value={transactionPin}
                 onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))}
@@ -2439,7 +2439,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
         {/* Reseller upgrade */}
         {user.role === 'user' && (
           <div className="p-6">
-            <h3 className="font-black text-lg mb-1" style={{ color: '#3B7A3B' }}>Upgrade to reseller</h3>
+            <h3 className="font-bold text-lg mb-1" style={{ color: '#3B7A3B' }}>Upgrade to reseller</h3>
             <p className="text-xs text-gray-400 mb-5">Get wholesale data prices and earn more.</p>
             <div className="bg-green-50 border border-green-100 p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
@@ -2460,10 +2460,10 @@ function SettingsSection({ user }: { user: UserProfile }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   Admin Maintenance Console
                 </span>
-                <h3 className="font-black text-white text-base sm:text-lg">Data Plans & Provider Synchronization</h3>
+                <h3 className="font-bold text-white text-base sm:text-lg">Data Plans & Provider Synchronization</h3>
               </div>
               <p className="text-xs text-slate-400 mt-1">
                 Force fetch live data bundles across providers (Mozosubz + Nifex) or wipe all data plans from database cleanly.
@@ -2476,7 +2476,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
               type="button"
               onClick={() => handleAdminForceFetch(false)}
               disabled={isForceFetching}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
             >
               {isForceFetching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               <span>{isForceFetching ? "Force Fetching..." : "Force Fetch All Providers"}</span>
@@ -2486,7 +2486,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
               type="button"
               onClick={() => handleAdminForceFetch(true)}
               disabled={isForceFetching}
-              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
             >
               {isForceFetching ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
               <span>Force Sync & Publish Live</span>
@@ -2496,7 +2496,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
               type="button"
               onClick={() => setShowDeleteModal(true)}
               disabled={isDeletingAllPlans}
-              className="px-4 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 text-xs font-extrabold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-95"
+              className="px-4 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40 text-xs font-bold shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
             >
               {isDeletingAllPlans ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
               <span>{isDeletingAllPlans ? "Deleting All Plans..." : "Delete All Plans"}</span>
@@ -2512,7 +2512,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
                     <Trash2 size={24} />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-lg font-black text-white">
+                    <h3 className="text-lg font-bold text-white">
                       Delete ALL Data Plans?
                     </h3>
                     <p className="text-xs text-slate-400 font-medium leading-relaxed">
@@ -2522,7 +2522,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
                 </div>
 
                 <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-semibold">
-                  ⚠️ Action is permanent. All current data bundle entries will be wiped.
+ Action is permanent. All current data bundle entries will be wiped.
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-2">
@@ -2538,7 +2538,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
                     type="button"
                     onClick={handleExecuteDeleteAll}
                     disabled={isDeletingAllPlans}
-                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition active:scale-95 disabled:opacity-50"
+                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition disabled:opacity-50"
                   >
                     {isDeletingAllPlans ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                     <span>{isDeletingAllPlans ? 'Deleting All...' : 'Yes, Delete All Now'}</span>
@@ -2552,7 +2552,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
 
       {/* Danger zone */}
       <div className="bg-white rounded-2xl border border-red-100 p-6 space-y-4 shadow-sm">
-        <h3 className="font-black text-red-600 text-lg">Danger zone</h3>
+        <h3 className="font-bold text-red-600 text-lg">Danger zone</h3>
         <p className="text-sm text-gray-400">Once you delete your account, there is no recovering it.</p>
         <button className="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-bold rounded-xl border border-red-200 transition-all">
           Delete account

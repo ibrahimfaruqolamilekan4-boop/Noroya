@@ -6,6 +6,7 @@ import crypto from "crypto";
 import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
 import { supabase, serverHasServiceRoleKey, getScopedSupabaseClient } from "./src/lib/supabase.js";
+import { syncVtuPlans, getPlanFreshness, MOZOSUBZ_SERVICES } from "./src/lib/mozosubz-sync.js";
 import axios from "axios";
 
 // SECURITY: sanitize client-supplied values before interpolating them into
@@ -943,6 +944,8 @@ async function startServer() {
         .from('services_config')
         .select('id, bigisub_identifier_id, item_name, name, plan_name, network, network_type, service_type, plan_category, selling_price, retail_price, cost_price, validity_days, is_active, provider, mozosubz_service, mozosubs_plan_id, mozosubz_plan_id')
         .eq('is_active', true)
+        // Only rows an admin has actually priced belong in the customer store.
+        .gt('selling_price', 0)
         .order('network');
 
       if (dbErr) {
@@ -1974,224 +1977,77 @@ async function startServer() {
   });
 
   // Step 2.3: Admin Sync Plans From Provider API (Unified Source of Truth: vtu_plans)
+  // Thin wrapper around src/lib/mozosubz-sync.ts so the manual admin button and the
+  // background cron share ONE implementation (no duplicated pull/upsert logic).
   app.post("/api/admin/sync-vtu-plans", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
     try {
-      let mozoKey = process.env.MOZOSUBZ_API_KEY || "";
-      let nifexKey = process.env.NIFEX_API_KEY || "";
-      try {
-        const { data: secrets } = await supabase.from("provider_secrets").select("identifier, secret");
-        if (secrets && Array.isArray(secrets)) {
-          for (const s of secrets) {
-            if (s.identifier === "mozosubz_api_key" && s.secret) mozoKey = s.secret.trim();
-            if (s.identifier === "nifex_api_key" && s.secret) nifexKey = s.secret.trim();
-          }
-        }
-      } catch (_) {}
+      const mozoKey = await resolveMozosubzApiKey();
+      const nifexKey = await resolveNifexApiKey();
 
-      const livePlans: any[] = [];
-      const nowIso = new Date().toISOString();
-      const serviceCounts: Record<string, number> = {};
-
-      if (mozoKey && mozoKey.length > 5) {
-        const MOZO_SERVICES = [
-          { id: "mtn_sme", network: "MTN", plan_type: "SME" },
-          { id: "mtn_cg", network: "MTN", plan_type: "CG" },
-          { id: "mtn_gifting", network: "MTN", plan_type: "GIFTING" },
-          { id: "mtn_datashare", network: "MTN", plan_type: "DATASHARE" },
-          { id: "mtn_awoof", network: "MTN", plan_type: "AWOOF" },
-          { id: "mtn_awoof2", network: "MTN", plan_type: "AWOOF" },
-          { id: "mtn_coupon", network: "MTN", plan_type: "COUPON" },
-          { id: "glo_sme", network: "GLO", plan_type: "SME" },
-          { id: "glo_cg", network: "GLO", plan_type: "CG" },
-          { id: "glo_data", network: "GLO", plan_type: "DATA" },
-          { id: "airtel_sme", network: "AIRTEL", plan_type: "SME" },
-          { id: "airtel_cg", network: "AIRTEL", plan_type: "CG" },
-          { id: "airtel_gifting", network: "AIRTEL", plan_type: "GIFTING" },
-          { id: "etisalat_sme", network: "9MOBILE", plan_type: "SME" },
-          { id: "etisalat_data", network: "9MOBILE", plan_type: "DATA" }
-        ];
-
-        for (const svc of MOZO_SERVICES) {
-          try {
-            let page = 1;
-            let hasMore = true;
-
-            while (hasMore) {
-              const url = page === 1
-                ? `https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}`
-                : `https://mozosubz.xyz/api/v1/data/plans?service=${svc.id}&page=${page}`;
-
-              const resp = await fetch(url, {
-                headers: { "X-Connect-Key": mozoKey, "Content-Type": "application/json" },
-                signal: AbortSignal.timeout(12000),
-              });
-              const d: any = await resp.json().catch(() => ({}));
-              if (d && d.success && Array.isArray(d.plans)) {
-                serviceCounts[svc.id] = (serviceCounts[svc.id] || 0) + d.plans.length;
-                for (const p of d.plans) {
-                  const cost = Number(p.price || 0);
-                  const pId = String(p.id).trim();
-                  livePlans.push({
-                    network: svc.network,
-                    plan_name: p.name || (`${svc.network} ${p.plan_type || "Data"}`),
-                    provider_plan_id: pId,
-                    provider_price: cost,
-                    price_to_user: Math.ceil(cost * 1.10),
-                    is_active: true,
-                    last_synced_at: nowIso,
-                    provider: "mozosubz",
-                    service: svc.id,
-                    validity: "30 Days",
-                    margin_percent: 10,
-                  });
-                }
-                if (d.next || (d.total_pages && page < d.total_pages)) {
-                  page++;
-                } else {
-                  hasMore = false;
-                }
-              } else {
-                hasMore = false;
-              }
-            }
-          } catch (svcErr) {
-            console.warn(`[sync-vtu-plans] Fetch error for ${svc.id}:`, svcErr);
-          }
-        }
-      }
-
-      if (nifexKey && nifexKey.length > 5) {
-        try {
-          const cleanKey = nifexKey.replace(/^Token\s+/i, "").trim();
-          const resp = await fetch("https://nifexdataapp.com.ng/api/data/", {
-            headers: { "Authorization": `Token ${cleanKey}`, "Content-Type": "application/json" },
-            signal: AbortSignal.timeout(15000),
-          });
-          const d: any = await resp.json().catch(() => ({}));
-          let list: any[] = [];
-          if (Array.isArray(d)) list = d;
-          else if (Array.isArray(d?.plans)) list = d.plans;
-          else if (Array.isArray(d?.data)) list = d.data;
-          else if (Array.isArray(d?.results)) list = d.results;
-          else if (d && typeof d === 'object') {
-            for (const k of Object.keys(d)) {
-              if (Array.isArray(d[k])) list.push(...d[k]);
-            }
-          }
-
-          serviceCounts["nifex"] = list.length;
-
-          for (const p of list) {
-            const rawNet = String(p.network || p.network_name || "MTN").toUpperCase();
-            const net = rawNet.includes("GLO") ? "GLO" : rawNet.includes("AIRTEL") ? "AIRTEL" : rawNet.includes("9MOBILE") ? "9MOBILE" : "MTN";
-            const cost = Number(p.price ?? p.plan_amount ?? p.amount ?? 0);
-            const planId = String(p.plan_id ?? p.pId ?? p.id ?? p.planid);
-            const pId = `nifex_${net.toLowerCase()}_${planId}`;
-            livePlans.push({
-              network: net,
-              plan_name: p.plan_name || p.name || (net + " Data"),
-              provider_plan_id: pId,
-              provider_price: cost,
-              price_to_user: Math.ceil(cost * 1.10),
-              is_active: true,
-              last_synced_at: nowIso,
-              provider: "nifex",
-              service: p.type || "DATA",
-              validity: p.validity || "30 Days",
-              margin_percent: 10,
-            });
-          }
-        } catch (nErr) {
-          console.warn("[sync-vtu-plans] Nifex fetch error:", nErr);
-        }
-      }
-
-      if (livePlans.length === 0) {
-        return res.status(400).json({ success: false, error: "No plans retrieved from providers. Please verify credentials." });
-      }
-
-      const { data: existingRows } = await supabase
-        .from("vtu_plans")
-        .select("provider_plan_id, price_to_user, provider_price, manual_price_override, margin_percent, is_active");
-
-      const existingMap = new Map();
-      if (existingRows) {
-        for (const row of existingRows) existingMap.set(String(row.provider_plan_id).trim(), row);
-      }
-
-      let added = 0;
-      let updated = 0;
-      const priceChanges: any[] = [];
-      const uniquePlanMap = new Map<string, any>();
-
-      for (const p of livePlans) {
-        const key = String(p.provider_plan_id).trim();
-        if (!key) continue;
-        const ext = existingMap.get(key);
-
-        const margin = ext?.margin_percent ? Number(ext.margin_percent) : 10;
-        const manualOverride = ext?.manual_price_override;
-        const computedPrice = (manualOverride !== undefined && manualOverride !== null && Number(manualOverride) > 0)
-          ? Math.ceil(Number(manualOverride))
-          : Math.ceil(p.provider_price * (1 + margin / 100));
-
-        if (ext) {
-          updated++;
-          if (Math.abs(Number(ext.provider_price) - p.provider_price) > 0.01 ||
-              Math.abs(Number(ext.price_to_user) - computedPrice) > 0.01) {
-            priceChanges.push({
-              provider_plan_id: key,
-              plan_name: p.plan_name,
-              old_provider_price: Number(ext.provider_price || 0),
-              new_provider_price: p.provider_price,
-              old_customer_price: Number(ext.price_to_user || 0),
-              new_customer_price: computedPrice,
-            });
-          }
-        } else {
-          added++;
-        }
-
-        const row = {
-          ...p,
-          provider_plan_id: key,
-          provider_price: p.provider_price,
-          price_to_user: computedPrice, // ALWAYS updates customer price unless manual_price_override is active
-          manual_price_override: manualOverride ?? null,
-          margin_percent: margin,
-          is_active: true,
-          last_synced_at: nowIso,
-        };
-
-        uniquePlanMap.set(key, row);
-      }
-      const upsertRows = Array.from(uniquePlanMap.values());
-
-      const { error: upsertErr } = await supabase.from("vtu_plans").upsert(upsertRows, { onConflict: "provider_plan_id" });
-      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
-
-      // Only deactivate if a comprehensive set (>= 20 plans) was returned
-      const liveSet = new Set(livePlans.map(p => p.provider_plan_id));
-      let deactivated = 0;
-      if (existingRows && livePlans.length >= 20) {
-        const missing = existingRows.filter(r => r.is_active && !liveSet.has(r.provider_plan_id)).map(r => r.provider_plan_id);
-        if (missing.length > 0) {
-          const { error: deactErr } = await supabase.from("vtu_plans").update({ is_active: false, last_synced_at: nowIso }).in("provider_plan_id", missing);
-          if (!deactErr) deactivated = missing.length;
-        }
-      }
-
-      return res.json({
-        success: true,
-        added,
-        updated,
-        deactivated,
-        total: livePlans.length,
-        service_counts: serviceCounts,
-        price_changes_count: priceChanges.length,
-        price_changes: priceChanges.slice(0, 50),
-        timestamp: nowIso
+      const result = await syncVtuPlans({
+        supabase,
+        mozosubzKey: mozoKey,
+        nifexKey,
+        trigger: 'admin',
       });
+
+      if (!result.success) {
+        return res.status(result.total === 0 && result.warnings.length === 0 ? 503 : 500).json(result);
+      }
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message, warnings: [] });
+    }
+  });
+
+  // Step 2.4: Scheduled plan sync, called by Vercel Cron.
+  // Mozosubz plan changes now propagate without an admin clicking anything.
+  // Authorised by the cron secret (Vercel injects `Authorization: Bearer <secret>`)
+  // or by a valid admin session, so it can also be triggered by hand.
+  app.all(["/api/cron/sync-vtu-plans", "/api/cron/sync-plans"], async (req, res) => {
+    const cronSecret = (process.env.CRON_SECRET || "").trim();
+    const authHeader = String(req.headers.authorization || "");
+    const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const querySecret = String((req.query?.secret as string) || "").trim();
+    const cronAuthorized =
+      !!cronSecret && (bearer === cronSecret || querySecret === cronSecret);
+
+    if (!cronAuthorized && !(await requireAdmin(req, res))) return;
+
+    try {
+      const mozoKey = await resolveMozosubzApiKey();
+      const nifexKey = await resolveNifexApiKey();
+
+      const result = await syncVtuPlans({
+        supabase,
+        mozosubzKey: mozoKey,
+        nifexKey,
+        trigger: cronAuthorized ? 'cron' : 'admin',
+      });
+
+      if (!result.success) {
+        console.warn("[cron/sync-vtu-plans] sync unsuccessful:", result.error || (result.warnings || []).join('; '));
+        return res.status(502).json(result);
+      }
+
+      console.log(
+        `[cron/sync-vtu-plans] ok +${result.added} ~${result.updated} -${result.deactivated} total=${result.total}`,
+      );
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[cron/sync-vtu-plans] exception:", err);
+      return res.status(500).json({ success: false, error: err.message, warnings: [] });
+    }
+  });
+
+  // Step 2.5: Plan catalogue freshness — powers the admin "Last synced" badge so
+  // the Pricing Manager knows whether it is looking at stale data.
+  app.get("/api/admin/plans-freshness", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const freshness = await getPlanFreshness(supabase);
+      return res.json({ success: true, ...freshness });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -2637,10 +2493,18 @@ async function startServer() {
   app.get("/api/services/data", async (req, res) => {
     try {
       // Primary source: unified vtu_plans table
+      // STOREFRONT FILTER — only sellable plans are exposed to customers.
+      // A plan must be (a) enabled, (b) priced by an admin, and (c) still offered
+      // by the provider. Plans that are missing any of the three are hidden
+      // entirely rather than shown with a stale price. This mirrors Mozosubz's
+      // own `if (!rule) return null` behaviour in /api/v1/data/plans.
       const { data: vtuPlans, error: vtuErr } = await supabase
         .from('vtu_plans')
-        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, last_synced_at, provider, service, validity')
+        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, is_priced, provider_status, last_synced_at, provider, service, validity')
         .eq('is_active', true)
+        .eq('is_priced', true)
+        .eq('provider_status', 'live')
+        .gt('price_to_user', 0)
         .order('network', { ascending: true })
         .order('price_to_user', { ascending: true });
 
@@ -2712,7 +2576,11 @@ async function startServer() {
         return res.json([]);
       }
 
-      const items = (services || []).filter((r: any) => !isProviderSecretRow(r));
+      // Legacy fallback table. Only rows with a real retail price are sellable —
+      // an unpriced row must never reach the storefront.
+      const items = (services || [])
+        .filter((r: any) => !isProviderSecretRow(r))
+        .filter((r: any) => Number(r.selling_price || r.retail_price || 0) > 0);
       const formattedPlans = items.map(item => {
         const pPrice = Number(item.selling_price || item.retail_price || 0);
         const rawName = String(item.item_name || item.plan_name || item.name || '');
@@ -2764,14 +2632,26 @@ async function startServer() {
 
       if (error) return res.status(500).json({ error: error.message });
 
-      const totalCount = plans?.length || 0;
-      const activeCount = plans?.filter((p: any) => p.is_active).length || 0;
+      const rows = (plans || []) as any[];
+      const totalCount = rows.length;
+      const activeCount = rows.filter((p) => p.is_active).length;
+      const liveCount = rows.filter((p) => p.provider_status !== 'removed').length;
+      const pricedCount = rows.filter((p) => p.is_priced === true).length;
+      const removedCount = rows.filter((p) => p.provider_status === 'removed').length;
+      // Exactly the plans a customer can currently buy.
+      const sellableCount = rows.filter(
+        (p) => p.is_active && p.is_priced === true && p.provider_status !== 'removed',
+      ).length;
 
       return res.json({
         success: true,
         total: totalCount,
         active: activeCount,
-        plans: plans || [],
+        live: liveCount,
+        priced: pricedCount,
+        removed: removedCount,
+        sellable: sellableCount,
+        plans: rows,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -2793,6 +2673,11 @@ async function startServer() {
         updateData.manual_price_override = numOverride;
         if (numOverride && numOverride > 0) {
           updateData.price_to_user = Math.ceil(numOverride);
+          // Pricing a plan is what promotes it into the customer store.
+          updateData.is_priced = true;
+        } else {
+          // Clearing the price pulls it back out of the customer store.
+          updateData.is_priced = false;
         }
       }
       if (is_active !== undefined) {
@@ -2808,6 +2693,97 @@ async function startServer() {
 
       if (error) return res.status(500).json({ error: error.message });
       return res.json({ success: true, plan: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: toggle whether a plan is priced (i.e. visible to customers).
+  // Kept separate from the price value so an admin can unlist a plan without
+  // destroying the price they already set.
+  app.post("/api/admin/vtu-plans/set-priced", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { provider_plan_id, is_priced } = req.body || {};
+      if (!provider_plan_id) {
+        return res.status(400).json({ error: "Missing provider_plan_id" });
+      }
+      if (typeof is_priced !== 'boolean') {
+        return res.status(400).json({ error: "is_priced must be a boolean" });
+      }
+
+      const { error } = await supabase
+        .from('vtu_plans')
+        .update({ is_priced, updated_at: new Date().toISOString() })
+        .eq('provider_plan_id', String(provider_plan_id).trim());
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, provider_plan_id, is_priced });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: price every plan the provider still sells but which has no price yet.
+  // This is the "make the whole live catalogue buyable" bulk action.
+  app.post("/api/admin/vtu-plans/price-all-unpriced", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const marginPct = Number(req.body?.margin_percent ?? 10);
+      const margin = Number.isFinite(marginPct) && marginPct >= 0 ? marginPct : 10;
+
+      const { data: unpricedRows, error: readErr } = await supabase
+        .from('vtu_plans')
+        .select('provider_plan_id, provider_price, margin_percent')
+        .eq('is_priced', false)
+        .neq('provider_status', 'removed');
+
+      if (readErr) return res.status(500).json({ error: readErr.message });
+
+      const rows = (unpricedRows || []) as any[];
+      if (rows.length === 0) {
+        return res.json({ success: true, priced: 0, message: 'Every live plan is already priced.' });
+      }
+
+      // Update one-by-one: prices are derived per row, so a single bulk update
+      // cannot express them. Bounded by the size of the unpriced catalogue.
+      let priced = 0;
+      for (const row of rows) {
+        const cost = Number(row.provider_price || 0);
+        const rowMargin = Number(row.margin_percent ?? margin);
+        const selling = Math.ceil(cost * (1 + (Number.isFinite(rowMargin) ? rowMargin : margin) / 100));
+        if (selling <= 0) continue;
+
+        const { error } = await supabase
+          .from('vtu_plans')
+          .update({
+            price_to_user: selling,
+            is_priced: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('provider_plan_id', row.provider_plan_id);
+
+        if (!error) priced += 1;
+      }
+
+      return res.json({ success: true, priced, candidates: rows.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: permanently drop plans the provider has removed.
+  // The storefront already hides them; this is catalogue hygiene.
+  app.post("/api/admin/vtu-plans/prune-removed", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    try {
+      const { error, count } = await supabase
+        .from('vtu_plans')
+        .delete({ count: 'exact' })
+        .eq('provider_status', 'removed');
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true, pruned: count || 0 });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

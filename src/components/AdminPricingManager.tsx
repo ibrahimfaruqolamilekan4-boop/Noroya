@@ -136,6 +136,10 @@ interface PricingRow {
   isActive:      boolean;
   lastSyncedAt?: string;
   manualOverride?: number | null;
+  /** Admin has deliberately priced this plan — only priced plans reach customers. */
+  isPriced?:     boolean;
+  /** 'live' while the provider still returns it, 'removed' once it disappears upstream. */
+  providerStatus?: 'live' | 'removed';
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -358,7 +362,7 @@ function AdminPricingManagerInner() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to save');
       setUtilityRows(prev => prev.map(r => (r.id === row.id || r.planId === row.planId) ? { ...r, saved: true, saving: false, dirty: false } : r));
-      toast.success(`✅ Saved ${row.name} (₦${row.sellingPrice})`);
+ toast.success(` Saved ${row.name} (₦${row.sellingPrice})`);
     } catch (err: any) {
       setUtilityRows(prev => prev.map(r => (r.id === row.id || r.planId === row.planId) ? { ...r, saving: false } : r));
       toast.error(err.message || 'Save failed');
@@ -395,7 +399,7 @@ function AdminPricingManagerInner() {
         if (res.ok) ok++;
       }
       setUtilityRows(prev => prev.map(r => ({ ...r, saved: true, saving: false, dirty: false })));
-      toast.success(`🎉 Published ${ok} utility item${ok > 1 ? 's' : ''} to live store!`);
+ toast.success(` Published ${ok} utility item${ok > 1 ? 's' : ''} to live store!`);
     } catch (err: any) {
       toast.error(err.message || 'Publish failed');
     } finally {
@@ -446,14 +450,14 @@ function AdminPricingManagerInner() {
         throw new Error(saveErr.error || 'Failed to save key');
       }
 
-      toast.success(`🎉 Key for ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} saved and activated permanently!`);
+ toast.success(` Key for ${selectedProvider === 'nifex' ? 'Nifex Data' : 'Mozosubz'} saved and activated permanently!`);
       setApiKeyInput('');
       setFetchWarning(null);
       await loadKeyStatus();
       setShowKeyConfig(false);
       fetchPlans();
     } catch (err: any) {
-      toast.error(`❌ Failed to save key: ${err.message || err}`);
+ toast.error(` Failed to save key: ${err.message || err}`);
     } finally {
       setIsSavingKey(false);
     }
@@ -476,14 +480,14 @@ function AdminPricingManagerInner() {
       });
       const testData = await testRes.json();
       if (!testRes.ok || !testData.success) {
-        toast.error(`❌ Provider rejected key: ${testData.error || 'Invalid API key'}. You can still use 'Save Key' to store it.`);
+ toast.error(` Provider rejected key: ${testData.error || 'Invalid API key'}. You can still use 'Save Key' to store it.`);
         return;
       }
 
       // 2. Key is verified live! Save it permanently to server memory & Supabase
       await handleDirectSaveKey(trimmed);
     } catch (err: any) {
-      toast.error(`❌ Verification failed: ${err.message || err}`);
+ toast.error(` Verification failed: ${err.message || err}`);
     } finally {
       setIsTestingKey(false);
     }
@@ -726,7 +730,7 @@ function AdminPricingManagerInner() {
 
       const plans: any[] = (data.plans || []).filter((p: any) => (p.id || p.plan_id) && p.name && p.price > 0);
       if (!plans.length) {
-        toast('No active plans returned across providers — check your provider keys.', { icon: '⚠️' });
+ toast('No active plans returned across providers — check your provider keys.', { icon: '' });
         setFetched(true);
         return;
       }
@@ -783,9 +787,9 @@ function AdminPricingManagerInner() {
       setLastFetched(new Date());
 
       if (autoPublish) {
-        toast.success(`🎉 Force-fetched & published ${data.publishedCount || newRows.length} plans directly to store!`);
+ toast.success(` Force-fetched & published ${data.publishedCount || newRows.length} plans directly to store!`);
       } else {
-        toast.success(`🚀 Force-fetched ${newRows.length} live plans from ALL providers (Mozosubz & Nifex)!`);
+ toast.success(` Force-fetched ${newRows.length} live plans from ALL providers (Mozosubz & Nifex)!`);
       }
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -852,13 +856,82 @@ function AdminPricingManagerInner() {
       });
       const resData = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
-      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saved: true, saving: false, dirty: false } : r));
-      toast.success(`✅ "${row.name}" saved to store`);
+      setRows(prev => prev.map(r => r.planId === planId
+        ? { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: row.sellingPrice }
+        : r));
+ toast.success(` "${row.name}" saved to store`);
     } catch (err: any) {
       setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
       toast.error(err.message || 'Save failed');
     }
   }, [rows, selectedProvider, globalMarkup]);
+
+  const catalogue = useMemo(() => ({
+    visible:  rows.filter(r => r.providerStatus !== 'removed' && r.isPriced).length,
+    removed:  rows.filter(r => r.providerStatus === 'removed').length,
+    unpriced: rows.filter(r => r.providerStatus !== 'removed' && !r.isPriced).length,
+  }), [rows]);
+
+  // ── Bulk catalogue actions ────────────────────────────────────────────────
+  // Price every live-but-unpriced plan in one go, so a fresh provider sync does
+  // not leave the store empty until each row is saved by hand.
+  const priceAllUnpriced = useCallback(async () => {
+    setPublishing(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/price-all-unpriced', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ margin_percent: parseFloat(globalMarkup) || 10 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Bulk pricing failed');
+      toast.success(`Priced ${data.priced} plan${data.priced === 1 ? '' : 's'} — now live in store`);
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error(err.message || 'Bulk pricing failed');
+    } finally {
+      setPublishing(false);
+    }
+  }, [globalMarkup, fetchPlans]);
+
+  // Drop plans the provider has removed from the catalogue entirely.
+  const pruneRemoved = useCallback(async () => {
+    if (catalogue.removed === 0) return;
+    if (!window.confirm(`Delete ${catalogue.removed} plan(s) that Mozosubz no longer offers? This cannot be undone.`)) return;
+    setPublishing(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/prune-removed', { method: 'POST', headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Prune failed');
+      toast.success(`Removed ${data.pruned} stale plan${data.pruned === 1 ? '' : 's'}`);
+      await fetchPlans();
+    } catch (err: any) {
+      toast.error(err.message || 'Prune failed');
+    } finally {
+      setPublishing(false);
+    }
+  }, [catalogue.removed, fetchPlans]);
+
+  // Toggle a plan's customer visibility without touching its price.
+  const togglePriced = useCallback(async (planId: string, nextPriced: boolean) => {
+    setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: true } : r));
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch('/api/admin/vtu-plans/set-priced', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ provider_plan_id: planId, is_priced: nextPriced }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Toggle failed');
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, isPriced: nextPriced, saving: false } : r));
+      toast.success(nextPriced ? 'Plan is now visible to customers' : 'Plan hidden from customers');
+    } catch (err: any) {
+      setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
+      toast.error(err.message || 'Toggle failed');
+    }
+  }, []);
 
   // ── Publish ALL visible unsaved/dirty rows in batch ───────────────────────
   const publishAll = useCallback(async () => {
@@ -897,7 +970,9 @@ function AdminPricingManagerInner() {
 
       const savedIds = new Set(targets.map(t => t.planId));
       setRows(prev => prev.map(r => {
-        if (savedIds.has(r.planId)) return { ...r, saved: true, saving: false, dirty: false };
+        if (savedIds.has(r.planId)) {
+          return { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: r.sellingPrice };
+        }
         return r;
       }));
       toast.success(`✅ Saved ${targets.length} plans to store`);
@@ -926,6 +1001,7 @@ function AdminPricingManagerInner() {
     () => filtered.filter(r => r.dirty || !r.saved).length,
     [filtered]
   );
+
 
   const netCounts = useMemo(() => {
     const c: Record<string, number> = { all: rows.length };
@@ -958,7 +1034,7 @@ function AdminPricingManagerInner() {
     <div className="space-y-5 text-slate-100">
 
       {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-700/50 bg-gradient-to-br from-slate-900 via-indigo-950/30 to-slate-900 p-6">
+      <div className="relative overflow-hidden rounded-2xl border border-slate-700/50 bg-brand-900 p-6">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(99,102,241,0.12),transparent_60%)]" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1014,8 +1090,7 @@ function AdminPricingManagerInner() {
             {/* API Key Status / Config Toggle */}
             <button
               onClick={() => setShowKeyConfig(prev => !prev)}
-              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition cursor-pointer ${
-                keyStatus[selectedProvider]?.configured
+              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition cursor-pointer ${ keyStatus[selectedProvider]?.configured
                   ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/40'
                   : 'bg-amber-950/40 text-amber-300 border-amber-800/40 hover:bg-amber-900/40 animate-pulse'
               }`}>
@@ -1026,6 +1101,29 @@ function AdminPricingManagerInner() {
               </span>
               {showKeyConfig ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
+
+            {fetched && (
+              <div className="flex items-center gap-2 mr-auto">
+                <span className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-emerald-950/40 text-emerald-300 border border-emerald-800/40"
+                  title="Priced plans that Mozosubz still sells — these are what customers see.">
+                  <Eye size={11} /> {catalogue.visible} visible
+                </span>
+                {catalogue.unpriced > 0 && (
+                  <button onClick={priceAllUnpriced} disabled={publishing}
+                    title="These plans are hidden from customers because no price is set. Click to price them all."
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-600 hover:bg-slate-700 transition disabled:opacity-50 cursor-pointer">
+                    <EyeOff size={11} /> {catalogue.unpriced} unpriced — price all
+                  </button>
+                )}
+                {catalogue.removed > 0 && (
+                  <button onClick={pruneRemoved} disabled={publishing}
+                    title="Mozosubz no longer returns these plans. They are already hidden from customers."
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold bg-red-950/40 text-red-300 border border-red-800/50 hover:bg-red-900/40 transition disabled:opacity-50 cursor-pointer">
+                    <AlertTriangle size={11} /> {catalogue.removed} removed — prune
+                  </button>
+                )}
+              </div>
+            )}
 
             <button onClick={handleSyncFromProvider} disabled={isSyncingFromProvider || loading}
               className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer">
@@ -1055,11 +1153,10 @@ function AdminPricingManagerInner() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Key size={15} className="text-indigo-400" />
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                <h4 className="text-xs font-bold text-white ">
                   Live {selectedProvider === 'nifex' ? 'Nifex Data Token' : 'Mozosubz Connect Key'} Setup
                 </h4>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                  keyStatus[selectedProvider]?.configured ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${ keyStatus[selectedProvider]?.configured ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
                 }`}>
                   {keyStatus[selectedProvider]?.configured ? 'Connected' : 'Key Missing'}
                 </span>
@@ -1067,7 +1164,7 @@ function AdminPricingManagerInner() {
               <button
                 onClick={() => setShowKeyConfig(false)}
                 className="text-slate-400 hover:text-white text-xs px-2 py-1">
-                ✕
+ 
               </button>
             </div>
 
@@ -1107,7 +1204,7 @@ function AdminPricingManagerInner() {
         <div className="mt-4 pt-4 border-t border-slate-800/80 rounded-xl bg-slate-900/60 border border-slate-800 p-4">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
             <div>
-              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+              <h4 className="text-xs font-bold text-white flex items-center gap-1.5 ">
                 <Sparkles size={14} className="text-indigo-400" />
                 Multi-Provider Synchronization & Plan Maintenance
               </h4>
@@ -1198,7 +1295,7 @@ function AdminPricingManagerInner() {
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
         <button
           onClick={() => setMainCategory('data')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer ${
             mainCategory === 'data'
               ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
               : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
@@ -1206,14 +1303,14 @@ function AdminPricingManagerInner() {
         >
           <Smartphone size={15} />
           <span>Data Bundles</span>
-          <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+          <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-semibold">
             {rows.length}
           </span>
         </button>
 
         <button
           onClick={() => { setMainCategory('cable'); fetchUtilityPlans('cable'); }}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer ${
             mainCategory === 'cable'
               ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
               : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
@@ -1222,7 +1319,7 @@ function AdminPricingManagerInner() {
           <Tv size={15} />
           <span>Cable TV (DSTV, GOTV, StarTimes)</span>
           {mainCategory === 'cable' && utilityRows.length > 0 && (
-            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-semibold">
               {utilityRows.length}
             </span>
           )}
@@ -1230,7 +1327,7 @@ function AdminPricingManagerInner() {
 
         <button
           onClick={() => { setMainCategory('electricity'); fetchUtilityPlans('electricity'); }}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer ${
             mainCategory === 'electricity'
               ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
               : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
@@ -1239,7 +1336,7 @@ function AdminPricingManagerInner() {
           <Zap size={15} />
           <span>Electricity DISCOs</span>
           {mainCategory === 'electricity' && utilityRows.length > 0 && (
-            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-semibold">
               {utilityRows.length}
             </span>
           )}
@@ -1247,7 +1344,7 @@ function AdminPricingManagerInner() {
 
         <button
           onClick={() => { setMainCategory('exam'); fetchUtilityPlans('exam'); }}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer ${
             mainCategory === 'exam'
               ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
               : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
@@ -1256,7 +1353,7 @@ function AdminPricingManagerInner() {
           <FileText size={15} />
           <span>Exam PINs (WAEC, NECO, NABTEB)</span>
           {mainCategory === 'exam' && utilityRows.length > 0 && (
-            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-bold">
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-black/30 font-mono font-semibold">
               {utilityRows.length}
             </span>
           )}
@@ -1309,8 +1406,7 @@ function AdminPricingManagerInner() {
                 <div className="hidden sm:flex items-center gap-1.5">
                   {[5, 8, 10, 15, 20].map(p => (
                     <button key={p} onClick={() => setGlobalMarkup(String(p))}
-                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition ${
-                        globalMarkup === String(p)
+                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition ${ globalMarkup === String(p)
                           ? 'bg-indigo-600 border-indigo-500 text-white'
                           : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-400 hover:text-white'}`}>
                       {p}%
@@ -1365,7 +1461,7 @@ function AdminPricingManagerInner() {
               }>
               {tab.id === 'all' ? <Globe size={12} /> : <span className="w-2 h-2 rounded-full" style={{ background: tab.color }} />}
               {tab.label}
-              <span className="text-[10px] rounded-full px-1.5 py-0.5 font-bold"
+              <span className="text-[10px] rounded-full px-1.5 py-0.5 font-semibold"
                 style={networkTab === tab.id ? { background: 'rgba(255,255,255,0.15)' } : { background: 'rgba(51,65,85,0.8)', color: '#94a3b8' }}>
                 {netCounts[tab.id] ?? 0}
               </span>
@@ -1439,7 +1535,7 @@ function AdminPricingManagerInner() {
       {fetched && filtered.length > 0 && (
         <div className="rounded-xl border border-slate-700/50 overflow-hidden">
           {/* Header row */}
-          <div className="grid gap-2 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 bg-slate-900/80 border-b border-slate-700/50"
+          <div className="grid gap-2 px-4 py-3 text-[11px] font-semibold text-slate-500 bg-slate-900/80 border-b border-slate-700/50"
             style={{ gridTemplateColumns: showCost ? '2.5fr 1fr 1fr 1fr 1fr 1fr auto auto' : '2.5fr 1fr 1fr 1fr auto auto' }}>
             <span>Plan</span>
             {showCost && <span>Cost</span>}
@@ -1459,7 +1555,8 @@ function AdminPricingManagerInner() {
               const belowCost = row.sellingPrice < row.costPrice;
               return (
                 <div key={row.planId}
-                  className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/30 transition-colors ${row.dirty ? 'bg-amber-500/5' : ''}`}
+                  className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/30 transition-colors ${ row.providerStatus === 'removed' ? 'bg-red-500/5 opacity-70' : row.dirty ? 'bg-amber-500/5' : ''
+                  }`}
                   style={{ gridTemplateColumns: showCost ? '2.5fr 1fr 1fr 1fr 1fr 1fr auto auto' : '2.5fr 1fr 1fr 1fr auto auto' }}>
 
                   {/* Plan identity */}
@@ -1472,8 +1569,28 @@ function AdminPricingManagerInner() {
                       <span className="text-[9px] bg-slate-800 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded-md font-mono">
                         {row.provider === 'nifex' ? 'Nifex' : 'Mozosubz'}
                       </span>
-                      {row.dirty && <span className="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-bold">UNSAVED</span>}
-                      {row.saved && !row.dirty && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold">LIVE</span>}
+                      {row.providerStatus === 'removed' && (
+                        <span
+                          title="Mozosubz no longer returns this plan. It is hidden from customers even though a price is stored here."
+                          className="text-[9px] bg-red-500/20 text-red-300 border border-red-500/40 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <AlertTriangle size={9} /> REMOVED FROM PROVIDER
+                        </span>
+                      )}
+                      {row.providerStatus !== 'removed' && !row.isPriced && (
+                        <span
+                          title="No price set yet — this plan is hidden from customers until you save a price."
+                          className="text-[9px] bg-slate-700/60 text-slate-300 border border-slate-500/40 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <EyeOff size={9} /> UNPRICED — HIDDEN
+                        </span>
+                      )}
+                      {row.providerStatus !== 'removed' && row.isPriced && (
+                        <span
+                          title="Priced and live at the provider — visible to customers."
+                          className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1">
+                          <Eye size={9} /> VISIBLE TO CUSTOMERS
+                        </span>
+                      )}
+                      {row.dirty && <span className="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-semibold">UNSAVED</span>}
                     </div>
                     <p className="text-sm text-white font-medium truncate">{row.name}</p>
                     <p className="text-[10px] text-slate-500">
@@ -1518,10 +1635,28 @@ function AdminPricingManagerInner() {
                     </span>
                   </button>
 
+                  {/* Customer visibility toggle (independent of the price value) */}
+                  <button
+                    onClick={() => togglePriced(row.planId, !row.isPriced)}
+                    disabled={row.saving || row.providerStatus === 'removed'}
+                    title={
+                      row.providerStatus === 'removed'
+                        ? 'Plan removed from provider'
+                        : row.isPriced
+                          ? 'Hide from customers'
+                          : 'Show to customers'
+                    }
+                    className={`p-1.5 rounded-lg border transition disabled:opacity-30 disabled:cursor-not-allowed ${ row.isPriced
+                        ? 'text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10'
+                        : 'text-slate-500 border-slate-700 hover:bg-slate-700/30'
+                    }`}>
+                    {row.isPriced ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+
                   {/* Save button */}
-                  <button onClick={() => publishRow(row.planId)} disabled={row.saving || belowCost}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border whitespace-nowrap transition disabled:opacity-40 disabled:cursor-not-allowed ${
-                      row.saved && !row.dirty
+                  <button onClick={() => publishRow(row.planId)} disabled={row.saving || belowCost || row.providerStatus === 'removed'}
+                    title={row.providerStatus === 'removed' ? 'Plan removed from provider — cannot publish' : undefined}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border whitespace-nowrap transition disabled:opacity-40 disabled:cursor-not-allowed ${ row.saved && !row.dirty
                         ? 'border-slate-600 bg-slate-800 text-slate-400 hover:text-white'
                         : 'border-indigo-500/40 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/40'}`}>
                     {row.saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
@@ -1567,7 +1702,7 @@ function AdminPricingManagerInner() {
                 <Trash2 size={24} />
               </div>
               <div className="space-y-1">
-                <h3 className="text-lg font-black text-white">
+                <h3 className="text-lg font-bold text-white">
                   {deleteConfirmModal.type === 'all' ? 'Delete ALL Data Plans?' : 'Delete Plan?'}
                 </h3>
                 <p className="text-xs text-slate-400 font-medium leading-relaxed">
@@ -1579,7 +1714,7 @@ function AdminPricingManagerInner() {
             </div>
 
             <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-semibold">
-              ⚠️ Permanent action: Any selected plans will be purged completely.
+ Permanent action: Any selected plans will be purged completely.
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -1595,7 +1730,7 @@ function AdminPricingManagerInner() {
                 type="button"
                 onClick={handleExecuteConfirmedDelete}
                 disabled={isDeletingAll}
-                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition active:scale-95 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition disabled:opacity-50"
               >
                 {isDeletingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 <span>{isDeletingAll ? 'Deleting All...' : 'Yes, Delete Now'}</span>
@@ -1663,8 +1798,7 @@ function AdminPricingManagerInner() {
                     <button
                       key={p}
                       onClick={() => setCableFilter(p)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${
-                        cableFilter === p
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${ cableFilter === p
                           ? 'bg-purple-600 text-white border-purple-500'
                           : 'bg-slate-800/80 text-slate-400 hover:text-white border-slate-700'
                       }`}
@@ -1682,8 +1816,7 @@ function AdminPricingManagerInner() {
                     <button
                       key={e}
                       onClick={() => setExamFilter(e)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${
-                        examFilter === e
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${ examFilter === e
                           ? 'bg-emerald-600 text-white border-emerald-500'
                           : 'bg-slate-800/80 text-slate-400 hover:text-white border-slate-700'
                       }`}
@@ -1716,7 +1849,7 @@ function AdminPricingManagerInner() {
           ) : (
             <div className="rounded-xl border border-slate-700/50 overflow-hidden bg-slate-900/40">
               <div
-                className="grid gap-2 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-900/90 border-b border-slate-700/50"
+                className="grid gap-2 px-4 py-3 text-[11px] font-semibold text-slate-400 bg-slate-900/90 border-b border-slate-700/50"
                 style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr auto' }}
               >
                 <span>Package / Item</span>
@@ -1744,8 +1877,7 @@ function AdminPricingManagerInner() {
                     return (
                       <div
                         key={row.planId}
-                        className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/40 transition-colors ${
-                          row.dirty ? 'bg-amber-500/5' : ''
+                        className={`grid gap-2 px-4 py-3 items-center hover:bg-slate-800/40 transition-colors ${ row.dirty ? 'bg-amber-500/5' : ''
                         }`}
                         style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr auto' }}
                       >
@@ -1796,8 +1928,7 @@ function AdminPricingManagerInner() {
                           <button
                             type="button"
                             onClick={() => toggleUtilityActive(row.id)}
-                            className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition cursor-pointer ${
-                              row.isActive
+                            className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition cursor-pointer ${ row.isActive
                                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                                 : 'bg-slate-800 border-slate-700 text-slate-500'
                             }`}
@@ -1812,8 +1943,7 @@ function AdminPricingManagerInner() {
                             type="button"
                             onClick={() => saveUtilityRow(row)}
                             disabled={row.saving}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              row.saved && !row.dirty
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${ row.saved && !row.dirty
                                 ? 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-white'
                                 : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
                             }`}
@@ -1834,7 +1964,7 @@ function AdminPricingManagerInner() {
         {/* Step 4: Admin Failure Log Monitor */}
         <div className="mt-8 pt-6 border-t border-slate-800">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Diagnostic & Failure Monitoring</h3>
+            <h3 className="text-sm font-bold text-slate-300 ">Diagnostic & Failure Monitoring</h3>
             <button onClick={() => setShowFailureLogs(prev => !prev)} className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition">{showFailureLogs ? 'Hide Failure Log' : 'Show 24h Failure Log'}</button>
           </div>
           {showFailureLogs && <AdminFailureLog />}
