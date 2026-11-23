@@ -494,6 +494,33 @@ function AdminPricingManagerInner() {
     }
   };
 
+  // ── Load existing DB prices across all providers ───────────────────────────
+  const loadExistingPrices = useCallback(async () => {
+    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; manualOverride?: number | null }> = {};
+    try {
+      const { data, error } = await supabase
+        .from('vtu_plans')
+        .select('provider_plan_id, price_to_user, provider_price, is_active, provider, manual_price_override');
+
+      if (!error && data) {
+        data.forEach((r: any) => {
+          const key = String(r.provider_plan_id || '').trim();
+          if (key) {
+            map[key] = {
+              selling: Number(r.price_to_user || 0),
+              cost: Number(r.provider_price || 0),
+              active: r.is_active !== false,
+              provider: r.provider || 'mozosubz',
+              bigisub_id: key,
+              manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
+            };
+          }
+        });
+      }
+    } catch (_) {}
+    return map;
+  }, []);
+
   // ── Load existing DB overrides ONLY for selected provider ─────────────────
   const loadExistingOverrides = useCallback(async (provider: string) => {
     const map: Record<string, { selling: number; cost: number; active: boolean; manualOverride?: number | null }> = {};
