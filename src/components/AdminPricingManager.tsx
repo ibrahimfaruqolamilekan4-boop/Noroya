@@ -496,11 +496,11 @@ function AdminPricingManagerInner() {
 
   // ── Load existing DB prices across all providers ───────────────────────────
   const loadExistingPrices = useCallback(async () => {
-    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; manualOverride?: number | null }> = {};
+    const map: Record<string, { selling: number; cost: number; active: boolean; provider: string; bigisub_id: string; manualOverride?: number | null; isPriced?: boolean; providerStatus?: 'live' | 'removed' }> = {};
     try {
       const { data, error } = await supabase
         .from('vtu_plans')
-        .select('provider_plan_id, price_to_user, provider_price, is_active, provider, manual_price_override');
+        .select('provider_plan_id, price_to_user, provider_price, is_active, provider, manual_price_override, is_priced, provider_status');
 
       if (!error && data) {
         data.forEach((r: any) => {
@@ -513,6 +513,8 @@ function AdminPricingManagerInner() {
               provider: r.provider || 'mozosubz',
               bigisub_id: key,
               manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
+              isPriced: r.is_priced === true,
+              providerStatus: (r.provider_status === 'removed' ? 'removed' : 'live'),
             };
           }
         });
@@ -523,11 +525,11 @@ function AdminPricingManagerInner() {
 
   // ── Load existing DB overrides ONLY for selected provider ─────────────────
   const loadExistingOverrides = useCallback(async (provider: string) => {
-    const map: Record<string, { selling: number; cost: number; active: boolean; manualOverride?: number | null }> = {};
+    const map: Record<string, { selling: number; cost: number; active: boolean; manualOverride?: number | null; isPriced?: boolean; providerStatus?: 'live' | 'removed' }> = {};
     try {
       const { data, error } = await supabase
         .from('vtu_plans')
-        .select('provider_plan_id, price_to_user, provider_price, is_active, manual_price_override')
+        .select('provider_plan_id, price_to_user, provider_price, is_active, manual_price_override, is_priced, provider_status')
         .eq('provider', provider);
 
       if (!error && data) {
@@ -539,6 +541,8 @@ function AdminPricingManagerInner() {
               cost: Number(r.provider_price || 0),
               active: r.is_active !== false,
               manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
+              isPriced: r.is_priced === true,
+              providerStatus: (r.provider_status === 'removed' ? 'removed' : 'live'),
             };
           }
         });
@@ -611,6 +615,8 @@ function AdminPricingManagerInner() {
           bigisubPlanId: planId,
           isActive: existing ? existing.active : true,
           manualOverride: manualOverride,
+          isPriced: existing ? existing.isPriced : false,
+          providerStatus: (existing ? existing.providerStatus : 'live') as any,
         };
       });
 
@@ -807,6 +813,8 @@ function AdminPricingManagerInner() {
           provider:      (p.provider || existing?.provider || 'mozosubz') as ProviderSlug,
           bigisubPlanId: existing?.bigisub_id || planKey,
           isActive:      existing?.active !== false,
+          isPriced:      autoPublish || (existing ? existing.isPriced : false),
+          providerStatus: (existing ? existing.providerStatus : 'live') as any,
         };
       });
 
@@ -879,14 +887,17 @@ function AdminPricingManagerInner() {
             manual_price_override: row.manualOverride || null,
             margin_percent: row.markupPct,
             is_active: row.isActive,
+            is_priced: true,
+            provider_status: 'live',
           }],
         }),
       });
       const resData = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resData?.error || resData?.message || `Server error ${res.status}`);
       setRows(prev => prev.map(r => r.planId === planId
-        ? { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: row.sellingPrice }
+        ? { ...r, saved: true, saving: false, dirty: false, isPriced: true, providerStatus: 'live', manualOverride: row.sellingPrice }
         : r));
+      window.dispatchEvent(new CustomEvent('plans-updated'));
  toast.success(` "${row.name}" saved to store`);
     } catch (err: any) {
       setRows(prev => prev.map(r => r.planId === planId ? { ...r, saving: false } : r));
@@ -981,6 +992,8 @@ function AdminPricingManagerInner() {
         manual_price_override: row.manualOverride || null,
         margin_percent: row.markupPct,
         is_active: row.isActive,
+        is_priced: true,
+        provider_status: 'live',
       }));
 
       const res = await fetch('/api/admin/save-provider-plans', {
@@ -999,10 +1012,11 @@ function AdminPricingManagerInner() {
       const savedIds = new Set(targets.map(t => t.planId));
       setRows(prev => prev.map(r => {
         if (savedIds.has(r.planId)) {
-          return { ...r, saved: true, saving: false, dirty: false, isPriced: true, manualOverride: r.sellingPrice };
+          return { ...r, saved: true, saving: false, dirty: false, isPriced: true, providerStatus: 'live', manualOverride: r.sellingPrice };
         }
         return r;
       }));
+      window.dispatchEvent(new CustomEvent('plans-updated'));
       toast.success(`✅ Saved ${targets.length} plans to store`);
     } catch (err: any) {
       setRows(prev => prev.map(r => ({ ...r, saving: false })));

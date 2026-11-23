@@ -2502,14 +2502,23 @@ async function startServer() {
         .from('vtu_plans')
         .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, is_priced, provider_status, last_synced_at, provider, service, validity')
         .eq('is_active', true)
-        .eq('is_priced', true)
-        .eq('provider_status', 'live')
         .gt('price_to_user', 0)
         .order('network', { ascending: true })
         .order('price_to_user', { ascending: true });
 
-      if (!vtuErr && vtuPlans && vtuPlans.length > 0) {
-        const formatted = vtuPlans.map((item: any) => {
+      if (vtuErr) {
+        console.warn("[Supabase GET /api/services/data vtu_plans warning]:", vtuErr.message);
+      }
+
+      const sellablePlans = (vtuPlans || []).filter((p: any) => {
+        if (!p.is_active || Number(p.price_to_user || 0) <= 0) return false;
+        if (p.provider_status === 'removed') return false;
+        if (p.is_priced === false) return false;
+        return true;
+      });
+
+      if (sellablePlans.length > 0) {
+        const formatted = sellablePlans.map((item: any) => {
           const rawName = String(item.plan_name || '');
           const pPrice = Number(item.price_to_user || 0);
           const pId = String(item.provider_plan_id || item.id).trim();
@@ -2547,8 +2556,8 @@ async function startServer() {
             type: 'data',
             service_type: 'data',
             provider: item.provider || 'mozosubz',
-            mozosubz_service: item.service || '',
-            service: item.service || '',
+            mozosubz_service: String(item.service || '').toLowerCase().trim(),
+            service: String(item.service || '').toLowerCase().trim(),
             duration: item.validity || '30 Days',
             validity_days: item.validity || '30 Days',
             plan_category: planCategory,
@@ -3311,13 +3320,23 @@ async function startServer() {
           service: p.service_code || p.service || '',
           validity: p.validity || '30 Days',
           is_active: isActive,
+          is_priced: true,
+          provider_status: 'live',
+          last_seen_at: nowIso,
           last_synced_at: nowIso,
         });
 
         // Also sync services_config for backward compatibility
         try {
-          await supabase.from('services_config').upsert({
+          const { data: existingSvc } = await supabase
+            .from('services_config')
+            .select('id')
+            .or(`bigisub_identifier_id.eq.${pId},mozosubz_plan_id.eq.${pId}`)
+            .maybeSingle();
+
+          const svcPayload = {
             mozosubz_plan_id: pId,
+            mozosubs_plan_id: pId,
             bigisub_identifier_id: pId,
             bigisub_plan_id: pId,
             mozosubz_service: p.service_code || p.service || '',
@@ -3328,12 +3347,22 @@ async function startServer() {
             retail_price: finalCustomerPrice,
             cost_price: cost,
             network: String(p.network || 'MTN').toUpperCase().trim(),
+            provider_or_network: String(p.network || 'MTN').toUpperCase().trim(),
             service_type: 'data',
+            type: 'data',
             is_active: isActive,
             provider: p.provider || provider,
             updated_at: nowIso,
-          }, { onConflict: 'bigisub_identifier_id' });
-        } catch (_) {}
+          };
+
+          if (existingSvc?.id) {
+            await supabase.from('services_config').update(svcPayload).eq('id', existingSvc.id);
+          } else {
+            await supabase.from('services_config').insert(svcPayload);
+          }
+        } catch (svcErr: any) {
+          console.warn("[services_config sync warning]:", svcErr?.message || svcErr);
+        }
 
         savedCount++;
       }
