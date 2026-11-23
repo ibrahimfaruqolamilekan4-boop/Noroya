@@ -16,6 +16,7 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
     { id: 'mtn_datashare', label: 'Datashare' },
     { id: 'mtn_awoof', label: 'Awoof' },
     { id: 'mtn_awoof2', label: 'Awoof 2' },
+    { id: 'mtn_coupon', label: 'Coupon' },
   ],
   GLO: [
     { id: 'glo_sme', label: 'SME' },
@@ -28,6 +29,7 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
     { id: 'airtel_gifting', label: 'Gifting' },
   ],
   '9mobile': [
+    { id: 'etisalat_sme', label: 'SME' },
     { id: 'etisalat_data', label: 'Data' },
   ],
 };
@@ -39,12 +41,14 @@ const BALANCE_CODES: Record<string, { label: string; code: string }[]> = {
   mtn_datashare: [{ label: 'Datashare Balance', code: '*461*4#' }],
   mtn_awoof: [{ label: 'Awoof Balance', code: '*461*4#' }],
   mtn_awoof2: [{ label: 'Awoof 2 Balance', code: '*461*4#' }],
+  mtn_coupon: [{ label: 'Coupon Balance', code: '*461*4#' }],
   glo_sme: [{ label: 'SME Balance', code: '*127*0#' }],
   glo_cg: [{ label: 'CG Balance', code: '*127*0#' }],
   glo_data: [{ label: 'Data Balance', code: '*127*0#' }],
   airtel_sme: [{ label: 'SME Balance', code: '*140#' }],
   airtel_cg: [{ label: 'CG Balance', code: '*140#' }],
   airtel_gifting: [{ label: 'Gifting Balance', code: '*140#' }],
+  etisalat_sme: [{ label: 'SME Balance', code: '*228#' }],
   etisalat_data: [{ label: 'Data Balance', code: '*228#' }],
 };
 
@@ -159,23 +163,30 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               if (net.toLowerCase().includes('airtel')) finalNet = 'Airtel';
               else if (net.toLowerCase().includes('glo')) finalNet = 'Glo';
               else if (net.toLowerCase().includes('9mobile') || net.toLowerCase().includes('etisalat')) finalNet = '9mobile';
-              let mozosubz_service = p.mozosubz_service;
+              let mozosubz_service = String(p.mozosubz_service || p.service || '').toLowerCase().trim();
               if (!mozosubz_service) {
                 const category = String(p.plan_category || '').toLowerCase();
                 const nameLower = String(pName).toLowerCase();
                 if (finalNet === 'MTN') {
                   if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'mtn_sme';
-                  else if (category.includes('gifting') || nameLower.includes('gifting')) mozosubz_service = 'mtn_gifting';
-                  else if (category.includes('share') || nameLower.includes('share') || category.includes('cg')) mozosubz_service = 'mtn_datashare';
+                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'mtn_cg';
+                  else if (category.includes('gifting') || nameLower.includes('gifting') || category.includes('gift')) mozosubz_service = 'mtn_gifting';
+                  else if (category.includes('share') || nameLower.includes('share') || category.includes('datashare')) mozosubz_service = 'mtn_datashare';
                   else if (category.includes('awoof 2') || nameLower.includes('awoof 2')) mozosubz_service = 'mtn_awoof2';
                   else if (category.includes('awoof') || nameLower.includes('awoof')) mozosubz_service = 'mtn_awoof';
+                  else if (category.includes('coupon') || nameLower.includes('coupon')) mozosubz_service = 'mtn_coupon';
                   else mozosubz_service = 'mtn_sme';
                 } else if (finalNet === 'Glo') {
-                  mozosubz_service = category.includes('sme') ? 'glo_sme' : 'glo_data';
+                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'glo_sme';
+                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'glo_cg';
+                  else mozosubz_service = 'glo_data';
                 } else if (finalNet === 'Airtel') {
-                  mozosubz_service = category.includes('sme') ? 'airtel_sme' : 'airtel_gifting';
+                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'airtel_sme';
+                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'airtel_cg';
+                  else mozosubz_service = 'airtel_gifting';
                 } else if (finalNet === '9mobile') {
-                  mozosubz_service = 'etisalat_data';
+                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'etisalat_sme';
+                  else mozosubz_service = 'etisalat_data';
                 }
               }
               return {
@@ -195,28 +206,45 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
       finally { setFetchingPlans(false); }
     };
     loadPlans();
+    window.addEventListener('plans-updated', loadPlans);
+    return () => {
+      window.removeEventListener('plans-updated', loadPlans);
+    };
   }, []);
+
+  const availableTabs = React.useMemo(() => {
+    if (!network) return [];
+    const netKey = network === 'Glo' ? 'GLO' : network;
+    const predefined = NETWORK_SERVICES[netKey] || [];
+    const matched = predefined.filter((t) => allPlans.some((p) => p.network === network && p.mozosubz_service === t.id));
+    if (matched.length > 0) return matched;
+    const networkPlans = allPlans.filter((p) => p.network === network);
+    if (networkPlans.length > 0) {
+      const distinctServices = Array.from(new Set(networkPlans.map(p => p.mozosubz_service || 'data')));
+      return distinctServices.map(s => ({
+        id: s,
+        label: s.replace(/^([a-z0-9]+)_/i, '').toUpperCase() || 'DATA'
+      }));
+    }
+    return [];
+  }, [network, allPlans]);
+
+  React.useEffect(() => {
+    if (!network) { setPlanType(''); setSelectedPlan(null); return; }
+    if (availableTabs.length > 0) {
+      if (!availableTabs.some(t => t.id === planType)) {
+        setPlanType(availableTabs[0].id);
+      }
+    } else {
+      setPlanType('');
+    }
+    setSelectedPlan(null);
+  }, [network, availableTabs, planType]);
 
   const availablePlans = React.useMemo(() => {
     if (!network) return [];
     return allPlans.filter((p) => p.network === network && p.mozosubz_service === planType);
   }, [allPlans, network, planType]);
-
-  React.useEffect(() => {
-    if (!network) { setPlanType(''); setSelectedPlan(null); return; }
-    const netKey = network === 'Glo' ? 'GLO' : network;
-    const types = NETWORK_SERVICES[netKey] || [];
-    const firstAvailable = types.find((t) => allPlans.some((p) => p.network === network && p.mozosubz_service === t.id));
-    if (firstAvailable) setPlanType(firstAvailable.id);
-    else if (types.length > 0) setPlanType(types[0].id);
-    else setPlanType('');
-    setSelectedPlan(null);
-  }, [network, allPlans]);
-
-  const availableTabs = React.useMemo(() => {
-    const netKey = network === 'Glo' ? 'GLO' : network;
-    return network ? (NETWORK_SERVICES[netKey] || []).filter((t) => allPlans.some((p) => p.network === network && p.mozosubz_service === t.id)) : [];
-  }, [network, allPlans]);
 
   const currentPlanTypeLabel = availableTabs.find((t) => t.id === planType)?.label || 'Select type';
 
