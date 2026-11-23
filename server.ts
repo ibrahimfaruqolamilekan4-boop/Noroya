@@ -2500,7 +2500,7 @@ async function startServer() {
       // own `if (!rule) return null` behaviour in /api/v1/data/plans.
       const { data: vtuPlans, error: vtuErr } = await supabase
         .from('vtu_plans')
-        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, is_priced, provider_status, last_synced_at, provider, service, validity')
+        .select('id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, last_synced_at, provider, service, validity')
         .eq('is_active', true)
         .gt('price_to_user', 0)
         .order('network', { ascending: true })
@@ -2511,10 +2511,7 @@ async function startServer() {
       }
 
       const sellablePlans = (vtuPlans || []).filter((p: any) => {
-        if (!p.is_active || Number(p.price_to_user || 0) <= 0) return false;
-        if (p.provider_status === 'removed') return false;
-        if (p.is_priced === false) return false;
-        return true;
+        return p.is_active && Number(p.price_to_user || 0) > 0;
       });
 
       if (sellablePlans.length > 0) {
@@ -2723,7 +2720,7 @@ async function startServer() {
 
       const { error } = await supabase
         .from('vtu_plans')
-        .update({ is_priced, updated_at: new Date().toISOString() })
+        .update({ is_active: Boolean(is_priced), updated_at: new Date().toISOString() })
         .eq('provider_plan_id', String(provider_plan_id).trim());
 
       if (error) return res.status(500).json({ error: error.message });
@@ -3320,9 +3317,6 @@ async function startServer() {
           service: p.service_code || p.service || '',
           validity: p.validity || '30 Days',
           is_active: isActive,
-          is_priced: true,
-          provider_status: 'live',
-          last_seen_at: nowIso,
           last_synced_at: nowIso,
         });
 

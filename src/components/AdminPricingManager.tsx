@@ -500,12 +500,13 @@ function AdminPricingManagerInner() {
     try {
       const { data, error } = await supabase
         .from('vtu_plans')
-        .select('provider_plan_id, price_to_user, provider_price, is_active, provider, manual_price_override, is_priced, provider_status');
+        .select('provider_plan_id, price_to_user, provider_price, is_active, provider, manual_price_override');
 
       if (!error && data) {
         data.forEach((r: any) => {
           const key = String(r.provider_plan_id || '').trim();
           if (key) {
+            const hasSelling = Number(r.price_to_user || 0) > 0;
             map[key] = {
               selling: Number(r.price_to_user || 0),
               cost: Number(r.provider_price || 0),
@@ -513,8 +514,8 @@ function AdminPricingManagerInner() {
               provider: r.provider || 'mozosubz',
               bigisub_id: key,
               manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
-              isPriced: r.is_priced === true,
-              providerStatus: (r.provider_status === 'removed' ? 'removed' : 'live'),
+              isPriced: r.is_active !== false && hasSelling,
+              providerStatus: 'live',
             };
           }
         });
@@ -529,20 +530,21 @@ function AdminPricingManagerInner() {
     try {
       const { data, error } = await supabase
         .from('vtu_plans')
-        .select('provider_plan_id, price_to_user, provider_price, is_active, manual_price_override, is_priced, provider_status')
+        .select('provider_plan_id, price_to_user, provider_price, is_active, manual_price_override')
         .eq('provider', provider);
 
       if (!error && data) {
         data.forEach((r: any) => {
           const key = String(r.provider_plan_id || '').trim();
           if (key) {
+            const hasSelling = Number(r.price_to_user || 0) > 0;
             map[key] = {
               selling: Number(r.price_to_user || 0),
               cost: Number(r.provider_price || 0),
               active: r.is_active !== false,
               manualOverride: r.manual_price_override ? Number(r.manual_price_override) : null,
-              isPriced: r.is_priced === true,
-              providerStatus: (r.provider_status === 'removed' ? 'removed' : 'live'),
+              isPriced: r.is_active !== false && hasSelling,
+              providerStatus: 'live',
             };
           }
         });
@@ -887,8 +889,6 @@ function AdminPricingManagerInner() {
             manual_price_override: row.manualOverride || null,
             margin_percent: row.markupPct,
             is_active: row.isActive,
-            is_priced: true,
-            provider_status: 'live',
           }],
         }),
       });
@@ -992,8 +992,6 @@ function AdminPricingManagerInner() {
         manual_price_override: row.manualOverride || null,
         margin_percent: row.markupPct,
         is_active: row.isActive,
-        is_priced: true,
-        provider_status: 'live',
       }));
 
       const res = await fetch('/api/admin/save-provider-plans', {

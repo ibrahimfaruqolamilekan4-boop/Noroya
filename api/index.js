@@ -2548,15 +2548,12 @@ async function startServer() {
   });
   app.get("/api/services/data", async (req, res) => {
     try {
-      const { data: vtuPlans, error: vtuErr } = await supabase.from("vtu_plans").select("id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, is_priced, provider_status, last_synced_at, provider, service, validity").eq("is_active", true).gt("price_to_user", 0).order("network", { ascending: true }).order("price_to_user", { ascending: true });
+      const { data: vtuPlans, error: vtuErr } = await supabase.from("vtu_plans").select("id, network, plan_name, provider_plan_id, price_to_user, provider_price, is_active, last_synced_at, provider, service, validity").eq("is_active", true).gt("price_to_user", 0).order("network", { ascending: true }).order("price_to_user", { ascending: true });
       if (vtuErr) {
         console.warn("[Supabase GET /api/services/data vtu_plans warning]:", vtuErr.message);
       }
       const sellablePlans = (vtuPlans || []).filter((p) => {
-        if (!p.is_active || Number(p.price_to_user || 0) <= 0) return false;
-        if (p.provider_status === "removed") return false;
-        if (p.is_priced === false) return false;
-        return true;
+        return p.is_active && Number(p.price_to_user || 0) > 0;
       });
       if (sellablePlans.length > 0) {
         const formatted = sellablePlans.map((item) => {
@@ -2715,7 +2712,7 @@ async function startServer() {
       if (typeof is_priced !== "boolean") {
         return res.status(400).json({ error: "is_priced must be a boolean" });
       }
-      const { error } = await supabase.from("vtu_plans").update({ is_priced, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("provider_plan_id", String(provider_plan_id).trim());
+      const { error } = await supabase.from("vtu_plans").update({ is_active: Boolean(is_priced), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("provider_plan_id", String(provider_plan_id).trim());
       if (error) return res.status(500).json({ error: error.message });
       return res.json({ success: true, provider_plan_id, is_priced });
     } catch (err) {
@@ -3219,9 +3216,6 @@ async function startServer() {
           service: p.service_code || p.service || "",
           validity: p.validity || "30 Days",
           is_active: isActive,
-          is_priced: true,
-          provider_status: "live",
-          last_seen_at: nowIso,
           last_synced_at: nowIso
         });
         try {
