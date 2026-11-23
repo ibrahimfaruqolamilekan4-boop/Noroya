@@ -7,6 +7,7 @@ import dataRouter from "./backend/routes/dataRoutes.js";
 import { buyData, v1DataPurchase } from "./backend/controllers/dataController.js";
 import { supabase, serverHasServiceRoleKey, getScopedSupabaseClient } from "./src/lib/supabase.js";
 import { syncVtuPlans, getPlanFreshness, MOZOSUBZ_SERVICES } from "./src/lib/mozosubz-sync.js";
+import { normalizeCanonicalServiceCode } from "./src/lib/planPricing.js";
 import axios from "axios";
 
 // SECURITY: sanitize client-supplied values before interpolating them into
@@ -2519,6 +2520,8 @@ async function startServer() {
           const rawName = String(item.plan_name || '');
           const pPrice = Number(item.price_to_user || 0);
           const pId = String(item.provider_plan_id || item.id).trim();
+          const netUpper = String(item.network || 'MTN').toUpperCase();
+          const canonicalService = normalizeCanonicalServiceCode(item.service, netUpper, rawName);
 
           let planCategory = "GIFTING";
           const pNameUpper = rawName.toUpperCase();
@@ -2548,13 +2551,13 @@ async function startServer() {
             retail_price: pPrice,
             selling_price: pPrice,
             amount: pPrice,
-            network_type: String(item.network || 'MTN').toUpperCase(),
-            network: String(item.network || 'MTN').toUpperCase(),
+            network_type: netUpper,
+            network: netUpper,
             type: 'data',
             service_type: 'data',
             provider: item.provider || 'mozosubz',
-            mozosubz_service: String(item.service || '').toLowerCase().trim(),
-            service: String(item.service || '').toLowerCase().trim(),
+            mozosubz_service: canonicalService,
+            service: canonicalService,
             duration: item.validity || '30 Days',
             validity_days: item.validity || '30 Days',
             plan_category: planCategory,
@@ -3028,14 +3031,12 @@ async function startServer() {
           { id: "mtn_datashare", network: "MTN",    plan_type: "DATASHARE" },
           { id: "mtn_awoof",     network: "MTN",    plan_type: "AWOOF"     },
           { id: "mtn_awoof2",    network: "MTN",    plan_type: "AWOOF"     },
-          { id: "mtn_coupon",    network: "MTN",    plan_type: "COUPON"    },
           { id: "glo_sme",       network: "GLO",    plan_type: "SME"       },
           { id: "glo_cg",        network: "GLO",    plan_type: "CG"        },
           { id: "glo_data",      network: "GLO",    plan_type: "DATA"      },
           { id: "airtel_sme",    network: "AIRTEL", plan_type: "SME"       },
           { id: "airtel_cg",     network: "AIRTEL", plan_type: "CG"        },
           { id: "airtel_gifting",network: "AIRTEL", plan_type: "GIFTING"   },
-          { id: "etisalat_sme",  network: "9MOBILE",plan_type: "SME"       },
           { id: "etisalat_data", network: "9MOBILE",plan_type: "DATA"      },
         ];
 
@@ -3118,14 +3119,15 @@ async function startServer() {
         console.log(`[get-provider-plans] provider: mozosubz, count: ${allPlans.length}, time: ${fetchStartTime}`);
 
         if (serviceCode && allPlans.length === 0 && serviceErrors[serviceCode]) {
-          return res.status(502).json({
-            success: false,
+          console.warn(`[get-provider-plans] MozoSubz service '${serviceCode}' warning:`, serviceErrors[serviceCode]);
+          return res.json({
+            success: true,
             provider: "mozosubz",
             service_code: serviceCode,
-            error: `MozoSubz returned: ${serviceErrors[serviceCode]}`,
-            fetch_time: fetchStartTime,
             count: 0,
+            fetch_time: fetchStartTime,
             plans: [],
+            warning: `MozoSubz returned: ${serviceErrors[serviceCode]} (no live plans currently available for this service variant)`,
           });
         }
 
@@ -3197,24 +3199,27 @@ async function startServer() {
             const rawId = String(p.plan_id ?? p.pId ?? p.id);
             const pId = `nifex_${net.toLowerCase()}_${rawId}`;
             const svcType = String(p.type || p.plan_type || "DATA").toLowerCase();
-            const validityMatch = String(p.plan_name || "").match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
+            const planName = String(p.plan_name || p.name || `${net} Data`);
+            const canonicalService = normalizeCanonicalServiceCode(svcType, net, planName);
+            const validityMatch = planName.match(/(\d+\s*(?:day|days|month|months|week|weeks|hr|hour|hours))/i);
 
             const planObj = {
               id: pId,
-              name: String(p.plan_name || p.name || `${net} Data`),
+              name: planName,
               network: net,
-              service_code: svcType,
+              service_code: canonicalService,
+              raw_service: svcType,
               provider_price: Number(p.price || 0),
               plan_type: svcType.toUpperCase(),
               validity: p.validity || (validityMatch ? validityMatch[1] : "30 Days"),
             };
 
-            if (!groupedByService[svcType]) groupedByService[svcType] = [];
-            groupedByService[svcType].push(planObj);
+            if (!groupedByService[canonicalService]) groupedByService[canonicalService] = [];
+            groupedByService[canonicalService].push(planObj);
             allNifexPlans.push(planObj);
           }
 
-          if (rawJson?.next && rawList.length > 0) {
+          if (rawJson?.next && rawList.length > 0 && page < 20) {
             page++;
           } else {
             hasMore = false;
@@ -3224,10 +3229,14 @@ async function startServer() {
         let filteredPlans = allNifexPlans;
         if (serviceCode) {
           const sc = serviceCode.toLowerCase();
-          filteredPlans = allNifexPlans.filter(p =>
-            p.service_code.toLowerCase().includes(sc) ||
-            p.network.toLowerCase().includes(sc)
-          );
+          filteredPlans = allNifexPlans.filter(p => {
+            const code = String(p.service_code || '').toLowerCase();
+            const raw = String((p as any).raw_service || '').toLowerCase();
+            const net = String(p.network || '').toLowerCase();
+            return code === sc || code.includes(sc) || sc.includes(code) ||
+                   raw === sc || raw.includes(sc) || sc.includes(raw) ||
+                   net === sc;
+          });
         }
 
         console.log(`[get-provider-plans] provider: nifex, count: ${filteredPlans.length}, time: ${fetchStartTime}`);
@@ -3305,16 +3314,20 @@ async function startServer() {
 
         const isActive = p.is_active !== undefined ? Boolean(p.is_active) : (existing ? existing.is_active !== false : true);
 
+        const planName = String(p.name || p.plan_name || 'Data Plan').trim();
+        const planNet = String(p.network || 'MTN').toUpperCase().trim();
+        const canonicalService = normalizeCanonicalServiceCode(p.service_code || p.service, planNet, planName);
+
         upsertRows.push({
           provider_plan_id: pId,
-          plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
-          network: String(p.network || 'MTN').toUpperCase().trim(),
+          plan_name: planName,
+          network: planNet,
           provider_price: cost,
           price_to_user: finalCustomerPrice,
           manual_price_override: finalManualOverride,
           margin_percent: p.margin_percent ? Number(p.margin_percent) : (existing?.margin_percent ? Number(existing.margin_percent) : 10),
           provider: p.provider || provider,
-          service: p.service_code || p.service || '',
+          service: canonicalService,
           validity: p.validity || '30 Days',
           is_active: isActive,
           last_synced_at: nowIso,
@@ -3333,10 +3346,10 @@ async function startServer() {
             mozosubs_plan_id: pId,
             bigisub_identifier_id: pId,
             bigisub_plan_id: pId,
-            mozosubz_service: p.service_code || p.service || '',
-            name: String(p.name || p.plan_name || 'Data Plan').trim(),
-            item_name: String(p.name || p.plan_name || 'Data Plan').trim(),
-            plan_name: String(p.name || p.plan_name || 'Data Plan').trim(),
+            mozosubz_service: canonicalService,
+            name: planName,
+            item_name: planName,
+            plan_name: planName,
             selling_price: finalCustomerPrice,
             retail_price: finalCustomerPrice,
             cost_price: cost,
