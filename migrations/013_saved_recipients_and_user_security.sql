@@ -21,34 +21,71 @@ CREATE INDEX IF NOT EXISTS idx_saved_recipients_owner_id ON public.saved_recipie
 
 ALTER TABLE public.saved_recipients ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Users can read own saved recipients" ON public.saved_recipients;
-CREATE POLICY "Users can read own saved recipients"
-  ON public.saved_recipients
-  FOR SELECT
-  TO authenticated
-  USING (auth.uid() = owner_id);
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "Users can read own saved recipients" ON public.saved_recipients;
+  DROP POLICY IF EXISTS "Users can insert own saved recipients" ON public.saved_recipients;
+  DROP POLICY IF EXISTS "Users can update own saved recipients" ON public.saved_recipients;
+  DROP POLICY IF EXISTS "Users can delete own saved recipients" ON public.saved_recipients;
+  DROP POLICY IF EXISTS "Service role full access on saved_recipients" ON public.saved_recipients;
+EXCEPTION
+  WHEN undefined_table THEN NULL;
+END $$;
 
-DROP POLICY IF EXISTS "Users can insert own saved recipients" ON public.saved_recipients;
-CREATE POLICY "Users can insert own saved recipients"
-  ON public.saved_recipients
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = owner_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'saved_recipients' AND policyname = 'Users can read own saved recipients'
+  ) THEN
+    CREATE POLICY "Users can read own saved recipients"
+      ON public.saved_recipients
+      FOR SELECT
+      TO authenticated
+      USING (auth.uid() = owner_id);
+  END IF;
 
-DROP POLICY IF EXISTS "Users can delete own saved recipients" ON public.saved_recipients;
-CREATE POLICY "Users can delete own saved recipients"
-  ON public.saved_recipients
-  FOR DELETE
-  TO authenticated
-  USING (auth.uid() = owner_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'saved_recipients' AND policyname = 'Users can insert own saved recipients'
+  ) THEN
+    CREATE POLICY "Users can insert own saved recipients"
+      ON public.saved_recipients
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (auth.uid() = owner_id);
+  END IF;
 
-DROP POLICY IF EXISTS "Service role full access on saved_recipients" ON public.saved_recipients;
-CREATE POLICY "Service role full access on saved_recipients"
-  ON public.saved_recipients
-  FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'saved_recipients' AND policyname = 'Users can update own saved recipients'
+  ) THEN
+    CREATE POLICY "Users can update own saved recipients"
+      ON public.saved_recipients
+      FOR UPDATE
+      TO authenticated
+      USING (auth.uid() = owner_id)
+      WITH CHECK (auth.uid() = owner_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'saved_recipients' AND policyname = 'Users can delete own saved recipients'
+  ) THEN
+    CREATE POLICY "Users can delete own saved recipients"
+      ON public.saved_recipients
+      FOR DELETE
+      TO authenticated
+      USING (auth.uid() = owner_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'saved_recipients' AND policyname = 'Service role full access on saved_recipients'
+  ) THEN
+    CREATE POLICY "Service role full access on saved_recipients"
+      ON public.saved_recipients
+      FOR ALL
+      TO service_role
+      USING (true)
+      WITH CHECK (true);
+  END IF;
+END $$;
 
 -- ============================================================================
 -- 2. USER SECURITY TABLE & RLS (TRANSACTION PIN)
@@ -68,13 +105,26 @@ ALTER TABLE public.user_security ENABLE ROW LEVEL SECURITY;
 
 -- No SELECT policy for authenticated users: never return the hash to the browser.
 -- Access is strictly mediated via SECURITY DEFINER functions.
-DROP POLICY IF EXISTS "Service role full access on user_security" ON public.user_security;
-CREATE POLICY "Service role full access on user_security"
-  ON public.user_security
-  FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "Service role full access on user_security" ON public.user_security;
+EXCEPTION
+  WHEN undefined_table THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_security' AND policyname = 'Service role full access on user_security'
+  ) THEN
+    CREATE POLICY "Service role full access on user_security"
+      ON public.user_security
+      FOR ALL
+      TO service_role
+      USING (true)
+      WITH CHECK (true);
+  END IF;
+END $$;
 
 -- ============================================================================
 -- 3. SECURITY DEFINER RPC FUNCTIONS

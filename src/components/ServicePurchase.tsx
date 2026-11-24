@@ -103,10 +103,12 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
 
   // Load saved recipients from database
   React.useEffect(() => {
-    getSavedRecipients()
-      .then((list) => setSavedRecipients(list))
-      .catch((err) => console.warn('[ServicePurchase] Could not load saved recipients:', err));
-  }, []);
+    if (user?.uid) {
+      getSavedRecipients()
+        .then((list) => setSavedRecipients(list))
+        .catch((err) => console.warn('[ServicePurchase] Could not load saved recipients:', err));
+    }
+  }, [user?.uid]);
 
   // Load recent beneficiaries from localStorage
   React.useEffect(() => {
@@ -313,7 +315,7 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
           const resData = await response.json();
           if (response.ok && resData.status === 'success') {
             saveBeneficiary(phoneNumber);
-            addSavedRecipient(phoneNumber).catch(() => {});
+            addSavedRecipient(phoneNumber).catch((err) => console.warn('[ServicePurchase saveRecipient error]:', err));
             setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
             setShowPinModal(false);
             setPurchaseStatus('success');
@@ -341,7 +343,7 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
           const resData = await response.json();
           if (response.ok && (resData.status === 'success' || resData.success === true)) {
             saveBeneficiary(phoneNumber);
-            addSavedRecipient(phoneNumber).catch(() => {});
+            addSavedRecipient(phoneNumber).catch((err) => console.warn('[ServicePurchase saveRecipient error]:', err));
             setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
             setShowPinModal(false);
             setPurchaseStatus('success');
