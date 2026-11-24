@@ -49,7 +49,15 @@ if (isServer && serviceRoleKey) {
 }
 
 export const serverHasServiceRoleKey = Boolean(isServer && serviceRoleKey);
-export const supabase = createClient(supabaseUrl, apiKey);
+const clientOptions = {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+};
+
+export const supabase = createClient(supabaseUrl, apiKey, clientOptions);
 
 export const getScopedSupabaseClient = (token) => {
   if (isServer && serviceRoleKey) return supabase;

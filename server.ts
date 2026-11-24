@@ -1182,6 +1182,31 @@ async function startServer() {
     }
 
     try {
+      // ─── STEP 5: Server-side Transaction PIN Verification ───
+      const pin = String(req.body?.pin || '').trim();
+      if (!pin) {
+        return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
+      }
+
+      const { data: pinRes, error: pinErr } = await supabase.rpc('verify_transaction_pin', {
+        pin: pin,
+        p_user_id: finalUserId
+      });
+
+      if (pinErr) {
+        console.error("[Purchase PIN Verification RPC Error]:", pinErr.message);
+        return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
+      }
+
+      if (!pinRes || pinRes.status !== 'success' || !pinRes.verified) {
+        const isLocked = pinRes?.status === 'locked';
+        return res.status(isLocked ? 403 : 400).json({
+          error: pinRes?.error || "Incorrect transaction PIN.",
+          locked: isLocked,
+          remaining_attempts: pinRes?.remaining_attempts
+        });
+      }
+
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
       if (!pgUuid) {
@@ -3889,6 +3914,31 @@ if (Object.keys(updateData).length <= 1) {
       }
 
       if (!pgUuid) return res.status(400).json({ error: "Invalid user ID." });
+
+      // ─── STEP 5: Server-side Transaction PIN Verification ───
+      const pin = String(req.body?.pin || '').trim();
+      if (!pin) {
+        return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
+      }
+
+      const { data: pinRes, error: pinErr } = await supabase.rpc('verify_transaction_pin', {
+        pin: pin,
+        p_user_id: verifiedUserId
+      });
+
+      if (pinErr) {
+        console.error("[Airtime PIN Verification RPC Error]:", pinErr.message);
+        return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
+      }
+
+      if (!pinRes || pinRes.status !== 'success' || !pinRes.verified) {
+        const isLocked = pinRes?.status === 'locked';
+        return res.status(isLocked ? 403 : 400).json({
+          error: pinRes?.error || "Incorrect transaction PIN.",
+          locked: isLocked,
+          remaining_attempts: pinRes?.remaining_attempts
+        });
+      }
 
       // ── Pricing: look up airtime config from services_config ──
       const { data: service } = await supabase

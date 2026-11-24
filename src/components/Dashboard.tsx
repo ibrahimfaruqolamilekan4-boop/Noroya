@@ -66,6 +66,10 @@ import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 import { calculateFundingFee } from '../lib/fundingFee';
 import { lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
 import { normalizeNigerianPhone, isValidNigerianPhone } from '../lib/validation';
+import { withFreshSession, SESSION_EXPIRED_MESSAGE } from '../lib/authSession';
+import { getSavedRecipients, addSavedRecipient, removeSavedRecipient, formatLocalPhone } from '../lib/recipientService';
+import { hasTransactionPin, setTransactionPin } from '../lib/pinService';
+import type { SavedRecipient } from '../types';
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
 import AdminPanelSection from './AdminPanelSection';
@@ -141,6 +145,22 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
     const storedAnn = localStorage.getItem('vtu_latest_announcement');
     if (storedAnn) setBroadcastAlert(storedAnn);
   }, [activeTab]);
+
+  // Support programmatically switching tabs from child components or modals
+  React.useEffect(() => {
+    const handleTabNav = (e: any) => {
+      const targetTab = e.detail;
+      if (typeof targetTab === 'string' && targetTab) {
+        setActiveTab(targetTab);
+      }
+    };
+    window.addEventListener('navigate-tab', handleTabNav);
+    window.addEventListener('navigate-to-tab', handleTabNav);
+    return () => {
+      window.removeEventListener('navigate-tab', handleTabNav);
+      window.removeEventListener('navigate-to-tab', handleTabNav);
+    };
+  }, []);
 
   // Auto-logout after 15 minutes
   React.useEffect(() => {
@@ -445,8 +465,8 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
             />
           )}
           {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
-          {activeTab === 'buy-data' && <ServicePurchase type="data" />}
-          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" />}
+          {activeTab === 'buy-data' && <ServicePurchase type="data" onNavigateToSettings={() => setActiveTab('settings')} />}
+          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" onNavigateToSettings={() => setActiveTab('settings')} />}
           {activeTab === 'electricity' && <ElectricitySection />}
           {activeTab === 'cable' && <CableTvSection />}
           {activeTab === 'betting' && <BettingSection />}
@@ -454,7 +474,7 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
           {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
           {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
           {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
-          {activeTab === 'settings' && <SettingsSection user={user} />}
+          {activeTab === 'settings' && <SettingsSection user={user} onReturnToPurchase={() => setActiveTab('buy-data')} />}
           {activeTab === 'admin' && <AdminPanelSection />}
         </main>
       </div>
@@ -786,6 +806,23 @@ function DashboardOverview({
   const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
+  const [savedRecipients, setSavedRecipients] = React.useState<SavedRecipient[]>([]);
+  const [saveRecipientAfterTransfer, setSaveRecipientAfterTransfer] = React.useState(true);
+
+  const loadSavedRecipients = React.useCallback(async () => {
+    try {
+      const list = await getSavedRecipients();
+      setSavedRecipients(list);
+    } catch (err) {
+      console.warn('[Dashboard] Could not load saved recipients:', err);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (showTransferModal) {
+      loadSavedRecipients();
+    }
+  }, [showTransferModal, loadSavedRecipients]);
 
   React.useEffect(() => {
     setCurrentBalance(user?.wallet_balance || user?.balance || 0);
@@ -932,6 +969,11 @@ function DashboardOverview({
       });
       if (res.status === 'success') {
         toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.display_name}!`);
+        if (saveRecipientAfterTransfer && transferUid) {
+          addSavedRecipient(transferUid, transferRecipient.display_name)
+            .then(() => loadSavedRecipients())
+            .catch(() => {});
+        }
         setShowTransferModal(false);
         setTransferStep('input');
         setTransferUid('');
@@ -1784,7 +1826,36 @@ function DashboardOverview({
               </div>
 
               {transferStep === 'input' && (
-                <div className="space-y-5">
+                <div className="space-y-4">
+                  {savedRecipients.length > 0 && (
+                    <div>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <label className="text-xs font-bold text-gray-500">Saved Recipients</label>
+                        <span className="text-[10px] text-green-700 font-semibold">{savedRecipients.length} saved</span>
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                        {savedRecipients.map((rec) => (
+                          <button
+                            key={rec.id}
+                            type="button"
+                            onClick={() => {
+                              setTransferUid(rec.phone);
+                            }}
+                            className={cn(
+                              "px-3 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0 flex items-center gap-1.5",
+                              transferUid === rec.phone
+                                ? "bg-green-100 border-green-600 text-green-900"
+                                : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                            )}
+                          >
+                            <span>{rec.display_name}</span>
+                            <span className="text-[10px] text-gray-400 font-normal">({formatLocalPhone(rec.phone)})</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="text-xs font-bold text-gray-900 block mb-1.5">Recipient Phone Number</label>
                     <input
@@ -1827,6 +1898,16 @@ function DashboardOverview({
                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-semibold text-gray-900 focus:outline-none focus:border-green-500 transition-all"
                     />
                   </div>
+
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveRecipientAfterTransfer}
+                      onChange={(e) => setSaveRecipientAfterTransfer(e.target.checked)}
+                      className="rounded text-green-700 focus:ring-green-500 w-4 h-4"
+                    />
+                    <span>Save recipient to Settings for future transfers</span>
+                  </label>
 
                   <button
                     onClick={handleLookupRecipient}
@@ -2270,19 +2351,50 @@ function ReferralSection({ user, transactions }: { user: UserProfile; transactio
 // ─────────────────────────────────────────────────────────────────
 // Settings Section
 // ─────────────────────────────────────────────────────────────────
-function SettingsSection({ user }: { user: UserProfile }) {
+function SettingsSection({ user, onReturnToPurchase }: { user: UserProfile; onReturnToPurchase?: () => void }) {
   const [phoneNumber, setPhoneNumber] = React.useState(user.phoneNumber || '');
-  const [transactionPin, setTransactionPin] = React.useState(user.transactionPin || '');
+  const [transactionPin, setTransactionPinInput] = React.useState('');
+  const [isPinConfigured, setIsPinConfigured] = React.useState(false);
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isForceFetching, setIsForceFetching] = React.useState(false);
   const [isDeletingAllPlans, setIsDeletingAllPlans] = React.useState(false);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
+
+  // Saved Recipients State
+  const [recipients, setRecipients] = React.useState<SavedRecipient[]>([]);
+  const [loadingRecipients, setLoadingRecipients] = React.useState(true);
+  const [newPhone, setNewPhone] = React.useState('');
+  const [newName, setNewName] = React.useState('');
+  const [addingRecipient, setAddingRecipient] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   const isAdmin = user.role === 'admin' || [
     'ibrahimfaruqolamilekan4@gmail.com',
     'adewaleogunkeye200@gmail.com',
     'jeffholland299@gmail.com'
   ].includes((user.email || '').toLowerCase().trim());
+
+  // Proactively check if transaction PIN is set and load saved recipients from DB
+  const loadSettingsData = React.useCallback(async () => {
+    try {
+      const pinSet = await hasTransactionPin();
+      setIsPinConfigured(pinSet);
+    } catch (_) {}
+
+    setLoadingRecipients(true);
+    try {
+      const list = await getSavedRecipients();
+      setRecipients(list);
+    } catch (err: any) {
+      console.warn('[Settings] Failed to load saved recipients:', err.message);
+    } finally {
+      setLoadingRecipients(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSettingsData();
+  }, [loadSettingsData]);
 
   const handleAdminForceFetch = async (autoPublish = false) => {
     setIsForceFetching(true);
@@ -2304,9 +2416,9 @@ function SettingsSection({ user }: { user: UserProfile }) {
       
       toast.dismiss(toastId);
       if (autoPublish) {
- toast.success(` Force-fetched & published ${data.publishedCount || data.total || 0} plans live!`);
+        toast.success(` Force-fetched & published ${data.publishedCount || data.total || 0} plans live!`);
       } else {
- toast.success(` Force-fetched ${data.total || 0} plans across all providers!`);
+        toast.success(` Force-fetched ${data.total || 0} plans across all providers!`);
       }
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -2345,7 +2457,7 @@ function SettingsSection({ user }: { user: UserProfile }) {
       try { await supabase.from('data_plans').delete().neq('id', '00000000-0000-0000-0000-000000000000'); } catch (_) {}
 
       toast.dismiss(toastId);
- toast.success(' All data plans deleted successfully! Database clean.');
+      toast.success(' All data plans deleted successfully! Database clean.');
       setShowDeleteModal(false);
       window.dispatchEvent(new CustomEvent('plans-updated'));
     } catch (err: any) {
@@ -2359,22 +2471,81 @@ function SettingsSection({ user }: { user: UserProfile }) {
   const handleUpdateSecurity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (transactionPin && (transactionPin.length !== 4 || !/^\d+$/.test(transactionPin))) {
-      toast.error('Transaction PIN must be exactly 4 digits!'); return;
+      toast.error('Transaction PIN must be exactly 4 digits!');
+      return;
     }
     if (phoneNumber && (phoneNumber.length < 10 || phoneNumber.length > 11)) {
-      toast.error('Enter a valid Nigerian phone number!'); return;
+      toast.error('Enter a valid Nigerian phone number!');
+      return;
     }
     setIsUpdating(true);
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ phone_number: phoneNumber, transaction_pin: transactionPin })
-        .eq('id', (user as any).uid || (user as any).id);
-      if (error) throw error;
- toast.success('Profile updated! ');
+      await withFreshSession(async (session) => {
+        // 1. Update phone number on profiles using the verified session.user.id
+        if (phoneNumber) {
+          const { error: profErr } = await supabase
+            .from('profiles')
+            .update({ phone_number: phoneNumber })
+            .eq('id', session.user.id);
+          if (profErr) throw profErr;
+        }
+
+        // 2. Set transaction PIN securely via server-side bcrypt RPC
+        if (transactionPin) {
+          await setTransactionPin(transactionPin);
+          setIsPinConfigured(true);
+          setTransactionPinInput('');
+        }
+      });
+
+      toast.success('Security settings saved successfully!');
+
+      // Check if user came from the data purchase flow
+      if (sessionStorage.getItem('norodata_return_to_purchase') === 'true') {
+        sessionStorage.removeItem('norodata_return_to_purchase');
+        toast.success('Security PIN configured! Returning to your purchase...');
+        setTimeout(() => {
+          onReturnToPurchase?.();
+        }, 700);
+      }
     } catch (error: any) {
-      toast.error('Failed to update: ' + error.message);
-    } finally { setIsUpdating(false); }
+      toast.error(error.message || 'Failed to update security credentials.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleAddRecipient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPhone.trim()) {
+      toast.error('Please enter recipient phone number.');
+      return;
+    }
+    setAddingRecipient(true);
+    try {
+      const added = await addSavedRecipient(newPhone, newName);
+      setRecipients((prev) => [added, ...prev.filter((r) => r.id !== added.id)]);
+      setNewPhone('');
+      setNewName('');
+      toast.success(`Recipient ${added.display_name} saved!`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save recipient.');
+    } finally {
+      setAddingRecipient(false);
+    }
+  };
+
+  const handleDeleteRecipient = async (id: string, name: string) => {
+    setDeletingId(id);
+    try {
+      await removeSavedRecipient(id);
+      setRecipients((prev) => prev.filter((r) => r.id !== id));
+      toast.success(`Removed ${name} from saved recipients.`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete recipient.');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -2403,7 +2574,11 @@ function SettingsSection({ user }: { user: UserProfile }) {
         <form onSubmit={handleUpdateSecurity} className="p-6 space-y-5">
           <div>
             <h3 className="font-bold text-gray-900 text-lg mb-1">Security credentials</h3>
-            <p className="text-xs text-gray-400">Keep your phone and PIN up to date.</p>
+            <p className="text-xs text-gray-400">
+              {isPinConfigured
+                ? 'Your transaction PIN is configured and securely hashed. Enter a new 4-digit PIN below to change it.'
+                : 'Set your 4-digit transaction PIN to protect wallet debits and purchases.'}
+            </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -2416,11 +2591,18 @@ function SettingsSection({ user }: { user: UserProfile }) {
               />
             </div>
             <div>
-              <label className="text-xs font-bold text-gray-400 block mb-1.5">Transaction PIN (4 digits)</label>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-bold text-gray-400">Transaction PIN (4 digits)</label>
+                {isPinConfigured && (
+                  <span className="text-[11px] font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full">
+                    Active (••••)
+                  </span>
+                )}
+              </div>
               <input
                 type="password" maxLength={4} value={transactionPin}
-                onChange={(e) => setTransactionPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="••••"
+                onChange={(e) => setTransactionPinInput(e.target.value.replace(/\D/g, ''))}
+                placeholder={isPinConfigured ? "Enter new 4-digit PIN to change" : "Set 4-digit PIN"}
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold tracking-widest text-gray-900 focus:outline-none focus:border-green-500 transition-colors"
               />
             </div>
@@ -2428,13 +2610,101 @@ function SettingsSection({ user }: { user: UserProfile }) {
           <div className="flex justify-end">
             <button
               type="submit" disabled={isUpdating}
-              className="px-6 py-3 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50 hover:brightness-110"
+              className="px-6 py-3 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50 hover:brightness-110 flex items-center gap-2 cursor-pointer"
               style={{ backgroundColor: '#3B7A3B' }}
             >
+              {isUpdating && <Loader2 className="animate-spin" size={16} />}
               {isUpdating ? 'Saving…' : 'Save changes'}
             </button>
           </div>
         </form>
+
+        {/* Saved Transfer Recipients Section */}
+        <div className="p-6 space-y-5">
+          <div>
+            <h3 className="font-bold text-gray-900 text-lg mb-1">Saved transfer recipients</h3>
+            <p className="text-xs text-gray-400">
+              Manage saved phone numbers for wallet-to-wallet transfers. They appear instantly in Settings and on the transfer screen.
+            </p>
+          </div>
+
+          {/* Add Recipient Form */}
+          <form onSubmit={handleAddRecipient} className="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
+            <span className="text-xs font-bold text-gray-700 block">Add New Recipient</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 block mb-1">Phone number</label>
+                <input
+                  type="tel"
+                  placeholder="e.g. 08012345678"
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(e.target.value)}
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-gray-900 focus:outline-none focus:border-green-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500 block mb-1">Display name (optional)</label>
+                <input
+                  type="text"
+                  placeholder="Auto-detected if blank"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-gray-900 focus:outline-none focus:border-green-500 transition-colors"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="submit"
+                disabled={addingRecipient || !newPhone.trim()}
+                className="px-4 py-2 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 hover:brightness-110 flex items-center gap-1.5 cursor-pointer"
+                style={{ backgroundColor: '#3B7A3B' }}
+              >
+                {addingRecipient && <Loader2 className="animate-spin" size={14} />}
+                {addingRecipient ? 'Verifying & Saving…' : 'Save recipient'}
+              </button>
+            </div>
+          </form>
+
+          {/* Recipients List */}
+          {loadingRecipients ? (
+            <div className="py-6 flex items-center justify-center text-xs text-gray-400 gap-2">
+              <Loader2 className="animate-spin" size={16} /> Loading saved recipients…
+            </div>
+          ) : recipients.length > 0 ? (
+            <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden">
+              {recipients.map((rec) => (
+                <div key={rec.id} className="p-4 flex items-center justify-between hover:bg-gray-50/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm bg-green-100 text-green-800 shrink-0">
+                      {rec.display_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-gray-900">{rec.display_name}</p>
+                      <p className="text-xs text-gray-500 font-mono">{formatLocalPhone(rec.phone)}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteRecipient(rec.id, rec.display_name)}
+                    disabled={deletingId === rec.id}
+                    title="Remove recipient"
+                    className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {deletingId === rec.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-8 text-center bg-gray-50/60 rounded-2xl border border-dashed border-gray-200">
+              <p className="text-xs font-semibold text-gray-500">No saved recipients yet</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Add recipients above or save them during a wallet transfer.
+              </p>
+            </div>
+          )}
+        </div>
 
         {/* Reseller upgrade */}
         {user.role === 'user' && (

@@ -79,7 +79,19 @@ if (isServer && serviceRoleKey) {
 // transport on the server; browsers already have native WebSocket and
 // bundlers substitute ws's `browser` field stub automatically, so this is
 // safe to import unconditionally in this isomorphic file.
-export const supabase = createClient(supabaseUrl, apiKey, isServer ? { realtime: { transport: ws as any } } : undefined);
+// Client configuration ensuring robust session persistence and proactive token refresh
+const clientOptions: any = {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+};
+if (isServer) {
+  clientOptions.realtime = { transport: ws as any };
+}
+
+export const supabase = createClient(supabaseUrl, apiKey, clientOptions);
 
 export const getScopedSupabaseClient = (token?: string) => {
   if (isServer && serviceRoleKey) return supabase;
