@@ -21,6 +21,20 @@ export interface UserProfile {
   bachsAccountName?: string;
 }
 
+export interface SavedRecipient {
+  id: string;
+  owner_id: string;
+  phone: string;
+  display_name: string;
+  created_at: string;
+}
+
+export interface UserSecurityState {
+  hasPin: boolean;
+  pinSetAt?: string;
+  lockedUntil?: string | null;
+}
+
 export type TransactionType = 'data' | 'airtime' | 'funding' | 'transfer' | 'bill';
 export type TransactionStatus = 'pending' | 'completed' | 'failed';
 

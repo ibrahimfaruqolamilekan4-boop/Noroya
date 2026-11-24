@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { withFreshSession } from './authSession';
 
 // Authoritative wallet reads for the dashboard.
 export interface WalletSnapshot {
@@ -9,19 +10,19 @@ export interface WalletSnapshot {
 }
 
 async function authedJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error('Not authenticated. Please log in again.');
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-      ...(options?.headers || {}),
-    },
+  return withFreshSession(async (session) => {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        ...(options?.headers || {}),
+      },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || json?.message || `Request failed (${res.status})`);
+    return json as T;
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || json?.message || `Request failed (${res.status})`);
-  return json as T;
 }
 
 export const fetchWalletSnapshot = (): Promise<WalletSnapshot> =>

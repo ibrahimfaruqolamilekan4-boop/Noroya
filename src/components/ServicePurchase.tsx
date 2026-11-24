@@ -1,13 +1,16 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Smartphone, Zap, CheckCircle2, AlertTriangle, X, Loader2, ChevronDown } from 'lucide-react';
+import { Smartphone, Zap, CheckCircle2, AlertTriangle, X, Loader2, ChevronDown, Lock, ShieldAlert } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import SuccessFeedback from './SuccessFeedback';
 import { cn, formatCurrency } from '../lib/utils';
-import type { NetworkType, ServicePlan, UserProfile } from '../types';
+import type { NetworkType, ServicePlan, UserProfile, SavedRecipient } from '../types';
 import { normalizeCanonicalServiceCode } from '../lib/planPricing';
+import { withFreshSession, SESSION_EXPIRED_MESSAGE } from '../lib/authSession';
+import { hasTransactionPin } from '../lib/pinService';
+import { getSavedRecipients, addSavedRecipient, normalizeRecipientPhone } from '../lib/recipientService';
 
 const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
   MTN: [
@@ -69,7 +72,12 @@ export function getPlanPriceForUser(plan: ServicePlan | null | undefined, user: 
   return Number(plan.retail_price ?? plan.price ?? plan.amount ?? 0);
 }
 
-export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) {
+interface ServicePurchaseProps {
+  type: 'data' | 'airtime';
+  onNavigateToSettings?: () => void;
+}
+
+export default function ServicePurchase({ type, onNavigateToSettings }: ServicePurchaseProps) {
   const { user } = useAuth();
 
   const [network, setNetwork] = React.useState<NetworkType | ''>('');
@@ -82,10 +90,23 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
   const [fetchingPlans, setFetchingPlans] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [showConfirmModal, setShowConfirmModal] = React.useState(false);
+  const [showNoPinModal, setShowNoPinModal] = React.useState(false);
+  const [showPinModal, setShowPinModal] = React.useState(false);
+  const [transactionPinInput, setTransactionPinInput] = React.useState('');
+  const [pinError, setPinError] = React.useState<string | null>(null);
+  const [isSubmittingPurchase, setIsSubmittingPurchase] = React.useState(false);
   const [purchaseStatus, setPurchaseStatus] = React.useState<'idle' | 'success' | 'failed'>('idle');
   const [createdTransaction, setCreatedTransaction] = React.useState<any>(null);
   const [autoDetected, setAutoDetected] = React.useState(false);
   const [recentBeneficiaries, setRecentBeneficiaries] = React.useState<string[]>([]);
+  const [savedRecipients, setSavedRecipients] = React.useState<SavedRecipient[]>([]);
+
+  // Load saved recipients from database
+  React.useEffect(() => {
+    getSavedRecipients()
+      .then((list) => setSavedRecipients(list))
+      .catch((err) => console.warn('[ServicePurchase] Could not load saved recipients:', err));
+  }, []);
 
   // Load recent beneficiaries from localStorage
   React.useEffect(() => {
@@ -240,61 +261,110 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     if (!phoneNumber || phoneNumber.length < 11) { toast.error('Enter a valid 11-digit phone number'); return; }
     if (type === 'data' && !selectedPlan) { toast.error('Please select a data plan'); return; }
     if (type === 'airtime' && (!airtimeAmount || Number(airtimeAmount) < 50)) { toast.error('Minimum airtime is ₦50'); return; }
-    setShowConfirmModal(true);
+
+    setLoading(true);
+    try {
+      const pinConfigured = await hasTransactionPin();
+      if (!pinConfigured) {
+        setShowNoPinModal(true);
+        return;
+      }
+      setTransactionPinInput('');
+      setPinError(null);
+      setShowConfirmModal(true);
+    } catch (err: any) {
+      toast.error(err.message || 'Error checking security settings');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const executePurchase = async () => {
-    setLoading(true);
-    setShowConfirmModal(false);
+  const executePurchase = async (pin: string) => {
+    if (!pin || pin.length !== 4) {
+      setPinError('Transaction PIN must be 4 digits.');
+      return;
+    }
+    setIsSubmittingPurchase(true);
+    setPinError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { toast.error('Session expired. Please sign in again.'); setLoading(false); return; }
-      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-
-      if (type === 'data') {
-        const finalPrice = getPlanPriceForUser(selectedPlan, user);
-        const planId = String(selectedPlan?.provider_plan_id || selectedPlan?.peyflex_variation_id || selectedPlan?.id || '').trim();
-        const payload = {
-          userId: user?.uid,
-          phone_number: phoneNumber,
-          network: network.toUpperCase(),
-          planId: planId,
-          provider_plan_id: planId,
-          peyflex_variation_id: planId,
-          mozosubz_service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
-          service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
-          retail_price: finalPrice,
-          plan_name: selectedPlan?.name,
+      await withFreshSession(async (session) => {
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
         };
-        const response = await fetch('/api/v1/data/purchase', { method: 'POST', headers, body: JSON.stringify(payload) });
-        const resData = await response.json();
-        if (response.ok && resData.status === 'success') {
-          saveBeneficiary(phoneNumber);
-          setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
-          setPurchaseStatus('success');
-          toast.success('Data purchase successful!');
+
+        if (type === 'data') {
+          const finalPrice = getPlanPriceForUser(selectedPlan, user);
+          const planId = String(selectedPlan?.provider_plan_id || selectedPlan?.peyflex_variation_id || selectedPlan?.id || '').trim();
+          const payload = {
+            userId: user?.uid || session.user.id,
+            phone_number: phoneNumber,
+            network: network.toUpperCase(),
+            planId: planId,
+            provider_plan_id: planId,
+            peyflex_variation_id: planId,
+            mozosubz_service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
+            service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
+            retail_price: finalPrice,
+            plan_name: selectedPlan?.name,
+            pin: pin
+          };
+          const response = await fetch('/api/v1/data/purchase', { method: 'POST', headers, body: JSON.stringify(payload) });
+          const resData = await response.json();
+          if (response.ok && resData.status === 'success') {
+            saveBeneficiary(phoneNumber);
+            addSavedRecipient(phoneNumber).catch(() => {});
+            setCreatedTransaction(resData.transaction || { amount: finalPrice, reference: resData.reference || 'N/A' });
+            setShowPinModal(false);
+            setPurchaseStatus('success');
+            toast.success('Data purchase successful!');
+          } else {
+            if (resData.locked) {
+              setShowPinModal(false);
+              toast.error(resData.error || 'Account locked for 15 minutes.', { duration: 8000 });
+            } else if (resData.error && resData.error.toLowerCase().includes('pin')) {
+              setPinError(resData.error);
+            } else {
+              setShowPinModal(false);
+              setPurchaseStatus('failed');
+              toast.error(resData.error || resData.provider_message || 'Data purchase failed.', { duration: 6000 });
+            }
+          }
         } else {
-          setPurchaseStatus('failed');
-          toast.error(resData.error || resData.provider_message || 'Data purchase failed.', { duration: 6000 });
+          const payload = {
+            network: network.toUpperCase(),
+            phone_number: phoneNumber,
+            amount: Number(airtimeAmount),
+            pin: pin
+          };
+          const response = await fetch('/api/buy-airtime', { method: 'POST', headers, body: JSON.stringify(payload) });
+          const resData = await response.json();
+          if (response.ok && (resData.status === 'success' || resData.success === true)) {
+            saveBeneficiary(phoneNumber);
+            addSavedRecipient(phoneNumber).catch(() => {});
+            setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
+            setShowPinModal(false);
+            setPurchaseStatus('success');
+            toast.success(`₦${airtimeAmount} airtime sent!`);
+          } else {
+            if (resData.locked) {
+              setShowPinModal(false);
+              toast.error(resData.error || 'Account locked for 15 minutes.', { duration: 8000 });
+            } else if (resData.error && resData.error.toLowerCase().includes('pin')) {
+              setPinError(resData.error);
+            } else {
+              setShowPinModal(false);
+              setPurchaseStatus('failed');
+              toast.error(resData.error || resData.provider_message || 'Airtime purchase failed.', { duration: 6000 });
+            }
+          }
         }
-      } else {
-        const payload = { network: network.toUpperCase(), phone_number: phoneNumber, amount: Number(airtimeAmount) };
-        const response = await fetch('/api/buy-airtime', { method: 'POST', headers, body: JSON.stringify(payload) });
-        const resData = await response.json();
-        if (response.ok && (resData.status === 'success' || resData.success === true)) {
-          saveBeneficiary(phoneNumber);
-          setCreatedTransaction(resData.transaction || { amount: Number(airtimeAmount), reference: resData.reference || 'N/A' });
-          setPurchaseStatus('success');
-          toast.success(`₦${airtimeAmount} airtime sent!`);
-        } else {
-          setPurchaseStatus('failed');
-          toast.error(resData.error || resData.provider_message || 'Airtime purchase failed.', { duration: 6000 });
-        }
-      }
+      });
     } catch (err: any) {
-      setPurchaseStatus('failed');
       toast.error(err.message || 'Network error occurred.');
-    } finally { setLoading(false); }
+    } finally {
+      setIsSubmittingPurchase(false);
+    }
   };
 
   const resetForm = () => {
@@ -481,7 +551,33 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
             )}
           </div>
 
-          {/* Quick beneficiary pill shortcuts */}
+          {/* Quick saved recipient and beneficiary pill shortcuts */}
+          {savedRecipients.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <span className="text-[10px] text-white/50 font-bold shrink-0">Saved:</span>
+              {savedRecipients.map((rec) => {
+                let localNum = rec.phone;
+                if (localNum.startsWith('234')) localNum = '0' + localNum.slice(3);
+                return (
+                  <button
+                    key={rec.id}
+                    type="button"
+                    onClick={() => setPhoneNumber(localNum)}
+                    className={cn(
+                      'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shrink-0 cursor-pointer flex items-center gap-1',
+                      phoneNumber === localNum || phoneNumber === rec.phone
+                        ? 'bg-[#B5D430] text-[#132613]'
+                        : 'bg-white/10 hover:bg-white/20 text-white/90'
+                    )}
+                  >
+                    <span>{rec.display_name}</span>
+                    <span className="text-[10px] opacity-70">({localNum.slice(-4)})</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {recentBeneficiaries.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
               <span className="text-[10px] text-white/50 font-bold shrink-0">Recent:</span>
@@ -657,6 +753,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
 
               <div className="flex gap-3">
                 <button
+                  type="button"
                   onClick={() => setShowConfirmModal(false)}
                   className="flex-1 py-3.5 rounded-2xl font-bold text-sm text-white transition-all"
                   style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
@@ -664,11 +761,151 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                   Cancel
                 </button>
                 <button
-                  onClick={executePurchase}
-                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm transition-all hover:brightness-110"
+                  type="button"
+                  onClick={() => {
+                    setShowConfirmModal(false);
+                    setTransactionPinInput('');
+                    setPinError(null);
+                    setShowPinModal(true);
+                  }}
+                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm transition-all hover:brightness-110 cursor-pointer"
                   style={{ backgroundColor: '#B5D430', color: '#132613' }}
                 >
-                  Pay now
+                  Enter PIN to pay →
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── No PIN Configured Modal (Step 5 Requirement 4) ── */}
+      <AnimatePresence>
+        {showNoPinModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowNoPinModal(false)}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-sm rounded-3xl p-6 shadow-2xl z-10 text-center space-y-4"
+              style={{ backgroundColor: '#132613' }}
+            >
+              <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto" style={{ backgroundColor: 'rgba(181,212,48,0.15)' }}>
+                <Lock size={26} style={{ color: '#B5D430' }} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white mb-1.5">Add your transaction PIN to continue.</h3>
+                <p className="text-xs text-white/60 max-w-xs mx-auto">
+                  Protect your wallet. You must set a 4-digit security PIN in Settings before completing purchases.
+                </p>
+              </div>
+              <div className="pt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowNoPinModal(false)}
+                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm text-white transition-all"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sessionStorage.setItem('norodata_return_to_purchase', 'true');
+                    setShowNoPinModal(false);
+                    if (onNavigateToSettings) onNavigateToSettings();
+                    else window.dispatchEvent(new CustomEvent('navigate-tab', { detail: 'settings' }));
+                  }}
+                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm transition-all hover:brightness-110 cursor-pointer"
+                  style={{ backgroundColor: '#B5D430', color: '#132613' }}
+                >
+                  Add PIN now
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Transaction PIN Entry Modal (Step 5 Requirement 4 & 5) ── */}
+      <AnimatePresence>
+        {showPinModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => { if (!isSubmittingPurchase) setShowPinModal(false); }}
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-sm rounded-3xl p-6 shadow-2xl z-10 space-y-4"
+              style={{ backgroundColor: '#132613' }}
+            >
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(181,212,48,0.15)' }}>
+                    <Lock size={16} style={{ color: '#B5D430' }} />
+                  </div>
+                  <h3 className="text-base font-bold text-white">Enter Transaction PIN</h3>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSubmittingPurchase}
+                  onClick={() => setShowPinModal(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-white/60 hover:text-white"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <p className="text-xs text-white/60">
+                Enter your 4-digit PIN to authorize payment of <span className="text-white font-bold">{formatCurrency(type === 'data' ? getPlanPriceForUser(selectedPlan, user) : Number(airtimeAmount))}</span>.
+              </p>
+
+              <div>
+                <input
+                  type="password"
+                  maxLength={4}
+                  autoFocus
+                  inputMode="numeric"
+                  value={transactionPinInput}
+                  onChange={(e) => {
+                    setPinError(null);
+                    setTransactionPinInput(e.target.value.replace(/\D/g, ''));
+                  }}
+                  placeholder="••••"
+                  className="w-full text-center tracking-[1em] text-2xl font-bold py-3.5 rounded-2xl text-white placeholder-white/20 focus:outline-none"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: pinError ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.15)' }}
+                />
+                {pinError && (
+                  <p className="text-xs text-red-400 mt-2 text-center font-semibold">
+                    {pinError}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={isSubmittingPurchase}
+                  onClick={() => setShowPinModal(false)}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-50"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingPurchase || transactionPinInput.length !== 4}
+                  onClick={() => executePurchase(transactionPinInput)}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-40 hover:brightness-110 flex items-center justify-center gap-2 cursor-pointer"
+                  style={{ backgroundColor: '#B5D430', color: '#132613' }}
+                >
+                  {isSubmittingPurchase ? <Loader2 className="animate-spin" size={16} /> : 'Authorize'}
                 </button>
               </div>
             </motion.div>

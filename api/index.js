@@ -56,7 +56,14 @@ if (isServer && serviceRoleKey) {
   console.log("Supabase Client initialized with Anon Key on Server-side (No service role key provided).");
 }
 var serverHasServiceRoleKey = Boolean(isServer && serviceRoleKey);
-var supabase = createClient(supabaseUrl, apiKey);
+var clientOptions = {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true
+  }
+};
+var supabase = createClient(supabaseUrl, apiKey, clientOptions);
 var getScopedSupabaseClient = (token) => {
   if (isServer && serviceRoleKey) return supabase;
   if (token) {
@@ -1621,6 +1628,26 @@ async function startServer() {
       return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
     }
     try {
+      const pin = String(req.body?.pin || "").trim();
+      if (!pin) {
+        return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
+      }
+      const { data: pinRes, error: pinErr } = await supabase.rpc("verify_transaction_pin", {
+        pin,
+        p_user_id: finalUserId
+      });
+      if (pinErr) {
+        console.error("[Purchase PIN Verification RPC Error]:", pinErr.message);
+        return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
+      }
+      if (!pinRes || pinRes.status !== "success" || !pinRes.verified) {
+        const isLocked = pinRes?.status === "locked";
+        return res.status(isLocked ? 403 : 400).json({
+          error: pinRes?.error || "Incorrect transaction PIN.",
+          locked: isLocked,
+          remaining_attempts: pinRes?.remaining_attempts
+        });
+      }
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
       if (!pgUuid) {
         return res.status(400).json({ error: "Invalid user ID format." });
@@ -3721,6 +3748,26 @@ async function startServer() {
         return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
       }
       if (!pgUuid) return res.status(400).json({ error: "Invalid user ID." });
+      const pin = String(req.body?.pin || "").trim();
+      if (!pin) {
+        return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
+      }
+      const { data: pinRes, error: pinErr } = await supabase.rpc("verify_transaction_pin", {
+        pin,
+        p_user_id: verifiedUserId
+      });
+      if (pinErr) {
+        console.error("[Airtime PIN Verification RPC Error]:", pinErr.message);
+        return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
+      }
+      if (!pinRes || pinRes.status !== "success" || !pinRes.verified) {
+        const isLocked = pinRes?.status === "locked";
+        return res.status(isLocked ? 403 : 400).json({
+          error: pinRes?.error || "Incorrect transaction PIN.",
+          locked: isLocked,
+          remaining_attempts: pinRes?.remaining_attempts
+        });
+      }
       const { data: service } = await supabase.from("services_config").select("selling_price, cost_price, provider").eq("service_type", "airtime").ilike("provider_or_network", String(network).trim()).maybeSingle();
       const sellingPct = service?.selling_price && service.selling_price > 1 ? Number(service.selling_price) : 100;
       const chargeAmount = parseFloat((parsedAmount * (sellingPct / 100)).toFixed(2));
