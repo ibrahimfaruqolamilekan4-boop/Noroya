@@ -30,12 +30,15 @@ const MOZOSUBZ_SERVICES = [
   { id: 'mtn_gifting',    label: 'MTN Gifting',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_datashare',  label: 'MTN Datashare',  network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_awoof',      label: 'MTN Awoof',      network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
-  { id: 'mtn_awoof2',     label: 'MTN Awoof 2',    network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
+  { id: 'mtn_awoof2',     label: 'MTN SME 2',      network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'mtn_coupon',     label: 'MTN Coupon',     network: 'MTN',     color: '#FCD34D', bg: 'rgba(252,211,77,0.10)',   border: 'rgba(252,211,77,0.30)'   },
   { id: 'glo_sme',        label: 'GLO SME',        network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
+  { id: 'glo_sme2',       label: 'GLO SME 2',      network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'glo_cg',         label: 'GLO CG',         network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
+  { id: 'glo_gifting',    label: 'GLO Gifting',    network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'glo_data',       label: 'GLO Data',       network: 'GLO',     color: '#4ADE80', bg: 'rgba(74,222,128,0.10)',  border: 'rgba(74,222,128,0.30)'  },
   { id: 'airtel_sme',     label: 'Airtel SME',     network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
+  { id: 'airtel_sme2',    label: 'Airtel SME 2',   network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
   { id: 'airtel_cg',      label: 'Airtel CG',      network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
   { id: 'airtel_gifting', label: 'Airtel Gifting', network: 'Airtel',  color: '#F87171', bg: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.30)' },
   { id: 'etisalat_sme',   label: '9mobile SME',    network: '9mobile', color: '#2DD4BF', bg: 'rgba(45,212,191,0.10)', border: 'rgba(45,212,191,0.30)' },
@@ -58,7 +61,7 @@ const MTN_SUBTABS = [
   { id: 'mtn_gifting',   label: 'Gifting'    },
   { id: 'mtn_datashare', label: 'Datashare'  },
   { id: 'mtn_awoof',     label: 'Awoof'      },
-  { id: 'mtn_awoof2',    label: 'Awoof 2'    },
+  { id: 'mtn_awoof2',    label: 'SME 2 / Awoof 2' },
   { id: 'mtn_coupon',    label: 'Coupon'     },
 ] as const;
 type MtnSubTab = typeof MTN_SUBTABS[number]['id'];
@@ -70,18 +73,22 @@ const SERVICE_SUBTABS: Record<string, { id: string; label: string; serviceCode?:
     { id: 'mtn_cg',        label: 'MTN CG',        serviceCode: 'mtn_cg' },
     { id: 'mtn_gifting',   label: 'MTN Gifting',   serviceCode: 'mtn_gifting' },
     { id: 'mtn_datashare', label: 'MTN Datashare', serviceCode: 'mtn_datashare' },
+    { id: 'mtn_awoof2',    label: 'MTN SME 2',     serviceCode: 'mtn_awoof2' },
     { id: 'mtn_awoof',     label: 'MTN Awoof',     serviceCode: 'mtn_awoof' },
     { id: 'mtn_coupon',    label: 'MTN Coupon',    serviceCode: 'mtn_coupon' },
   ],
   GLO: [
     { id: 'all_glo',       label: 'All GLO' },
     { id: 'glo_sme',       label: 'GLO SME',       serviceCode: 'glo_sme' },
+    { id: 'glo_sme2',      label: 'GLO SME 2',     serviceCode: 'glo_sme2' },
     { id: 'glo_cg',        label: 'GLO CG',        serviceCode: 'glo_cg' },
+    { id: 'glo_gifting',   label: 'GLO Gifting',   serviceCode: 'glo_gifting' },
     { id: 'glo_data',      label: 'GLO Data',      serviceCode: 'glo_data' },
   ],
   Airtel: [
     { id: 'all_airtel',    label: 'All Airtel' },
     { id: 'airtel_sme',    label: 'Airtel SME',    serviceCode: 'airtel_sme' },
+    { id: 'airtel_sme2',    label: 'Airtel SME 2',   serviceCode: 'airtel_sme2' },
     { id: 'airtel_cg',     label: 'Airtel CG',     serviceCode: 'airtel_cg' },
     { id: 'airtel_gifting',label: 'Airtel Gifting',serviceCode: 'airtel_gifting' },
   ],
@@ -198,14 +205,14 @@ function isRowVisible(r: PricingRow, networkTab: NetworkTab, mtnSubTab: MtnSubTa
   if (activeServiceCode) {
     const sId = String(r.serviceId || '').toLowerCase();
     const sc = activeServiceCode.toLowerCase();
-    if (sId !== sc && !sId.includes(sc)) return false;
+    if (sId !== sc && !sId.includes(sc) && !sc.includes(sId)) return false;
   }
   if (networkTab !== 'all' && r.network.toUpperCase() !== networkTab.toUpperCase()) return false;
   if (networkTab.toUpperCase() === 'MTN' && mtnSubTab !== 'all_mtn') {
     const sub = mtnSubTab.toLowerCase().replace(/^mtn_/, '');
     const sId = String(r.serviceId || '').toLowerCase();
     const name = String(r.name || '').toLowerCase();
-    if (!sId.includes(sub) && !name.includes(sub)) return false;
+    if (!sId.includes(sub) && !name.includes(sub) && !sub.includes(sId)) return false;
   }
   if (search) {
     const q = search.toLowerCase();
@@ -1655,6 +1662,8 @@ function AdminPricingManagerInner() {
                   <div>
                     <input type="number" min={0} value={row.sellingPrice}
                       onChange={e => updateSelling(row.planId, parseFloat(e.target.value) || 0)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); publishRow(row.planId); } }}
+                      onBlur={() => { if (row.dirty && !belowCost && row.sellingPrice >= row.costPrice) { publishRow(row.planId); } }}
                       className={`w-full bg-slate-800 border text-sm rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 ${belowCost ? 'border-red-500 text-red-400' : 'border-slate-600 text-white'}`} />
                     {belowCost && <p className="text-[9px] text-red-400 mt-0.5">Below cost!</p>}
                   </div>

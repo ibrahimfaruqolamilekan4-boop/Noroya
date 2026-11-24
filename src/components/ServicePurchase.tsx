@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast';
 import SuccessFeedback from './SuccessFeedback';
 import { cn, formatCurrency } from '../lib/utils';
 import type { NetworkType, ServicePlan, UserProfile } from '../types';
+import { normalizeCanonicalServiceCode } from '../lib/planPricing';
 
 const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
   MTN: [
@@ -15,16 +16,19 @@ const NETWORK_SERVICES: Record<string, { id: string; label: string }[]> = {
     { id: 'mtn_gifting', label: 'Gifting' },
     { id: 'mtn_datashare', label: 'Datashare' },
     { id: 'mtn_awoof', label: 'Awoof' },
-    { id: 'mtn_awoof2', label: 'Awoof 2' },
+    { id: 'mtn_awoof2', label: 'SME 2 / Awoof 2' },
     { id: 'mtn_coupon', label: 'Coupon' },
   ],
   GLO: [
     { id: 'glo_sme', label: 'SME' },
+    { id: 'glo_sme2', label: 'SME 2' },
     { id: 'glo_cg', label: 'Corporate (CG)' },
+    { id: 'glo_gifting', label: 'Gifting' },
     { id: 'glo_data', label: 'Data' },
   ],
   Airtel: [
     { id: 'airtel_sme', label: 'SME' },
+    { id: 'airtel_sme2', label: 'SME 2' },
     { id: 'airtel_cg', label: 'Corporate (CG)' },
     { id: 'airtel_gifting', label: 'Gifting' },
   ],
@@ -43,9 +47,12 @@ const BALANCE_CODES: Record<string, { label: string; code: string }[]> = {
   mtn_awoof2: [{ label: 'Awoof 2 Balance', code: '*461*4#' }],
   mtn_coupon: [{ label: 'Coupon Balance', code: '*461*4#' }],
   glo_sme: [{ label: 'SME Balance', code: '*127*0#' }],
+  glo_sme2: [{ label: 'SME Balance', code: '*127*0#' }],
   glo_cg: [{ label: 'CG Balance', code: '*127*0#' }],
+  glo_gifting: [{ label: 'Data Balance', code: '*127*0#' }],
   glo_data: [{ label: 'Data Balance', code: '*127*0#' }],
   airtel_sme: [{ label: 'SME Balance', code: '*140#' }],
+  airtel_sme2: [{ label: 'SME Balance', code: '*140#' }],
   airtel_cg: [{ label: 'CG Balance', code: '*140#' }],
   airtel_gifting: [{ label: 'Gifting Balance', code: '*140#' }],
   etisalat_sme: [{ label: 'SME Balance', code: '*228#' }],
@@ -163,32 +170,9 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
               if (net.toLowerCase().includes('airtel')) finalNet = 'Airtel';
               else if (net.toLowerCase().includes('glo')) finalNet = 'Glo';
               else if (net.toLowerCase().includes('9mobile') || net.toLowerCase().includes('etisalat')) finalNet = '9mobile';
-              let mozosubz_service = String(p.mozosubz_service || p.service || '').toLowerCase().trim();
-              if (!mozosubz_service) {
-                const category = String(p.plan_category || '').toLowerCase();
-                const nameLower = String(pName).toLowerCase();
-                if (finalNet === 'MTN') {
-                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'mtn_sme';
-                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'mtn_cg';
-                  else if (category.includes('gifting') || nameLower.includes('gifting') || category.includes('gift')) mozosubz_service = 'mtn_gifting';
-                  else if (category.includes('share') || nameLower.includes('share') || category.includes('datashare')) mozosubz_service = 'mtn_datashare';
-                  else if (category.includes('awoof 2') || nameLower.includes('awoof 2')) mozosubz_service = 'mtn_awoof2';
-                  else if (category.includes('awoof') || nameLower.includes('awoof')) mozosubz_service = 'mtn_awoof';
-                  else if (category.includes('coupon') || nameLower.includes('coupon')) mozosubz_service = 'mtn_coupon';
-                  else mozosubz_service = 'mtn_sme';
-                } else if (finalNet === 'Glo') {
-                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'glo_sme';
-                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'glo_cg';
-                  else mozosubz_service = 'glo_data';
-                } else if (finalNet === 'Airtel') {
-                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'airtel_sme';
-                  else if (category.includes('cg') || nameLower.includes('cg') || category.includes('corporate') || nameLower.includes('corporate')) mozosubz_service = 'airtel_cg';
-                  else mozosubz_service = 'airtel_gifting';
-                } else if (finalNet === '9mobile') {
-                  if (category.includes('sme') || nameLower.includes('sme')) mozosubz_service = 'etisalat_sme';
-                  else mozosubz_service = 'etisalat_data';
-                }
-              }
+
+              const mozosubz_service = normalizeCanonicalServiceCode(p.mozosubz_service || p.service, finalNet, pName);
+
               return {
                 ...p, id: p.id, name: pName, plan_name: pName,
                 price: pPrice, retail_price: pPrice, reseller_price: rPrice,
@@ -197,6 +181,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
                 provider_plan_id: p.provider_plan_id || p.id,
                 validity_days: p.validity_days || p.duration || p.validity || '30 days',
                 mozosubz_service,
+                service: mozosubz_service,
               };
             });
             setAllPlans(normalized.length > 0 ? normalized : defaultFallback);
@@ -217,16 +202,18 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
     const netKey = network === 'Glo' ? 'GLO' : network;
     const predefined = NETWORK_SERVICES[netKey] || [];
     const matched = predefined.filter((t) => allPlans.some((p) => p.network === network && p.mozosubz_service === t.id));
-    if (matched.length > 0) return matched;
-    const networkPlans = allPlans.filter((p) => p.network === network);
-    if (networkPlans.length > 0) {
-      const distinctServices = Array.from(new Set(networkPlans.map(p => p.mozosubz_service || 'data')));
-      return distinctServices.map(s => ({
-        id: s,
-        label: s.replace(/^([a-z0-9]+)_/i, '').toUpperCase() || 'DATA'
-      }));
-    }
-    return [];
+    const unhandled = Array.from(new Set(
+      allPlans
+        .filter((p) => p.network === network && !predefined.some((t) => t.id === p.mozosubz_service))
+        .map((p) => p.mozosubz_service)
+    )).filter(Boolean).map((s) => ({
+      id: s,
+      label: s.replace(/^[a-z0-9]+_/i, '').replace(/_/g, ' ').toUpperCase() || 'DATA'
+    }));
+
+    if (matched.length > 0) return [...matched, ...unhandled];
+    if (unhandled.length > 0) return unhandled;
+    return predefined;
   }, [network, allPlans]);
 
   React.useEffect(() => {
@@ -361,7 +348,7 @@ export default function ServicePurchase({ type }: { type: 'data' | 'airtime' }) 
           <div className="flex items-center gap-2 mb-1">
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#3B7A3B' }} />
             <span className="text-xs font-bold " style={{ color: '#8FB88F' }}>
-              MOZOSUBZ PLANS
+              DATA PLANS
             </span>
           </div>
           <h2 className="text-xl font-bold text-white">{type === 'data' ? 'Buy data' : 'Buy airtime'}</h2>
