@@ -95,21 +95,36 @@ export async function addSavedRecipient(phone: string, preferredName?: string): 
       resolvedName = `User ${normalizedPhone.slice(-4)}`;
     }
 
+    // Upsert by (owner_id, phone) so re-saving or saving the same number updates the name without error
     const { data, error } = await supabase
       .from('saved_recipients')
-      .insert({
-        owner_id: session.user.id,
-        phone: normalizedPhone,
-        display_name: resolvedName,
-      })
+      .upsert(
+        {
+          owner_id: session.user.id,
+          phone: normalizedPhone,
+          display_name: resolvedName,
+        },
+        { onConflict: 'owner_id,phone' }
+      )
       .select('*')
       .single();
 
     if (error) {
+      // If error occurs due to unique conflict or policy on upsert, select existing row
       if (error.code === '23505' || error.message.includes('unique') || error.message.includes('saved_recipients_owner_phone_key')) {
-        throw new Error('This phone number is already in your saved recipients list.');
+        const { data: existing } = await supabase
+          .from('saved_recipients')
+          .select('*')
+          .eq('owner_id', session.user.id)
+          .eq('phone', normalizedPhone)
+          .maybeSingle();
+
+        if (existing) {
+          return existing as SavedRecipient;
+        }
       }
-      throw error;
+      console.error('[addSavedRecipient error]:', error.message);
+      throw new Error(error.message || 'Failed to save recipient.');
     }
 
     return data as SavedRecipient;

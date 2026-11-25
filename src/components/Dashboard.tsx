@@ -818,6 +818,14 @@ function DashboardOverview({
     }
   }, []);
 
+  // Proactively load saved recipients when user profile is ready
+  React.useEffect(() => {
+    if (user?.uid) {
+      loadSavedRecipients();
+    }
+  }, [user?.uid, loadSavedRecipients]);
+
+  // Also refresh whenever transfer modal is opened
   React.useEffect(() => {
     if (showTransferModal) {
       loadSavedRecipients();
@@ -970,9 +978,13 @@ function DashboardOverview({
       if (res.status === 'success') {
         toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.display_name}!`);
         if (saveRecipientAfterTransfer && transferUid) {
-          addSavedRecipient(transferUid, transferRecipient.display_name)
-            .then(() => loadSavedRecipients())
-            .catch(() => {});
+          try {
+            await addSavedRecipient(transferUid, transferRecipient.display_name);
+            await loadSavedRecipients();
+          } catch (saveErr: any) {
+            console.warn('[handleConfirmTransfer saveRecipient error]:', saveErr);
+            toast.error(saveErr.message || 'Could not save recipient for future transfers.');
+          }
         }
         setShowTransferModal(false);
         setTransferStep('input');
@@ -2394,7 +2406,7 @@ function SettingsSection({ user, onReturnToPurchase }: { user: UserProfile; onRe
 
   React.useEffect(() => {
     loadSettingsData();
-  }, [loadSettingsData]);
+  }, [loadSettingsData, user?.uid]);
 
   const handleAdminForceFetch = async (autoPublish = false) => {
     setIsForceFetching(true);
