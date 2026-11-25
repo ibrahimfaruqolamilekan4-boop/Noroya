@@ -58,6 +58,7 @@ export const executeWalletTransfer = (payload: {
   amount: number;
   transferKey: string;
   note?: string;
+  pin: string;
 }): Promise<TransferResponse> =>
   authedJson<TransferResponse>('/api/wallet/transfer', {
     method: 'POST',

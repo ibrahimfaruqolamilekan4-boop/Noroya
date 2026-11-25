@@ -61,7 +61,6 @@ import { collection, query, onSnapshot, orderBy, doc, setDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { toast } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
-import { purchaseAirtime, purchaseDataBundle } from '../lib/recharge';
 
 import { calculateFundingFee } from '../lib/fundingFee';
 import { lookupTransferRecipient, executeWalletTransfer } from '../lib/walletApi';
@@ -117,6 +116,29 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
   const [selectedReceiptTx, setSelectedReceiptTx] = React.useState<Transaction | null>(null);
   const [showSupportHub, setShowSupportHub] = React.useState(false);
   const [broadcastAlert, setBroadcastAlert] = React.useState<string | null>(null);
+
+  const handleShareReceiptWhatsApp = (tx: Transaction) => {
+    const formattedDate = new Date(tx.createdAt).toLocaleString('en-NG', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+    const text = 
+`🧾 *NORODATA TRANSACTION RECEIPT*
+━━━━━━━━━━━━━━━━━━━━
+*Status:* ✅ Approved / Successful
+*Amount:* ₦${Number(tx.amount || 0).toLocaleString()}
+*Type:* ${String(tx.type || 'Transaction').toUpperCase()}
+*Description:* ${tx.description || 'N/A'}
+*Reference:* ${tx.reference || 'N/A'}
+*Date:* ${formattedDate}
+━━━━━━━━━━━━━━━━━━━━
+_Thank you for choosing NORODATA!_
+_Instant Data, Airtime & Utility Payments._
+🌐 https://norodata.com`;
+
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
 
   const downloadQR = (id, filename) => {
@@ -639,23 +661,33 @@ export default function Dashboard({ user, onLogout }: { user: UserProfile; onLog
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+              <div className="space-y-2 pt-3 border-t border-gray-100">
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`Receipt ID: ${selectedReceiptTx.reference}\nAmount: ₦${selectedReceiptTx.amount}\nDate: ${new Date(selectedReceiptTx.createdAt).toLocaleString()}\nStatus: SUCCESS`);
-                    toast.success('Copied!');
-                  }}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3 text-sm transition-all"
+                  type="button"
+                  onClick={() => handleShareReceiptWhatsApp(selectedReceiptTx)}
+                  className="w-full flex items-center justify-center gap-2 text-white font-bold rounded-xl py-3 text-sm bg-green-600 hover:bg-green-700 transition-all shadow-sm cursor-pointer"
                 >
-                  Copy Details
+                  <Share2 size={16} />
+                  Share Receipt to WhatsApp
                 </button>
-                <button
-                  onClick={() => window.print()}
-                  className="text-white font-bold rounded-xl py-3 text-sm transition-all"
-                  style={{ backgroundColor: '#3B7A3B' }}
-                >
-                  Print Receipt
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`Receipt ID: ${selectedReceiptTx.reference}\nAmount: ₦${selectedReceiptTx.amount}\nDate: ${new Date(selectedReceiptTx.createdAt).toLocaleString()}\nStatus: SUCCESS`);
+                      toast.success('Copied!');
+                    }}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-2.5 text-sm transition-all cursor-pointer"
+                  >
+                    Copy Details
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="text-white font-bold rounded-xl py-2.5 text-sm transition-all cursor-pointer"
+                    style={{ backgroundColor: '#3B7A3B' }}
+                  >
+                    Print Receipt
+                  </button>
+                </div>
               </div>
 
               <button
@@ -787,7 +819,20 @@ function DashboardOverview({
 }) {
   const { setSimulatedUser } = useAuth();
   const [currentBalance, setCurrentBalance] = React.useState(0);
-  const [hideBalance, setHideBalance] = React.useState(false);
+  const [hideBalance, setHideBalance] = React.useState(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('norodata_hide_balance') === 'true';
+  });
+
+  const toggleHideBalance = () => {
+    setHideBalance((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('norodata_hide_balance', String(next));
+      } catch (_) {}
+      return next;
+    });
+  };
+
   const [isUpdating, setIsUpdating] = React.useState(false);
 
   // Fund modal state
@@ -803,6 +848,7 @@ function DashboardOverview({
   const [transferUid, setTransferUid] = React.useState('');
   const [transferAmount, setTransferAmount] = React.useState('');
   const [transferNote, setTransferNote] = React.useState('');
+  const [transferPin, setTransferPin] = React.useState('');
   const [transferRecipient, setTransferRecipient] = React.useState<any>(null);
   const [transferStep, setTransferStep] = React.useState<'input' | 'confirm'>('input');
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -966,6 +1012,10 @@ function DashboardOverview({
       toast.error('Please verify recipient first');
       return;
     }
+    if (!transferPin || transferPin.length !== 4) {
+      toast.error('Please enter your 4-digit transaction PIN');
+      return;
+    }
     setTransferLoading(true);
     const transferKey = `txf_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     try {
@@ -973,7 +1023,8 @@ function DashboardOverview({
         recipientId: transferRecipient.id,
         amount: amt,
         transferKey,
-        note: transferNote
+        note: transferNote,
+        pin: transferPin,
       });
       if (res.status === 'success') {
         toast.success(`₦${amt.toLocaleString()} sent to ${transferRecipient.display_name}!`);
@@ -991,6 +1042,7 @@ function DashboardOverview({
         setTransferUid('');
         setTransferAmount('');
         setTransferNote('');
+        setTransferPin('');
         setTransferRecipient(null);
         refreshBalance();
       } else if (res.status === 'insufficient_funds') {
@@ -1287,7 +1339,8 @@ function DashboardOverview({
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
             </div>
             <button
-              onClick={() => setHideBalance(!hideBalance)}
+              onClick={toggleHideBalance}
+              title={hideBalance ? "Show balance" : "Hide balance"}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-all cursor-pointer"
               style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
             >
@@ -1820,7 +1873,7 @@ function DashboardOverview({
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => { setShowTransferModal(false); setTransferStep('input'); }}
+              onClick={() => { setShowTransferModal(false); setTransferStep('input'); setTransferPin(''); }}
               className="absolute inset-0 bg-black/30 backdrop-blur-sm"
             />
             <motion.div
@@ -1832,7 +1885,7 @@ function DashboardOverview({
                   <h4 className="font-bold text-gray-900 text-xl">Send Money</h4>
                   <p className="text-xs text-gray-400 mt-0.5">Wallet-to-wallet transfer by phone number</p>
                 </div>
-                <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+                <button onClick={() => { setShowTransferModal(false); setTransferStep('input'); setTransferPin(''); }} className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 text-gray-500 cursor-pointer">
                   <X size={16} />
                 </button>
               </div>
@@ -1953,12 +2006,33 @@ function DashboardOverview({
                       </div>
                     </div>
                   </div>
+
+                  {/* Transaction PIN Authorization */}
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1.5">
+                      Transaction PIN
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={4}
+                      value={transferPin}
+                      onChange={(e) => setTransferPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      placeholder="••••"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-center tracking-[0.5em] font-bold text-2xl text-gray-900 focus:outline-none focus:border-green-600 focus:bg-white transition-all placeholder:tracking-normal placeholder:font-normal placeholder:text-base placeholder:text-gray-300"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1.5 text-center">
+                      Enter your 4-digit security PIN to authorize this transfer.
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => setTransferStep('input')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all">
+                    <button onClick={() => { setTransferStep('input'); setTransferPin(''); }} className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl py-3.5 transition-all cursor-pointer">
                       Back
                     </button>
-                    <button onClick={handleConfirmTransfer} disabled={transferLoading} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer" style={{ backgroundColor: '#3B7A3B' }}>
-                      {transferLoading ? 'Sending…' : 'Confirm'}
+                    <button onClick={handleConfirmTransfer} disabled={transferLoading || transferPin.length !== 4} className="text-white font-bold rounded-xl py-3.5 disabled:opacity-50 transition-all cursor-pointer" style={{ backgroundColor: '#3B7A3B' }}>
+                      {transferLoading ? 'Authorizing…' : 'Authorize & Send'}
                     </button>
                   </div>
                 </div>
