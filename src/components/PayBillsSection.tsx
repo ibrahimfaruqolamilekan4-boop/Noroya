@@ -5,6 +5,7 @@ import { cn, formatCurrency } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import SuccessFeedback from './SuccessFeedback';
+import { withFreshSession } from '../lib/authSession';
 
 type BillType = 'cable' | 'electricity' | 'exam' | 'betting';
 
@@ -192,50 +193,59 @@ export default function PayBillsSection({ defaultServiceId }: { defaultServiceId
         return;
       }
 
-      const response = await fetch(selectedService === 'cable' || selectedService === 'electricity' ? '/api/buy-utility' : '/api/vtu/purchase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          type: selectedService,
-          network: provider.toUpperCase(),
-          provider: provider.toUpperCase(),
-          number: accountNo || emailDelivery || '08000000000',
-          phone: (user as any)?.phone || (user as any)?.phone_number || accountNo || '08000000000',
-          phoneNumber: accountNo || emailDelivery || '08000000000',
-          plan: finalPlan,
-          amount: finalAmount,
-          meter_type: 'prepaid'
-        })
-      });
+      const idempotencyKey = `bill_${selectedService}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      const resData = await response.json();
-      if (response.ok) {
-        // Generate Token if Electricity
-        let electricityToken = '';
-        if (selectedService === 'electricity') {
-          electricityToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-        }
-
-        const refCode = resData.transaction?.reference || `TRX-${Date.now()}`;
-        
-        setSuccessReceipt({
-          ref: refCode,
-          service: selectedService,
-          provider,
-          validatedName: validatedName || 'Direct customer',
-          account: accountNo || emailDelivery,
-          amount: finalAmount,
-          plan: finalPlan,
-          token: electricityToken,
-          date: new Date().toLocaleString()
+      const resData = await withFreshSession(async (session) => {
+        const response = await fetch(selectedService === 'cable' || selectedService === 'electricity' ? '/api/buy-utility' : '/api/vtu/purchase', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            userId: user.uid,
+            type: selectedService,
+            network: provider.toUpperCase(),
+            provider: provider.toUpperCase(),
+            number: accountNo || emailDelivery || '08000000000',
+            phone: (user as any)?.phone || (user as any)?.phone_number || accountNo || '08000000000',
+            phoneNumber: accountNo || emailDelivery || '08000000000',
+            plan: finalPlan,
+            amount: finalAmount,
+            meter_type: 'prepaid',
+            idempotencyKey,
+          })
         });
 
-        toast.success(`Purchase cleared and delivered successfully!`);
-        setStep(3);
-      } else {
-        toast.error(resData.error || 'Server rejected the transaction request');
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(json?.error || json?.message || 'Server rejected the transaction request');
+        }
+        return json;
+      });
+
+      // Generate Token if Electricity
+      let electricityToken = '';
+      if (selectedService === 'electricity') {
+        electricityToken = `${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
       }
+
+      const refCode = resData.transaction?.reference || resData.reference || `TRX-${Date.now()}`;
+      
+      setSuccessReceipt({
+        ref: refCode,
+        service: selectedService,
+        provider,
+        validatedName: validatedName || 'Direct customer',
+        account: accountNo || emailDelivery,
+        amount: finalAmount,
+        plan: finalPlan,
+        token: electricityToken,
+        date: new Date().toLocaleString()
+      });
+
+      toast.success(`Purchase cleared and delivered successfully!`);
+      setStep(3);
     } catch (err) {
       console.error(err);
       toast.error('E-Transaction dispatch connection issue. Retry.');

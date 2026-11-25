@@ -95,6 +95,8 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
   const [transactionPinInput, setTransactionPinInput] = React.useState('');
   const [pinError, setPinError] = React.useState<string | null>(null);
   const [isSubmittingPurchase, setIsSubmittingPurchase] = React.useState(false);
+  const isPurchasingRef = React.useRef(false);
+  const purchaseAbortRef = React.useRef<AbortController | null>(null);
   const [purchaseStatus, setPurchaseStatus] = React.useState<'idle' | 'success' | 'failed'>('idle');
   const [createdTransaction, setCreatedTransaction] = React.useState<any>(null);
   const [autoDetected, setAutoDetected] = React.useState(false);
@@ -286,8 +288,20 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
       setPinError('Transaction PIN must be 4 digits.');
       return;
     }
+    if (isPurchasingRef.current) return;
+    isPurchasingRef.current = true;
     setIsSubmittingPurchase(true);
     setPinError(null);
+
+    // Cancel any previous in-flight purchase request
+    if (purchaseAbortRef.current) {
+      try { purchaseAbortRef.current.abort(); } catch (_) {}
+    }
+    const abortCtrl = new AbortController();
+    purchaseAbortRef.current = abortCtrl;
+
+    const idempotencyKey = `buy_${type}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
     try {
       await withFreshSession(async (session) => {
         const headers = {
@@ -309,9 +323,15 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
             service: (selectedPlan as any)?.mozosubz_service || (selectedPlan as any)?.service || planType,
             retail_price: finalPrice,
             plan_name: selectedPlan?.name,
-            pin: pin
+            pin: pin,
+            idempotencyKey: idempotencyKey,
           };
-          const response = await fetch('/api/v1/data/purchase', { method: 'POST', headers, body: JSON.stringify(payload) });
+          const response = await fetch('/api/v1/data/purchase', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: abortCtrl.signal,
+          });
           const resData = await response.json();
           if (response.ok && resData.status === 'success') {
             saveBeneficiary(phoneNumber);
@@ -337,9 +357,15 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
             network: network.toUpperCase(),
             phone_number: phoneNumber,
             amount: Number(airtimeAmount),
-            pin: pin
+            pin: pin,
+            idempotencyKey: idempotencyKey,
           };
-          const response = await fetch('/api/buy-airtime', { method: 'POST', headers, body: JSON.stringify(payload) });
+          const response = await fetch('/api/buy-airtime', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: abortCtrl.signal,
+          });
           const resData = await response.json();
           if (response.ok && (resData.status === 'success' || resData.success === true)) {
             saveBeneficiary(phoneNumber);
@@ -363,8 +389,10 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
         }
       });
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       toast.error(err.message || 'Network error occurred.');
     } finally {
+      isPurchasingRef.current = false;
       setIsSubmittingPurchase(false);
     }
   };
