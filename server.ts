@@ -521,7 +521,6 @@ async function startServer() {
       console.warn("[requireAdmin Warning] SUPABASE_SERVICE_ROLE_KEY is not set; verifying admin identity via session token.");
     }
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
-    const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
 
     let userEmail = '';
     let isRoleAdmin = false;
@@ -537,9 +536,6 @@ async function startServer() {
           } catch (_) {}
         }
       } catch (_) {}
-    }
-    if (!userEmail && adminEmailHeader) {
-      userEmail = adminEmailHeader;
     }
 
     if (!userEmail && !isRoleAdmin) {
@@ -573,7 +569,6 @@ async function startServer() {
 
   const requireEsimAdmin = async (req: any, res: any): Promise<boolean> => {
     const token = (req.headers.authorization || "").replace(/^Bearer /i, "").trim();
-    const adminEmailHeader = (req.headers["x-admin-email"] || "").toString().toLowerCase().trim();
 
     let userEmail = '';
     let isRoleAdmin = false;
@@ -586,9 +581,6 @@ async function startServer() {
           if (prof?.role === 'admin') isRoleAdmin = true;
         }
       } catch (_) {}
-    }
-    if (!userEmail && adminEmailHeader) {
-      userEmail = adminEmailHeader;
     }
 
     const ALLOWED_ESIM_ADMINS = [
@@ -653,6 +645,8 @@ async function startServer() {
   // Global API throttle + a stricter bucket for money-touching endpoints.
   app.use("/api", rateLimit(300, 60_000));
   const purchaseRateLimit = rateLimit(30, 60_000);
+  const recipientLookupRateLimit = rateLimit(15, 60_000);
+  const walletTransferRateLimit = rateLimit(10, 60_000);
 
   // SECURITY (audit C7): public plan listings must never expose provider
   // credential rows (keys used to live in services_config rows like
@@ -7457,7 +7451,7 @@ if (Object.keys(updateData).length <= 1) {
   });
 
   // ─── Wallet-to-Wallet Transfer: Authoritative Recipient Lookup & Transfer ───
-  app.post("/api/wallet/lookup-recipient", async (req, res) => {
+  app.post("/api/wallet/lookup-recipient", recipientLookupRateLimit, async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
@@ -7503,7 +7497,7 @@ if (Object.keys(updateData).length <= 1) {
     }
   });
 
-  app.post("/api/wallet/transfer", async (req, res) => {
+  app.post("/api/wallet/transfer", walletTransferRateLimit, async (req, res) => {
     const authUser = await requireUser(req, res);
     if (!authUser) return;
     try {
@@ -7512,6 +7506,11 @@ if (Object.keys(updateData).length <= 1) {
       const rawAmount = Number(req.body?.amount ?? req.body?.p_amount ?? 0);
       const transferKey = String(req.body?.transferKey || req.body?.transfer_key || "").trim();
       const note = String(req.body?.note ?? req.body?.p_note ?? "").trim();
+      const pin = String(req.body?.pin || "").trim();
+
+      if (!pin || pin.length !== 4) {
+        return res.status(400).json({ status: 'error', error: "4-digit transaction PIN is required to complete transfer." });
+      }
 
       if (!recipientId) {
         return res.status(400).json({ status: 'error', error: "Recipient ID is required." });
@@ -7524,6 +7523,27 @@ if (Object.keys(updateData).length <= 1) {
       }
       if (!transferKey) {
         return res.status(400).json({ status: 'error', error: "Unique transfer key is required for idempotency." });
+      }
+
+      // Verify sender's transaction PIN
+      const { data: pinRes, error: pinErr } = await supabase.rpc('verify_transaction_pin', {
+        pin: pin,
+        p_user_id: senderId,
+      });
+
+      if (pinErr) {
+        console.error("[Wallet Transfer PIN Verification RPC Error]:", pinErr.message);
+        return res.status(500).json({ status: 'error', error: "Failed to verify transaction PIN. Please try again." });
+      }
+
+      if (!pinRes || pinRes.status !== 'success' || !pinRes.verified) {
+        const isLocked = pinRes?.status === 'locked';
+        return res.status(isLocked ? 403 : 400).json({
+          status: 'error',
+          error: pinRes?.error || "Incorrect transaction PIN.",
+          locked: isLocked,
+          remaining_attempts: pinRes?.remaining_attempts,
+        });
       }
 
       const amount = Number(rawAmount.toFixed(2));
