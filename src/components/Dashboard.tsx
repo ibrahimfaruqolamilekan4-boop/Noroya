@@ -69,6 +69,7 @@ import { withFreshSession, SESSION_EXPIRED_MESSAGE } from '../lib/authSession';
 import { getSavedRecipients, addSavedRecipient, removeSavedRecipient, formatLocalPhone } from '../lib/recipientService';
 import { hasTransactionPin, setTransactionPin } from '../lib/pinService';
 import type { SavedRecipient } from '../types';
+import ErrorBoundary from './ErrorBoundary';
 import ServicePurchase from './ServicePurchase';
 import PayBillsSection from './PayBillsSection';
 import AdminPanelSection from './AdminPanelSection';
@@ -478,26 +479,28 @@ _Instant Data, Airtime & Utility Payments._
 
         {/* ── Page content ────────────────────────────────────────────── */}
         <main className="flex-1 px-4 md:px-8 py-4 pb-24">
-          {activeTab === 'dashboard' && (
-            <DashboardOverview
-              user={user}
-              setTab={setTabAndService}
-              transactions={transactions}
-              onSelectTx={setSelectedReceiptTx}
-            />
-          )}
-          {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
-          {activeTab === 'buy-data' && <ServicePurchase type="data" onNavigateToSettings={() => setActiveTab('settings')} />}
-          {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" onNavigateToSettings={() => setActiveTab('settings')} />}
-          {activeTab === 'electricity' && <ElectricitySection />}
-          {activeTab === 'cable' && <CableTvSection />}
-          {activeTab === 'betting' && <BettingSection />}
-          {activeTab === 'reseller' && <ResellerPortal />}
-          {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
-          {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
-          {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
-          {activeTab === 'settings' && <SettingsSection user={user} onReturnToPurchase={() => setActiveTab('buy-data')} />}
-          {activeTab === 'admin' && <AdminPanelSection />}
+          <ErrorBoundary fallbackTitle="An error occurred displaying this view">
+            {activeTab === 'dashboard' && (
+              <DashboardOverview
+                user={user}
+                setTab={setTabAndService}
+                transactions={transactions}
+                onSelectTx={setSelectedReceiptTx}
+              />
+            )}
+            {activeTab === 'marketplace' && <MarketplaceHome user={user} />}
+            {activeTab === 'buy-data' && <ServicePurchase type="data" onNavigateToSettings={() => setActiveTab('settings')} />}
+            {activeTab === 'buy-airtime' && <ServicePurchase type="airtime" onNavigateToSettings={() => setActiveTab('settings')} />}
+            {activeTab === 'electricity' && <ElectricitySection />}
+            {activeTab === 'cable' && <CableTvSection />}
+            {activeTab === 'betting' && <BettingSection />}
+            {activeTab === 'reseller' && <ResellerPortal />}
+            {activeTab === 'bills' && <PayBillsSection defaultServiceId={defaultBillService} />}
+            {activeTab === 'history' && <TransactionHistory user={user} onSelectTx={setSelectedReceiptTx} />}
+            {activeTab === 'referrals' && <ReferralSection user={user} transactions={transactions} />}
+            {activeTab === 'settings' && <SettingsSection user={user} onReturnToPurchase={() => setActiveTab('buy-data')} />}
+            {activeTab === 'admin' && <AdminPanelSection />}
+          </ErrorBoundary>
         </main>
       </div>
 

@@ -648,6 +648,48 @@ async function startServer() {
   const recipientLookupRateLimit = rateLimit(15, 60_000);
   const walletTransferRateLimit = rateLimit(10, 60_000);
 
+  // In-memory purchase idempotency manager to prevent duplicate charges on rapid double-clicks
+  interface IdempotencyEntry {
+    timestamp: number;
+    status: 'processing' | 'completed';
+    result?: any;
+  }
+  const purchaseIdempotency = new Map<string, IdempotencyEntry>();
+  const sweepIdempotency = () => {
+    const now = Date.now();
+    for (const [k, v] of purchaseIdempotency.entries()) {
+      if (now - v.timestamp > 120_000) purchaseIdempotency.delete(k);
+    }
+  };
+
+  const checkIdempotency = (key: string | undefined, res: any): boolean => {
+    if (!key || typeof key !== 'string') return true;
+    sweepIdempotency();
+    const entry = purchaseIdempotency.get(key);
+    if (entry) {
+      if (entry.status === 'processing') {
+        res.status(409).json({ error: "A transaction with this request key is already processing. Please wait." });
+        return false;
+      }
+      if (entry.result) {
+        res.status(entry.result.status || 200).json(entry.result.data || entry.result);
+        return false;
+      }
+    }
+    purchaseIdempotency.set(key, { timestamp: Date.now(), status: 'processing' });
+    return true;
+  };
+
+  const completeIdempotency = (key: string | undefined, data: any, status = 200) => {
+    if (!key || typeof key !== 'string') return;
+    purchaseIdempotency.set(key, { timestamp: Date.now(), status: 'completed', result: { status, data } });
+  };
+
+  const removeIdempotency = (key: string | undefined) => {
+    if (!key || typeof key !== 'string') return;
+    purchaseIdempotency.delete(key);
+  };
+
   // SECURITY (audit C7): public plan listings must never expose provider
   // credential rows (keys used to live in services_config rows like
   // 'mozosubz_api_key') or wholesale cost prices.
@@ -1115,6 +1157,138 @@ async function startServer() {
     });
   });
 
+  // ─── Automated Multi-Provider Smart Failover Router ──────────────────────────
+  interface AttemptPurchaseParams {
+    type: 'data' | 'airtime';
+    network: string;
+    phone: string;
+    amount: number;
+    primaryProviderName: string;
+    primaryApiKey: string;
+    planId?: string;
+    providerPlanId?: string;
+    mozosubzService?: string;
+    planConfig?: any;
+    vtuPlan?: any;
+  }
+
+  interface AttemptPurchaseResult {
+    outcome: 'success' | 'pending' | 'failed';
+    result?: any;
+    usedProvider: string;
+    error?: string;
+    raw?: any;
+  }
+
+  async function attemptProviderPurchaseWithFailover(params: AttemptPurchaseParams): Promise<AttemptPurchaseResult> {
+    const { type, network, phone, amount, primaryProviderName, primaryApiKey, planId, providerPlanId, mozosubzService, planConfig, vtuPlan } = params;
+
+    const isAmbiguous = (err: any): boolean => {
+      if (!err) return false;
+      if (err.response) return false;
+      return true;
+    };
+
+    // 1. Attempt Primary Provider
+    const primary = getProvider(primaryProviderName);
+    if (primary && primaryApiKey && primaryApiKey.length >= 6) {
+      try {
+        const res = await primary.purchase({
+          type,
+          network,
+          phone,
+          amount,
+          planId: planId || '',
+          providerPlanId: providerPlanId || planId || '',
+          mozosubzService: mozosubzService || '',
+          apiKey: primaryApiKey,
+        });
+
+        if (res.success) {
+          return { outcome: 'success', result: res, usedProvider: primaryProviderName, raw: res.raw };
+        }
+        if (res.ambiguous) {
+          return { outcome: 'pending', result: res, usedProvider: primaryProviderName, error: res.error, raw: res.raw };
+        }
+        console.warn(`[VTU Provider Gateway Rejection] Primary '${primaryProviderName}' rejected: ${res.error || 'Unknown'}. Checking automated failover...`);
+      } catch (err: any) {
+        if (isAmbiguous(err)) {
+          return { outcome: 'pending', usedProvider: primaryProviderName, error: err?.message || 'Gateway connection timeout', raw: null };
+        }
+        console.warn(`[VTU Provider Gateway Error] Primary '${primaryProviderName}' threw: ${err.message}. Checking automated failover...`);
+      }
+    }
+
+    // 2. Automated Smart Failover to Secondary Providers
+    const fallbackCandidates = ['mozosubz', 'nifex', 'bigisub'].filter(p => p !== primaryProviderName.toLowerCase());
+
+    for (const fallbackName of fallbackCandidates) {
+      const fbProvider = getProvider(fallbackName);
+      if (!fbProvider) continue;
+      const fbKey = await fbProvider.resolveApiKey();
+      if (!fbKey || fbKey.length < 6) continue;
+
+      let fbPlanId = planId || '';
+      let fbProviderPlanId = providerPlanId || planId || '';
+      let fbService = '';
+
+      if (type === 'data') {
+        if (fallbackName === 'nifex') {
+          const nId = planConfig?.nifex_plan_id || (fbPlanId.match(/\d+$/) ? fbPlanId.match(/\d+$/)![0] : '');
+          if (!nId) continue;
+          fbPlanId = nId;
+          fbProviderPlanId = nId;
+        } else if (fallbackName === 'bigisub') {
+          const bId = planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || '';
+          if (!bId) continue;
+          fbPlanId = bId;
+          fbProviderPlanId = bId;
+        } else if (fallbackName === 'mozosubz') {
+          const mId = planConfig?.mozosubz_plan_id || planConfig?.mozosubs_plan_id || '';
+          if (!mId) continue;
+          fbPlanId = mId;
+          fbProviderPlanId = mId;
+          fbService = vtuPlan?.service || planConfig?.mozosubz_service || '';
+        }
+      }
+
+      try {
+        console.log(`[VTU Failover Router] Dispatching ${type} order to fallback provider '${fallbackName}' (${network} -> ${phone})...`);
+        const fbRes = await fbProvider.purchase({
+          type,
+          network,
+          phone,
+          amount,
+          planId: fbPlanId,
+          providerPlanId: fbProviderPlanId,
+          mozosubzService: fbService,
+          apiKey: fbKey,
+        });
+
+        if (fbRes.success) {
+          console.log(`[VTU Failover SUCCESS] Fallback provider '${fallbackName}' successfully fulfilled ${type} order for ${phone}!`);
+          return { outcome: 'success', result: fbRes, usedProvider: fallbackName, raw: fbRes.raw };
+        }
+        if (fbRes.ambiguous) {
+          return { outcome: 'pending', result: fbRes, usedProvider: fallbackName, error: fbRes.error, raw: fbRes.raw };
+        }
+        console.warn(`[VTU Failover Rejected] Secondary provider '${fallbackName}' rejected: ${fbRes.error}`);
+      } catch (fbErr: any) {
+        if (isAmbiguous(fbErr)) {
+          return { outcome: 'pending', usedProvider: fallbackName, error: fbErr?.message || 'Connection timeout on fallback', raw: null };
+        }
+        console.warn(`[VTU Failover Failed] Secondary provider '${fallbackName}' error: ${fbErr.message}`);
+      }
+    }
+
+    return {
+      outcome: 'failed',
+      usedProvider: primaryProviderName,
+      error: 'All available providers were unable to complete this transaction.',
+      raw: null
+    };
+  }
+
   // Unified Robust Bigisub VTU Purchase Flow (Migrated from Peyflex)
   const handleVtuPurchase = async (req: any, res: any) => {
     const { 
@@ -1175,10 +1349,14 @@ async function startServer() {
       return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
     }
 
+    const idempotencyKey = String(req.body?.idempotencyKey || req.body?.idempotency_key || '').trim();
+    if (idempotencyKey && !checkIdempotency(idempotencyKey, res)) return;
+
     try {
       // ─── STEP 5: Server-side Transaction PIN Verification ───
       const pin = String(req.body?.pin || '').trim();
       if (!pin) {
+        removeIdempotency(idempotencyKey);
         return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
       }
 
@@ -1188,11 +1366,13 @@ async function startServer() {
       });
 
       if (pinErr) {
+        removeIdempotency(idempotencyKey);
         console.error("[Purchase PIN Verification RPC Error]:", pinErr.message);
         return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
       }
 
       if (!pinRes || pinRes.status !== 'success' || !pinRes.verified) {
+        removeIdempotency(idempotencyKey);
         const isLocked = pinRes?.status === 'locked';
         return res.status(isLocked ? 403 : 400).json({
           error: pinRes?.error || "Incorrect transaction PIN.",
@@ -1204,12 +1384,14 @@ async function startServer() {
       // 1. Query Supabase 'profiles' table to verify the logged-in user has sufficient 'wallet_balance'
       const pgUuid = finalUserId ? ensureUUID(finalUserId) : null;
       if (!pgUuid) {
+        removeIdempotency(idempotencyKey);
         return res.status(400).json({ error: "Invalid user ID format." });
       }
 
       const profile = await getOrCreateProfile(pgUuid, finalUserId);
 
       if (!profile) {
+        removeIdempotency(idempotencyKey);
         return res.status(404).json({ error: "User profile not found in Supabase database." });
       }
 
@@ -1418,69 +1600,43 @@ async function startServer() {
         return true;                    // no response = unknown outcome
       };
 
-      // 5. Call the provider now that funds are safely locked.
-      try {
-        const result = await provider.purchase({
-          type:             finalType as 'data' | 'airtime',
-          network:          finalNetwork,
-          phone:            finalPhone,
-          amount:           finalAmount,
-          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
-          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
-          apiKey:           providerApiKey,
-        });
+      // 5. Call the provider now that funds are safely locked (with automated multi-provider failover)
+      const dispatchResult = await attemptProviderPurchaseWithFailover({
+        type:             finalType as 'data' | 'airtime',
+        network:          finalNetwork,
+        phone:            finalPhone,
+        amount:           finalAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey:    providerApiKey,
+        planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+        providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
+        mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+        planConfig,
+        vtuPlan,
+      });
 
-        apiResponseData = result.raw;
-        // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
-        if (result.success) {
-          apiSuccess = true;
-          purchaseOutcome = "success";
-        } else if (result.ambiguous) {
-          // Unknown outcome -- keep funds locked and the transaction pending.
-          // The provider may still deliver the value; refunding here is what
-          // previously refunded users whose data HAD actually arrived.
-          purchaseOutcome = "pending";
-          apiErrorMsg = result.error || 'Provider confirmation pending.';
-          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
-          apiErrorCode = apiResponseData?.error_code || null;
-          await logVtuFailure({
-            provider:  chosenProvider,
-            network:   finalNetwork,
-            phone:     finalPhone,
-            planId:    resolvedPlanCode,
-            planName:  plan_name || planName || '',
-            amount:    finalAmount,
-            error:     apiErrorMsg,
-            raw:       apiResponseData,
-            userId:    pgUuid,
-          });
-        }
-      } catch (providerErr: any) {
-        const rawErrData = providerErr.response?.data;
-        apiResponseData = rawErrData;
-        if (isAmbiguousProviderError(providerErr)) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
-          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-          apiErrorCode = rawErrData?.error_code || null;
-          await logVtuFailure({
-            provider:  chosenProvider,
-            network:   finalNetwork,
-            phone:     finalPhone,
-            planId:    resolvedPlanCode,
-            planName:  plan_name || planName || '',
-            amount:    finalAmount,
-            error:     apiErrorMsg,
-            raw:       rawErrData,
-            userId:    pgUuid,
-          });
-        }
+      purchaseOutcome = dispatchResult.outcome;
+      apiResponseData = dispatchResult.raw || dispatchResult.result?.raw;
+      apiErrorMsg = dispatchResult.error || dispatchResult.result?.error || 'Purchase rejected by gateway.';
+
+      // STEP 4: Server audit log line for every purchase
+      console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${dispatchResult.usedProvider || chosenProvider}, outcome: ${purchaseOutcome}`);
+
+      if (dispatchResult.outcome === 'success') {
+        apiSuccess = true;
+      } else if (dispatchResult.outcome === 'failed') {
+        apiErrorCode = apiResponseData?.error_code || null;
+        await logVtuFailure({
+          provider:  dispatchResult.usedProvider || chosenProvider,
+          network:   finalNetwork,
+          phone:     finalPhone,
+          planId:    resolvedPlanCode,
+          planName:  plan_name || planName || '',
+          amount:    finalAmount,
+          error:     apiErrorMsg,
+          raw:       apiResponseData,
+          userId:    pgUuid,
+        });
       }
 
       // 6. Settle: on success just mark the transaction complete (funds already locked/deducted).
@@ -1517,7 +1673,7 @@ async function startServer() {
           console.warn("[Supabase Transactions update bypassed]:", txErr.message || txErr);
         }
 
-        return res.json({
+        const successData = {
           status: "success",
           message: `${finalType} purchase successful!`,
           transaction: {
@@ -1527,8 +1683,11 @@ async function startServer() {
             network: finalNetwork,
             type: finalType
           }
-        });
+        };
+        completeIdempotency(idempotencyKey, successData, 200);
+        return res.json(successData);
       } else {
+        removeIdempotency(idempotencyKey);
         // Purchase failed at the provider -- automatically refund the locked funds, and report
         // truthfully whether that refund itself actually succeeded.
         const { error: refundErr } = await supabase.rpc('increment_balance', {
@@ -1559,6 +1718,7 @@ async function startServer() {
         });
       }
     } catch (err: any) {
+      removeIdempotency(idempotencyKey);
       console.error("[Bigisub Purchase Endpoint Exception]:", err);
       return res.status(500).json({ error: "Internal processing error during Bigisub purchase flow." });
     }
@@ -3881,16 +4041,24 @@ if (Object.keys(updateData).length <= 1) {
 
   // POST route specifically for handling Airtime VTU Purchases via Bigisub
   app.post("/api/buy-airtime", purchaseRateLimit, async (req, res) => {
+    const idempotencyKey = String(req.body?.idempotencyKey || req.body?.idempotency_key || '').trim();
+    if (idempotencyKey && !checkIdempotency(idempotencyKey, res)) return;
+
     try {
       const { network, phone_number, phone, amount } = req.body;
       const finalPhone  = phone_number || phone;
       const parsedAmount = Number(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ success: false, message: "Invalid amount. Must be greater than zero." });
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        removeIdempotency(idempotencyKey);
+        return res.status(400).json({ success: false, message: "Invalid amount. Must be greater than zero." });
+      }
 
       if (!network || !finalPhone || !parsedAmount) {
+        removeIdempotency(idempotencyKey);
         return res.status(400).json({ error: "Missing required fields: network, phone_number, amount." });
       }
       if (isNaN(parsedAmount) || parsedAmount < 50) {
+        removeIdempotency(idempotencyKey);
         return res.status(400).json({ error: "Amount must be a number and at least ₦50." });
       }
 
@@ -3904,14 +4072,19 @@ if (Object.keys(updateData).length <= 1) {
         currentBalance = auth.balance;
         pgUuid = auth.pgUuid || (verifiedUserId ? ensureUUID(verifiedUserId) : '');
       } catch (authErr: any) {
+        removeIdempotency(idempotencyKey);
         return res.status(401).json({ error: `Unauthorized: ${authErr.message}` });
       }
 
-      if (!pgUuid) return res.status(400).json({ error: "Invalid user ID." });
+      if (!pgUuid) {
+        removeIdempotency(idempotencyKey);
+        return res.status(400).json({ error: "Invalid user ID." });
+      }
 
       // ─── STEP 5: Server-side Transaction PIN Verification ───
       const pin = String(req.body?.pin || '').trim();
       if (!pin) {
+        removeIdempotency(idempotencyKey);
         return res.status(400).json({ error: "Transaction PIN is required to complete this purchase." });
       }
 
@@ -3921,11 +4094,13 @@ if (Object.keys(updateData).length <= 1) {
       });
 
       if (pinErr) {
+        removeIdempotency(idempotencyKey);
         console.error("[Airtime PIN Verification RPC Error]:", pinErr.message);
         return res.status(500).json({ error: "Failed to verify transaction PIN. Please try again." });
       }
 
       if (!pinRes || pinRes.status !== 'success' || !pinRes.verified) {
+        removeIdempotency(idempotencyKey);
         const isLocked = pinRes?.status === 'locked';
         return res.status(isLocked ? 403 : 400).json({
           error: pinRes?.error || "Incorrect transaction PIN.",
@@ -3988,40 +4163,19 @@ if (Object.keys(updateData).length <= 1) {
         if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (_) { /* non-fatal */ }
 
-      // ── Call the provider now that funds are safely locked ────
-      let purchaseResult;
-      try {
-        purchaseResult = await provider.purchase({
-          type: 'airtime',
-          network,
-          phone: finalPhone,
-          amount: parsedAmount,   // face value — provider charges what they charge
-          planId: 'airtime',
-          apiKey,
-        });
-      } catch (provErr: any) {
-        // No HTTP response (timeout / DNS / connection reset) = unknown outcome:
-        // the provider may still deliver the airtime, so keep the funds locked
-        // and leave the transaction pending instead of auto-refunding.
-        if (!provErr?.response) {
-          console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${provErr?.message || 'network error'} -- funds kept locked, transaction left pending (${localRef}).`);
-          return res.status(200).json({
-            status: 'processing',
-            message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
-            reference: localRef,
-          });
-        }
-        const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data, userId: pgUuid });
-        const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
-        if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
-        if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
-        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
-      }
+      // ── Call the provider now that funds are safely locked (with automated multi-provider failover) ────
+      const dispatch = await attemptProviderPurchaseWithFailover({
+        type: 'airtime',
+        network,
+        phone: finalPhone,
+        amount: parsedAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey: apiKey,
+        planId: 'airtime',
+      });
 
-      if (purchaseResult.ambiguous) {
-        // Unknown outcome -- keep the charge, leave the transaction pending.
-        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${purchaseResult.error} -- funds kept locked, transaction left pending (${localRef}).`);
+      if (dispatch.outcome === 'pending') {
+        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${dispatch.error} -- funds kept locked, transaction left pending (${localRef}).`);
         return res.status(200).json({
           status: 'processing',
           message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
@@ -4029,14 +4183,16 @@ if (Object.keys(updateData).length <= 1) {
         });
       }
 
-      if (!purchaseResult.success) {
-        const errMsg = purchaseResult.error || 'Gateway rejected the transaction.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw, userId: pgUuid });
+      if (dispatch.outcome === 'failed') {
+        const errMsg = dispatch.error || 'Provider connection failed.';
+        await logVtuFailure({ provider: dispatch.usedProvider || chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: dispatch.raw, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
-        return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
+        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
       }
+
+      const purchaseResult = dispatch.result;
 
       // ── Success: funds already locked/deducted, just mark the transaction and reply ──
       const newBalance = parseFloat((currentBalance - chargeAmount).toFixed(2));
@@ -4050,7 +4206,7 @@ if (Object.keys(updateData).length <= 1) {
         }
       } catch (_) { /* non-fatal */ }
 
-      return res.status(200).json({
+      const successPayload = {
         status:  "success",
         success: true,
         message: `₦${parsedAmount} airtime sent to ${finalPhone} successfully.`,
@@ -4058,9 +4214,12 @@ if (Object.keys(updateData).length <= 1) {
         chargeAmount,
         newBalance,
         reference:    refCode,
-      });
+      };
+      completeIdempotency(idempotencyKey, successPayload, 200);
+      return res.status(200).json(successPayload);
 
     } catch (err: any) {
+      removeIdempotency(idempotencyKey);
       console.error("[POST /api/buy-airtime Exception]:", err);
       return res.status(500).json({ error: `Internal error: ${err.message}` });
     }
@@ -4774,52 +4933,42 @@ if (Object.keys(updateData).length <= 1) {
         return true;                    // no response = unknown outcome
       };
 
-      try {
-        const result = await provider.purchase({
-          type:             finalType as 'data' | 'airtime',
-          network:          finalNetwork,
-          phone:            finalPhone,
-          amount:           finalAmount,
-          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
-          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
-          apiKey:           providerApiKey,
+      // 5. Call the provider now that funds are safely locked (with automated multi-provider failover)
+      const dispatchResult = await attemptProviderPurchaseWithFailover({
+        type:             finalType as 'data' | 'airtime',
+        network:          finalNetwork,
+        phone:            finalPhone,
+        amount:           finalAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey:    providerApiKey,
+        planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+        providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
+        mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+        planConfig,
+        vtuPlan,
+      });
+
+      purchaseOutcome = dispatchResult.outcome;
+      apiResponseData = dispatchResult.raw || dispatchResult.result?.raw;
+      apiErrorMsg = dispatchResult.error || dispatchResult.result?.error || 'Purchase rejected by gateway.';
+
+      console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${dispatchResult.usedProvider || chosenProvider}, outcome: ${purchaseOutcome}`);
+
+      if (dispatchResult.outcome === 'success') {
+        apiSuccess = true;
+      } else if (dispatchResult.outcome === 'failed') {
+        apiErrorCode = apiResponseData?.error_code || null;
+        await logVtuFailure({
+          provider: dispatchResult.usedProvider || chosenProvider,
+          network: finalNetwork,
+          phone: finalPhone,
+          planId: resolvedPlanCode,
+          planName: finalPlan || finalType,
+          amount: finalAmount,
+          error: apiErrorMsg,
+          raw: apiResponseData,
+          userId: pgUuid,
         });
-        apiResponseData = result.raw;
-        // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
-        if (result.success) {
-          apiSuccess = true;
-          purchaseOutcome = "success";
-        } else if (result.ambiguous) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = result.error || 'Provider confirmation pending.';
-          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
-          apiErrorCode = apiResponseData?.error_code || null;
-          await logVtuFailure({
-            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
-            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
-            error: apiErrorMsg, raw: apiResponseData, userId: pgUuid,
-          });
-        }
-      } catch (providerErr: any) {
-        const rawErrData = providerErr.response?.data;
-        apiResponseData = rawErrData;
-        if (isAmbiguousProviderError(providerErr)) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
-          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-          apiErrorCode = rawErrData?.error_code || null;
-          await logVtuFailure({
-            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
-            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
-            error: apiErrorMsg, raw: rawErrData, userId: pgUuid,
-          });
-        }
       }
 
       if (purchaseOutcome === "pending") {
@@ -5276,14 +5425,19 @@ if (Object.keys(updateData).length <= 1) {
 
   // POST '/api/buy-utility' -> Validates service exists in services_config, computes selling price, deducts from Supabase profiles, and drops payload directly to Bigisub
   app.post("/api/buy-utility", purchaseRateLimit, async (req, res) => {
+    const idempotencyKey = String(req.body?.idempotencyKey || req.body?.idempotency_key || '').trim();
+    if (idempotencyKey && !checkIdempotency(idempotencyKey, res)) return;
+
     const { userId, email, type, provider, amount, number, plan, meter_type } = req.body;
 
     // Validate inputs
     const reqType = String(type || '').toLowerCase().trim();
     if (!provider || !number) {
+      removeIdempotency(idempotencyKey);
       return res.status(400).json({ error: "Missing required parameters: provider and number are required to buy utility." });
     }
     if (!reqType) {
+      removeIdempotency(idempotencyKey);
       return res.status(400).json({ error: "Missing required parameter: type is required (airtime, data, cable, or electricity)." });
     }
 
@@ -5402,150 +5556,138 @@ if (Object.keys(updateData).length <= 1) {
           return res.json({ status: 'processing', pending: true, message: 'Your transaction is being confirmed by the provider.', reference });
         }
         if (!utilityResult.success) {
+          removeIdempotency(idempotencyKey);
           const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: profile.id, amount: finalPrice });
           await supabase.from('transactions').insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: refundErr ? 'refund_failed' : 'refunded', description: `${String(provider).toUpperCase()} ${reqType} failed`, reference, platform: 'mozosubz', payment_method: 'wallet', created_at: new Date().toISOString() });
           return res.status(400).json({ error: utilityResult.error || 'Mozosubz rejected the transaction.', reference, refunded: !refundErr });
         }
         await supabase.from('transactions').insert({ user_id: profile.id, user_email: profile.email || userEmail, type: reqType, amount: finalPrice, status: 'completed', description: `${String(provider).toUpperCase()} ${reqType} purchase`, reference, platform: 'mozosubz', payment_method: 'wallet', created_at: new Date().toISOString() });
-        return res.json({ status: 'success', success: true, message: 'Transaction completed successfully', reference, transaction: utilityResult.raw });
+        const mozoSuccess = { status: 'success', success: true, message: 'Transaction completed successfully', reference, transaction: utilityResult.raw };
+        completeIdempotency(idempotencyKey, mozoSuccess, 200);
+        return res.json(mozoSuccess);
       }
 
       // 3. Drop payload directly to Bigisub's server
       const BIGISUB_API_KEY = process.env.BIGISUB_API_KEY || process.env.VTU_API_KEY || "";
       const BIGISUB_BASE_URL = process.env.BIGISUB_BASE_URL || "https://www.bigisub.ng/api/v1";
 
+      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
+      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
+        removeIdempotency(idempotencyKey);
+        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
+      }
+
+      // ── LOCK FUNDS FIRST: Atomically deduct balance with FOR UPDATE lock before calling provider ──
+      const localRef = `TRX-UTIL-${Date.now()}`;
+      const { data: lockOk, error: lockErr } = await supabase.rpc('deduct_balance', {
+        user_uuid: profile.id,
+        amount: finalPrice,
+      });
+
+      if (lockErr) {
+        removeIdempotency(idempotencyKey);
+        console.error("[Buy-Utility Fund Lock Error]:", lockErr.message);
+        return res.status(500).json({ error: "Could not lock funds for this purchase. Please try again." });
+      }
+      if (!lockOk) {
+        removeIdempotency(idempotencyKey);
+        return res.status(400).json({
+          error: `Insufficient wallet balance. This transaction requires ₦${finalPrice.toLocaleString()} but your balance could not be debited.`
+        });
+      }
+
       let dispatchSuccess = false;
       let responseBody: any = null;
       let apiErrorMsg = "";
 
-      // PRODUCTION ONLY: no simulation fallback. Hard-fail if API key is missing.
-      if (!BIGISUB_API_KEY || BIGISUB_API_KEY.includes('dummy') || BIGISUB_API_KEY.includes('test')) {
-        return res.status(503).json({ error: "Payment provider not configured. Please contact support." });
-      }
+      try {
+        let endpoint = "";
+        let payload: any = {};
 
-        try {
-          let endpoint = "";
-          let payload: any = {};
+        if (reqType === 'airtime') {
+          endpoint = "airtime/";
+          let networkCode = 1;
+          const provUpper = String(provider).toUpperCase();
+          if (provUpper.includes("GLO")) networkCode = 2;
+          else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
+          else if (provUpper.includes("AIRTEL")) networkCode = 4;
 
-          if (reqType === 'airtime') {
-            endpoint = "airtime/";
-            let networkCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("GLO")) networkCode = 2;
-            else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
-            else if (provUpper.includes("AIRTEL")) networkCode = 4;
+          payload = {
+            network: networkCode,
+            amount: Number(amount || finalPrice),
+            phone: number,
+            airtime_type: 1
+          };
+        } else if (reqType === 'cable') {
+          endpoint = "cable/";
+          let cableTvCode = 1;
+          const provUpper = String(provider).toUpperCase();
+          if (provUpper.includes("DSTV")) cableTvCode = 2;
+          else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) cableTvCode = 3;
 
-            payload = {
-              network: networkCode,
-              amount: Number(amount || finalPrice),
-              phone: number,
-              airtime_type: 1 // 1 for VTU
-            };
-          } else if (reqType === 'cable') {
-            endpoint = "cable/";
-            let cableTvCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("DSTV")) cableTvCode = 2;
-            else if (provUpper.includes("STARTIMES") || provUpper.includes("STAR TIMES")) cableTvCode = 3;
+          payload = {
+            cablename: cableTvCode,
+            smartcard_number: number,
+            cableplan: plan || service?.bigisub_plan_id || "gotv_lite"
+          };
+        } else if (reqType === 'electricity') {
+          endpoint = "electricity/";
+          let discoCode = 1;
+          const provUpper = String(provider).toUpperCase();
+          if (provUpper.includes("EKEDC")) discoCode = 2;
+          else if (provUpper.includes("AEDC")) discoCode = 3;
+          else if (provUpper.includes("IBEDC")) discoCode = 4;
+          else if (!isNaN(Number(provider))) discoCode = Number(provider);
 
-            payload = {
-              cablename: cableTvCode,
-              smartcard_number: number,
-              cableplan: plan || service.bigisub_plan_id || "gotv_lite"
-            };
-          } else if (reqType === 'electricity') {
-            endpoint = "electricity/";
-            let discoCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("EKEDC")) discoCode = 2;
-            else if (provUpper.includes("AEDC")) discoCode = 3;
-            else if (provUpper.includes("IBEDC")) discoCode = 4;
-            else if (!isNaN(Number(provider))) discoCode = Number(provider);
+          payload = {
+            disco_name: discoCode,
+            meter_number: number,
+            amount: Number(amount || finalPrice),
+            meter_type: meter_type || (plan?.toLowerCase().includes("postpaid") ? 2 : 1)
+          };
+        } else if (reqType === 'data') {
+          endpoint = "data/";
+          let networkCode = 1;
+          const provUpper = String(provider).toUpperCase();
+          if (provUpper.includes("GLO")) networkCode = 2;
+          else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
+          else if (provUpper.includes("AIRTEL")) networkCode = 4;
 
-            payload = {
-              disco_name: discoCode,
-              meter_number: number,
-              amount: Number(amount || finalPrice),
-              meter_type: meter_type || (plan?.toLowerCase().includes("postpaid") ? 2 : 1)
-            };
-          } else if (reqType === 'data') {
-            endpoint = "data/";
-            let networkCode = 1;
-            const provUpper = String(provider).toUpperCase();
-            if (provUpper.includes("GLO")) networkCode = 2;
-            else if (provUpper.includes("9MOBILE") || provUpper.includes("ETISALAT")) networkCode = 3;
-            else if (provUpper.includes("AIRTEL")) networkCode = 4;
-
-            payload = {
-              network: networkCode,
-              mobile_number: number,
-              plan: plan || service.bigisub_plan_id
-            };
-          } else {
-            return res.status(400).json({ error: `Unsupported utility type: ${type}` });
-          }
-
-          const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${BIGISUB_API_KEY}`
-            },
-            timeout: 12000
-          });
-
-          responseBody = response.data;
-          if (response.status === 200 && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
-            dispatchSuccess = true;
-          } else {
-            apiErrorMsg = responseBody.error || responseBody.message || `Gateway error code ${response.status}`;
-          }
-        } catch (fetchErr: any) {
-          console.error("[Bigisub /api/buy-utility dispatch Exception]:", fetchErr);
-          apiErrorMsg = fetchErr.response?.data?.message || fetchErr.response?.data?.error || fetchErr.message || "Network Gateway Timeout";
+          payload = {
+            network: networkCode,
+            mobile_number: number,
+            plan: plan || service?.bigisub_plan_id
+          };
+        } else {
+          // Unsupported type: auto-refund locked funds
+          await supabase.rpc('increment_balance', { user_uuid: profile.id, amount: finalPrice });
+          removeIdempotency(idempotencyKey);
+          return res.status(400).json({ error: `Unsupported utility type: ${type}` });
         }
-      
 
-      if (dispatchSuccess) {
-        // Deduct price from balance via the guarded RPC (never a raw UPDATE — the
-        // guard_balance trigger silently reverts 'balance' on any raw UPDATE that
-        // doesn't go through deduct_balance()/increment_balance()).
-        //
-        // CRITICAL: if this deduction fails, we do NOT silently continue and tell the
-        // user "success" -- the provider has already delivered the purchase at this
-        // point, so a swallowed failure here means real product was given away for
-        // free. Surface it loudly instead: log it as a reconciliation case support
-        // needs to chase, and tell the user plainly what happened.
-        const { data: deductOk, error: deductErr } = await supabase.rpc('deduct_balance', {
-          user_uuid: profile.id,
-          amount: finalPrice,
+        const response = await axios.post(`${BIGISUB_BASE_URL}/${endpoint}`, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${BIGISUB_API_KEY}`
+          },
+          timeout: 12000
         });
 
-        const referenceCode = responseBody?.reference || responseBody?.id || `TRX-BIGI-UTIL-${Date.now()}`;
-        const transactionId = `bigi_util_${Date.now()}`;
-        const descriptionText = `${provider.toUpperCase()} ${reqType.toUpperCase()} purchase to ${number} (Simulated/Live)`;
-
-        if (deductErr || !deductOk) {
-          console.error(
-            "[Supabase Balance Deduct Error] Provider already delivered but wallet was NOT debited -- needs manual reconciliation:",
-            deductErr?.message, { userId: profile.id, email: profile.email || userEmail, amount: finalPrice, referenceCode }
-          );
-          try {
-            await supabase.from('transactions').insert({
-              user_id: profile.id,
-              user_email: profile.email || userEmail,
-              type: reqType, amount: finalPrice, status: 'undebited_delivery',
-              description: `RECONCILE: ${descriptionText} -- delivered but wallet debit failed`,
-              reference: referenceCode, platform: "bigisub", payment_method: "wallet",
-              created_at: new Date().toISOString(),
-            });
-          } catch (_) { /* non-fatal -- the console.error above is the real record */ }
-
-          return res.status(500).json({
-            error: "Your order was delivered, but we could not debit your wallet due to a system error. This has been flagged for support to reconcile. Please contact support with this reference.",
-            reference: referenceCode,
-          });
+        responseBody = response.data;
+        if (response.status === 200 && (responseBody.status === "success" || responseBody.success || responseBody.status === "completed" || responseBody.status === "SUCCESSFUL")) {
+          dispatchSuccess = true;
+        } else {
+          apiErrorMsg = responseBody.error || responseBody.message || `Gateway error code ${response.status}`;
         }
+      } catch (fetchErr: any) {
+        console.error("[Bigisub /api/buy-utility dispatch Exception]:", fetchErr);
+        apiErrorMsg = fetchErr.response?.data?.message || fetchErr.response?.data?.error || fetchErr.message || "Network Gateway Timeout";
+      }
 
+      const referenceCode = responseBody?.reference || responseBody?.id || localRef;
+      const descriptionText = `${provider.toUpperCase()} ${reqType.toUpperCase()} purchase to ${number}`;
+
+      if (dispatchSuccess) {
         try {
           await supabase.from('transactions').insert({
             user_id: profile.id,
@@ -5563,16 +5705,44 @@ if (Object.keys(updateData).length <= 1) {
           console.error("[Supabase Audit Log Insertion Error]:", txInsertErr.message);
         }
 
-        return res.json({
+        const successResp = {
           status: "success",
           message: "Transaction completed successfully",
           reference: referenceCode,
           description: descriptionText
-        });
+        };
+        completeIdempotency(idempotencyKey, successResp, 200);
+        return res.json(successResp);
       } else {
-        // Gateway rejected -- funds were never touched here (deduct only happens above on
-        // success), so no revert/refund step is needed on this failure path.
-        return res.status(400).json({ error: `Gateway rejected the transaction. Your wallet was not charged.` });
+        // Provider rejected: atomically refund the locked funds
+        const { error: refundErr } = await supabase.rpc('increment_balance', {
+          user_uuid: profile.id,
+          amount: finalPrice,
+        });
+        if (refundErr) {
+          console.error("[Buy-Utility Auto-Refund Error]:", refundErr.message, { userId: profile.id, amount: finalPrice, referenceCode });
+        }
+        try {
+          await supabase.from('transactions').insert({
+            user_id: profile.id,
+            user_email: profile.email || userEmail,
+            type: reqType,
+            amount: finalPrice,
+            status: refundErr ? 'refund_failed' : 'failed',
+            description: `FAILED: ${descriptionText} (${apiErrorMsg || 'Gateway rejected'}) - Refunded`,
+            reference: referenceCode,
+            platform: "bigisub",
+            payment_method: "wallet",
+            created_at: new Date().toISOString(),
+          });
+        } catch (_) {}
+
+        removeIdempotency(idempotencyKey);
+        return res.status(400).json({
+          error: `Gateway rejected the transaction: ${apiErrorMsg || 'Request failed'}. Your wallet has been refunded.`,
+          refunded: !refundErr,
+          reference: referenceCode
+        });
       }
     } catch (err: any) {
       console.error("[Bigisub /api/buy-utility Exception]:", err);
