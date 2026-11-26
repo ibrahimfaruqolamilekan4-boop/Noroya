@@ -1157,6 +1157,138 @@ async function startServer() {
     });
   });
 
+  // ─── Automated Multi-Provider Smart Failover Router ──────────────────────────
+  interface AttemptPurchaseParams {
+    type: 'data' | 'airtime';
+    network: string;
+    phone: string;
+    amount: number;
+    primaryProviderName: string;
+    primaryApiKey: string;
+    planId?: string;
+    providerPlanId?: string;
+    mozosubzService?: string;
+    planConfig?: any;
+    vtuPlan?: any;
+  }
+
+  interface AttemptPurchaseResult {
+    outcome: 'success' | 'pending' | 'failed';
+    result?: any;
+    usedProvider: string;
+    error?: string;
+    raw?: any;
+  }
+
+  async function attemptProviderPurchaseWithFailover(params: AttemptPurchaseParams): Promise<AttemptPurchaseResult> {
+    const { type, network, phone, amount, primaryProviderName, primaryApiKey, planId, providerPlanId, mozosubzService, planConfig, vtuPlan } = params;
+
+    const isAmbiguous = (err: any): boolean => {
+      if (!err) return false;
+      if (err.response) return false;
+      return true;
+    };
+
+    // 1. Attempt Primary Provider
+    const primary = getProvider(primaryProviderName);
+    if (primary && primaryApiKey && primaryApiKey.length >= 6) {
+      try {
+        const res = await primary.purchase({
+          type,
+          network,
+          phone,
+          amount,
+          planId: planId || '',
+          providerPlanId: providerPlanId || planId || '',
+          mozosubzService: mozosubzService || '',
+          apiKey: primaryApiKey,
+        });
+
+        if (res.success) {
+          return { outcome: 'success', result: res, usedProvider: primaryProviderName, raw: res.raw };
+        }
+        if (res.ambiguous) {
+          return { outcome: 'pending', result: res, usedProvider: primaryProviderName, error: res.error, raw: res.raw };
+        }
+        console.warn(`[VTU Provider Gateway Rejection] Primary '${primaryProviderName}' rejected: ${res.error || 'Unknown'}. Checking automated failover...`);
+      } catch (err: any) {
+        if (isAmbiguous(err)) {
+          return { outcome: 'pending', usedProvider: primaryProviderName, error: err?.message || 'Gateway connection timeout', raw: null };
+        }
+        console.warn(`[VTU Provider Gateway Error] Primary '${primaryProviderName}' threw: ${err.message}. Checking automated failover...`);
+      }
+    }
+
+    // 2. Automated Smart Failover to Secondary Providers
+    const fallbackCandidates = ['mozosubz', 'nifex', 'bigisub'].filter(p => p !== primaryProviderName.toLowerCase());
+
+    for (const fallbackName of fallbackCandidates) {
+      const fbProvider = getProvider(fallbackName);
+      if (!fbProvider) continue;
+      const fbKey = await fbProvider.resolveApiKey();
+      if (!fbKey || fbKey.length < 6) continue;
+
+      let fbPlanId = planId || '';
+      let fbProviderPlanId = providerPlanId || planId || '';
+      let fbService = '';
+
+      if (type === 'data') {
+        if (fallbackName === 'nifex') {
+          const nId = planConfig?.nifex_plan_id || (fbPlanId.match(/\d+$/) ? fbPlanId.match(/\d+$/)![0] : '');
+          if (!nId) continue;
+          fbPlanId = nId;
+          fbProviderPlanId = nId;
+        } else if (fallbackName === 'bigisub') {
+          const bId = planConfig?.bigisub_identifier_id || planConfig?.bigisub_plan_id || '';
+          if (!bId) continue;
+          fbPlanId = bId;
+          fbProviderPlanId = bId;
+        } else if (fallbackName === 'mozosubz') {
+          const mId = planConfig?.mozosubz_plan_id || planConfig?.mozosubs_plan_id || '';
+          if (!mId) continue;
+          fbPlanId = mId;
+          fbProviderPlanId = mId;
+          fbService = vtuPlan?.service || planConfig?.mozosubz_service || '';
+        }
+      }
+
+      try {
+        console.log(`[VTU Failover Router] Dispatching ${type} order to fallback provider '${fallbackName}' (${network} -> ${phone})...`);
+        const fbRes = await fbProvider.purchase({
+          type,
+          network,
+          phone,
+          amount,
+          planId: fbPlanId,
+          providerPlanId: fbProviderPlanId,
+          mozosubzService: fbService,
+          apiKey: fbKey,
+        });
+
+        if (fbRes.success) {
+          console.log(`[VTU Failover SUCCESS] Fallback provider '${fallbackName}' successfully fulfilled ${type} order for ${phone}!`);
+          return { outcome: 'success', result: fbRes, usedProvider: fallbackName, raw: fbRes.raw };
+        }
+        if (fbRes.ambiguous) {
+          return { outcome: 'pending', result: fbRes, usedProvider: fallbackName, error: fbRes.error, raw: fbRes.raw };
+        }
+        console.warn(`[VTU Failover Rejected] Secondary provider '${fallbackName}' rejected: ${fbRes.error}`);
+      } catch (fbErr: any) {
+        if (isAmbiguous(fbErr)) {
+          return { outcome: 'pending', usedProvider: fallbackName, error: fbErr?.message || 'Connection timeout on fallback', raw: null };
+        }
+        console.warn(`[VTU Failover Failed] Secondary provider '${fallbackName}' error: ${fbErr.message}`);
+      }
+    }
+
+    return {
+      outcome: 'failed',
+      usedProvider: primaryProviderName,
+      error: 'All available providers were unable to complete this transaction.',
+      raw: null
+    };
+  }
+
   // Unified Robust Bigisub VTU Purchase Flow (Migrated from Peyflex)
   const handleVtuPurchase = async (req: any, res: any) => {
     const { 
@@ -1468,69 +1600,43 @@ async function startServer() {
         return true;                    // no response = unknown outcome
       };
 
-      // 5. Call the provider now that funds are safely locked.
-      try {
-        const result = await provider.purchase({
-          type:             finalType as 'data' | 'airtime',
-          network:          finalNetwork,
-          phone:            finalPhone,
-          amount:           finalAmount,
-          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
-          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
-          apiKey:           providerApiKey,
-        });
+      // 5. Call the provider now that funds are safely locked (with automated multi-provider failover)
+      const dispatchResult = await attemptProviderPurchaseWithFailover({
+        type:             finalType as 'data' | 'airtime',
+        network:          finalNetwork,
+        phone:            finalPhone,
+        amount:           finalAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey:    providerApiKey,
+        planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+        providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
+        mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+        planConfig,
+        vtuPlan,
+      });
 
-        apiResponseData = result.raw;
-        // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
-        if (result.success) {
-          apiSuccess = true;
-          purchaseOutcome = "success";
-        } else if (result.ambiguous) {
-          // Unknown outcome -- keep funds locked and the transaction pending.
-          // The provider may still deliver the value; refunding here is what
-          // previously refunded users whose data HAD actually arrived.
-          purchaseOutcome = "pending";
-          apiErrorMsg = result.error || 'Provider confirmation pending.';
-          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
-          apiErrorCode = apiResponseData?.error_code || null;
-          await logVtuFailure({
-            provider:  chosenProvider,
-            network:   finalNetwork,
-            phone:     finalPhone,
-            planId:    resolvedPlanCode,
-            planName:  plan_name || planName || '',
-            amount:    finalAmount,
-            error:     apiErrorMsg,
-            raw:       apiResponseData,
-            userId:    pgUuid,
-          });
-        }
-      } catch (providerErr: any) {
-        const rawErrData = providerErr.response?.data;
-        apiResponseData = rawErrData;
-        if (isAmbiguousProviderError(providerErr)) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
-          console.warn(`[VTU AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-          apiErrorCode = rawErrData?.error_code || null;
-          await logVtuFailure({
-            provider:  chosenProvider,
-            network:   finalNetwork,
-            phone:     finalPhone,
-            planId:    resolvedPlanCode,
-            planName:  plan_name || planName || '',
-            amount:    finalAmount,
-            error:     apiErrorMsg,
-            raw:       rawErrData,
-            userId:    pgUuid,
-          });
-        }
+      purchaseOutcome = dispatchResult.outcome;
+      apiResponseData = dispatchResult.raw || dispatchResult.result?.raw;
+      apiErrorMsg = dispatchResult.error || dispatchResult.result?.error || 'Purchase rejected by gateway.';
+
+      // STEP 4: Server audit log line for every purchase
+      console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${dispatchResult.usedProvider || chosenProvider}, outcome: ${purchaseOutcome}`);
+
+      if (dispatchResult.outcome === 'success') {
+        apiSuccess = true;
+      } else if (dispatchResult.outcome === 'failed') {
+        apiErrorCode = apiResponseData?.error_code || null;
+        await logVtuFailure({
+          provider:  dispatchResult.usedProvider || chosenProvider,
+          network:   finalNetwork,
+          phone:     finalPhone,
+          planId:    resolvedPlanCode,
+          planName:  plan_name || planName || '',
+          amount:    finalAmount,
+          error:     apiErrorMsg,
+          raw:       apiResponseData,
+          userId:    pgUuid,
+        });
       }
 
       // 6. Settle: on success just mark the transaction complete (funds already locked/deducted).
@@ -4057,40 +4163,19 @@ if (Object.keys(updateData).length <= 1) {
         if (pendingTxErr) console.error("[Pending Transaction Insert] Failed to create transaction record:", pendingTxErr.message);
       } catch (_) { /* non-fatal */ }
 
-      // ── Call the provider now that funds are safely locked ────
-      let purchaseResult;
-      try {
-        purchaseResult = await provider.purchase({
-          type: 'airtime',
-          network,
-          phone: finalPhone,
-          amount: parsedAmount,   // face value — provider charges what they charge
-          planId: 'airtime',
-          apiKey,
-        });
-      } catch (provErr: any) {
-        // No HTTP response (timeout / DNS / connection reset) = unknown outcome:
-        // the provider may still deliver the airtime, so keep the funds locked
-        // and leave the transaction pending instead of auto-refunding.
-        if (!provErr?.response) {
-          console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${provErr?.message || 'network error'} -- funds kept locked, transaction left pending (${localRef}).`);
-          return res.status(200).json({
-            status: 'processing',
-            message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
-            reference: localRef,
-          });
-        }
-        const errMsg = provErr.response?.data?.error || provErr.message || 'Provider connection failed.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: provErr.response?.data, userId: pgUuid });
-        const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
-        if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
-        if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
-        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
-      }
+      // ── Call the provider now that funds are safely locked (with automated multi-provider failover) ────
+      const dispatch = await attemptProviderPurchaseWithFailover({
+        type: 'airtime',
+        network,
+        phone: finalPhone,
+        amount: parsedAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey: apiKey,
+        planId: 'airtime',
+      });
 
-      if (purchaseResult.ambiguous) {
-        // Unknown outcome -- keep the charge, leave the transaction pending.
-        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${purchaseResult.error} -- funds kept locked, transaction left pending (${localRef}).`);
+      if (dispatch.outcome === 'pending') {
+        console.warn(`[Airtime AMBIGUOUS OUTCOME] ${chosenProvider} airtime for ${finalPhone}: ${dispatch.error} -- funds kept locked, transaction left pending (${localRef}).`);
         return res.status(200).json({
           status: 'processing',
           message: 'Your airtime purchase is being confirmed by the network. Your wallet has been charged; if the network rejects it, you are refunded automatically.',
@@ -4098,14 +4183,16 @@ if (Object.keys(updateData).length <= 1) {
         });
       }
 
-      if (!purchaseResult.success) {
-        const errMsg = purchaseResult.error || 'Gateway rejected the transaction.';
-        await logVtuFailure({ provider: chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: purchaseResult.raw, userId: pgUuid });
+      if (dispatch.outcome === 'failed') {
+        const errMsg = dispatch.error || 'Provider connection failed.';
+        await logVtuFailure({ provider: dispatch.usedProvider || chosenProvider, network, phone: finalPhone, planId: 'airtime', planName: 'airtime', amount: parsedAmount, error: errMsg, raw: dispatch.raw, userId: pgUuid });
         const { error: refundErr } = await supabase.rpc('increment_balance', { user_uuid: pgUuid, amount: chargeAmount });
         if (refundErr) console.error("[Airtime Auto-Refund] increment_balance FAILED -- manual fix needed:", refundErr.message, { pgUuid, chargeAmount, localRef });
         if (txDbId) await supabase.from('transactions').update({ status: refundErr ? 'failed' : 'refunded' }).eq('id', txDbId);
-        return res.status(400).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
+        return res.status(502).json({ error: `Airtime purchase failed: ${errMsg}. Your wallet has been automatically refunded.` });
       }
+
+      const purchaseResult = dispatch.result;
 
       // ── Success: funds already locked/deducted, just mark the transaction and reply ──
       const newBalance = parseFloat((currentBalance - chargeAmount).toFixed(2));
@@ -4846,52 +4933,42 @@ if (Object.keys(updateData).length <= 1) {
         return true;                    // no response = unknown outcome
       };
 
-      try {
-        const result = await provider.purchase({
-          type:             finalType as 'data' | 'airtime',
-          network:          finalNetwork,
-          phone:            finalPhone,
-          amount:           finalAmount,
-          planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
-          providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
-          mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
-          apiKey:           providerApiKey,
+      // 5. Call the provider now that funds are safely locked (with automated multi-provider failover)
+      const dispatchResult = await attemptProviderPurchaseWithFailover({
+        type:             finalType as 'data' | 'airtime',
+        network:          finalNetwork,
+        phone:            finalPhone,
+        amount:           finalAmount,
+        primaryProviderName: chosenProvider,
+        primaryApiKey:    providerApiKey,
+        planId:           vtuPlan?.provider_plan_id || resolvedPlanCode,
+        providerPlanId:   vtuPlan?.provider_plan_id || planConfig?.bigisub_identifier_id || resolvedPlanCode,
+        mozosubzService:  vtuPlan?.service || planConfig?.mozosubz_service || req.body.mozosubz_service || req.body.service || '',
+        planConfig,
+        vtuPlan,
+      });
+
+      purchaseOutcome = dispatchResult.outcome;
+      apiResponseData = dispatchResult.raw || dispatchResult.result?.raw;
+      apiErrorMsg = dispatchResult.error || dispatchResult.result?.error || 'Purchase rejected by gateway.';
+
+      console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${dispatchResult.usedProvider || chosenProvider}, outcome: ${purchaseOutcome}`);
+
+      if (dispatchResult.outcome === 'success') {
+        apiSuccess = true;
+      } else if (dispatchResult.outcome === 'failed') {
+        apiErrorCode = apiResponseData?.error_code || null;
+        await logVtuFailure({
+          provider: dispatchResult.usedProvider || chosenProvider,
+          network: finalNetwork,
+          phone: finalPhone,
+          planId: resolvedPlanCode,
+          planName: finalPlan || finalType,
+          amount: finalAmount,
+          error: apiErrorMsg,
+          raw: apiResponseData,
+          userId: pgUuid,
         });
-        apiResponseData = result.raw;
-        // STEP 4: Server audit log line for every purchase
-        console.log(`[VTU PURCHASE AUDIT] user: ${pgUuid}, network: ${finalNetwork}, provider_plan_id: ${resolvedPlanCode}, service: ${vtuPlan?.service || planConfig?.mozosubz_service || ''}, provider: ${chosenProvider}, response:`, JSON.stringify(result.raw || result.error || ""));
-        if (result.success) {
-          apiSuccess = true;
-          purchaseOutcome = "success";
-        } else if (result.ambiguous) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = result.error || 'Provider confirmation pending.';
-          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone}: ${apiErrorMsg} -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = result.error || 'Purchase rejected by gateway.';
-          apiErrorCode = apiResponseData?.error_code || null;
-          await logVtuFailure({
-            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
-            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
-            error: apiErrorMsg, raw: apiResponseData, userId: pgUuid,
-          });
-        }
-      } catch (providerErr: any) {
-        const rawErrData = providerErr.response?.data;
-        apiResponseData = rawErrData;
-        if (isAmbiguousProviderError(providerErr)) {
-          purchaseOutcome = "pending";
-          apiErrorMsg = providerErr?.message || 'Provider connection could not be confirmed.';
-          console.warn(`[VTU/purchase AMBIGUOUS OUTCOME] ${chosenProvider} ${finalType} for ${finalPhone} raised a network-level error -- funds kept locked, transaction left pending (${localRef}).`);
-        } else {
-          apiErrorMsg = rawErrData?.error || rawErrData?.message || providerErr.message || 'Provider connection failed.';
-          apiErrorCode = rawErrData?.error_code || null;
-          await logVtuFailure({
-            provider: chosenProvider, network: finalNetwork, phone: finalPhone,
-            planId: resolvedPlanCode, planName: finalPlan || finalType, amount: finalAmount,
-            error: apiErrorMsg, raw: rawErrData, userId: pgUuid,
-          });
-        }
       }
 
       if (purchaseOutcome === "pending") {

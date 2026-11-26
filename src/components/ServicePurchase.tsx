@@ -474,10 +474,50 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
           </div>
           <div className="grid grid-cols-4 gap-2">
             {[
-              { id: 'MTN', name: 'MTN', color: '#FFCC00', dot: '#FFCC00', textColor: '#000000' },
-              { id: 'Airtel', name: 'Airtel', color: '#FF0000', dot: '#FF0000', textColor: '#FFFFFF' },
-              { id: 'Glo', name: 'Glo', color: '#228B22', dot: '#228B22', textColor: '#FFFFFF' },
-              { id: '9mobile', name: '9mobile', color: '#005C29', dot: '#005C29', textColor: '#FFFFFF' },
+              {
+                id: 'MTN',
+                name: 'MTN',
+                badgeText: 'MTN',
+                badgeBg: '#FFCC00',
+                badgeColor: '#000000',
+                borderColor: '#FFCC00',
+                bgActive: 'rgba(255, 204, 0, 0.14)',
+                shadowGlow: '0 0 16px rgba(255, 204, 0, 0.32)',
+                accentColor: '#FFCC00',
+              },
+              {
+                id: 'Airtel',
+                name: 'Airtel',
+                badgeText: 'airtel',
+                badgeBg: '#ED1C24',
+                badgeColor: '#FFFFFF',
+                borderColor: '#ED1C24',
+                bgActive: 'rgba(237, 28, 36, 0.14)',
+                shadowGlow: '0 0 16px rgba(237, 28, 36, 0.32)',
+                accentColor: '#ED1C24',
+              },
+              {
+                id: 'Glo',
+                name: 'Glo',
+                badgeText: 'glo',
+                badgeBg: '#00A859',
+                badgeColor: '#FFFFFF',
+                borderColor: '#00A859',
+                bgActive: 'rgba(0, 168, 89, 0.14)',
+                shadowGlow: '0 0 16px rgba(0, 168, 89, 0.32)',
+                accentColor: '#00A859',
+              },
+              {
+                id: '9mobile',
+                name: '9mobile',
+                badgeText: '9m',
+                badgeBg: '#006848',
+                badgeColor: '#8CC63F',
+                borderColor: '#8CC63F',
+                bgActive: 'rgba(140, 198, 63, 0.14)',
+                shadowGlow: '0 0 16px rgba(140, 198, 63, 0.32)',
+                accentColor: '#8CC63F',
+              },
             ].map((net) => {
               const isSelected = network === net.id;
               return (
@@ -489,23 +529,35 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
                     setAutoDetected(false);
                   }}
                   className={cn(
-                    'flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-200 cursor-pointer relative',
+                    'flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all duration-200 cursor-pointer relative group',
                     isSelected
-                      ? 'border-[#B5D430] bg-[#1E3A1E] shadow-lg shadow-emerald-950/50'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10 opacity-75 hover:opacity-100'
+                      ? 'shadow-lg'
+                      : 'border-white/10 bg-white/5 hover:bg-white/10 opacity-80 hover:opacity-100'
                   )}
+                  style={{
+                    borderColor: isSelected ? net.borderColor : undefined,
+                    backgroundColor: isSelected ? net.bgActive : undefined,
+                    boxShadow: isSelected ? net.shadowGlow : undefined,
+                  }}
                 >
-                  <span
-                    className="w-3.5 h-3.5 rounded-full mb-1.5 shadow-sm border border-white/20"
-                    style={{ backgroundColor: net.color }}
-                  />
-                  <span className={cn('text-xs font-semibold', isSelected ? 'text-white' : 'text-white/80')}>
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center mb-1.5 shadow-sm font-extrabold text-[10px] tracking-tight transition-transform group-hover:scale-105"
+                    style={{
+                      backgroundColor: net.badgeBg,
+                      color: net.badgeColor,
+                      border: net.id === '9mobile' ? '1.5px solid #8CC63F' : 'none',
+                    }}
+                  >
+                    {net.badgeText}
+                  </div>
+                  <span className={cn('text-xs font-bold transition-colors', isSelected ? 'text-white' : 'text-white/80')}>
                     {net.name}
                   </span>
                   {isSelected && (
                     <motion.div
                       layoutId="service-network-active"
-                      className="absolute -bottom-1 w-6 h-0.5 rounded-full bg-[#B5D430]"
+                      className="absolute -bottom-1 w-6 h-0.5 rounded-full"
+                      style={{ backgroundColor: net.accentColor }}
                     />
                   )}
                 </button>
@@ -645,8 +697,24 @@ export default function ServicePurchase({ type, onNavigateToSettings }: ServiceP
           <div>
             <label className="text-xs font-bold block mb-3" style={{ color: '#8FB88F' }}>CHOOSE A BUNDLE</label>
             {fetchingPlans ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#3B7A3B', borderTopColor: 'transparent' }} />
+              <div className="grid grid-cols-2 gap-3 py-1">
+                {[1, 2, 3, 4, 5, 6].map((idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col justify-between p-4 rounded-2xl animate-pulse relative overflow-hidden"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                      border: '1.5px solid rgba(255, 255, 255, 0.08)',
+                      minHeight: '88px',
+                    }}
+                  >
+                    <div className="space-y-2">
+                      <div className="h-5 w-20 bg-white/10 rounded-md" />
+                      <div className="h-3 w-14 bg-white/5 rounded-md" />
+                    </div>
+                    <div className="h-4 w-24 bg-white/15 rounded-md mt-4" />
+                  </div>
+                ))}
               </div>
             ) : availablePlans.length === 0 ? (
               <p className="text-sm text-center py-6" style={{ color: '#8FB88F' }}>No plans available for this selection.</p>

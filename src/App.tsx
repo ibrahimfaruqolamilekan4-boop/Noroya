@@ -11,6 +11,7 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PWAInstallBanner } from './components/PWAInstallBanner';
+import OfflineBanner from './components/OfflineBanner';
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -59,6 +60,7 @@ function AppContent() {
 
   return (
     <div className="font-sans antialiased text-slate-900">
+      <OfflineBanner />
       <Toaster
         position="top-center"
         toastOptions={{
